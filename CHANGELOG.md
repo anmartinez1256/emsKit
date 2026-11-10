@@ -16,8 +16,10 @@ of `main`, without the history in which they were made and without the three fil
 Before the push the main session (Claude Fable 5.2, Claude Code) made that commit once in a scratch copy: no personal
 address in any file, the author's public identity on the commit, and from the copy alone `swift build` complete
 without warnings and the unit suite passing. New for the publication: `CITATION.cff` (how to cite the repository) and
-`.zenodo.json` (the description that Zenodo shows when it archives a release; the DOI follows with the first
-release). `ROADMAP.md` lists the publication under Done, and section 13 of `Docs/fdtdKit/PLAN.md` gives the date.
+`.zenodo.json` (the description that Zenodo shows when it archives a release). The same day the author switched the
+repository on at Zenodo and made release 0.1.0: its archive has the DOI 10.5281/zenodo.24118866, and
+10.5281/zenodo.24118865 always resolves to the latest release; the README, `CITATION.cff` and the paper give the
+latter. `ROADMAP.md` lists the publication under Done, and section 13 of `Docs/fdtdKit/PLAN.md` gives the date.
 
 ## 2026-11-10: the second review's fixes (branch `fdtdkit`)
 

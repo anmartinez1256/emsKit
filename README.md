@@ -8,6 +8,10 @@ shooting and bouncing rays); the other three kits are developed on branches of t
 fdtdKit was called emsKit until 2026-11-05, and the repository and its folder keep that name: `emsKit` in `results/`,
 in the patches and in the dated entries of `CHANGELOG.md` is this same project.
 
+To cite it: DOI [10.5281/zenodo.24118865](https://doi.org/10.5281/zenodo.24118865), which always resolves to the
+latest release archived at Zenodo (release 0.1.0 of 2026-11-10 is 10.5281/zenodo.24118866); `CITATION.cff` holds the
+same in machine-readable form.
+
 For the same number of time steps, every change to the CPU engines produces results **identical bit for bit** to
 stock openEMS v0.37.0 (port probes, S-parameters, HDF5 field dumps; clang builds, see `BUILD.md` section 8 for GCC).
 The fork's own Metal engine for the GPU (`--engine=metal-diamond`, opt-in) gives the bits of the multithreaded CPU
