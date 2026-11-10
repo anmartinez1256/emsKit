@@ -1,0 +1,51 @@
+From e1b83c6b58127d4498bb4c469cf40614fbb42d57 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 01:51:08 -0600
+Subject: [PATCH 17/27] Compressed operator: one operator index per z-vector
+
+Operator_SSE_Compressed allocated m_Op_index per cell (NX x NY x NZ 32-bit entries), although the operator
+and the engines only use the entries of the z-vectors (zv < numVectors). On meshes of up to 42 z lines
+every 128-byte cache line of the array holds used entries, so the engines streamed 4 B of index per cell
+instead of 1 B. The index is now allocated per z-vector; OPENEMS_OP_INDEX_PER_CELL=1 keeps the old
+allocation. The values are the same, only the array is smaller (bit-identical).
+
+Paired interleaved A/B, multithreaded engine, 5 rounds, other processes on 0.4-1.7 cores: patch x5 x1.119
+at 4 threads and x1.101 at 8, notch x3 x1.042 and x1.052, the GCPW line, the SMA launch and the two
+tutorials x1.005-x1.021. Memory: about 3 B per cell less (notch x3 15.8 MB, patch x5 23.6 MB).
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/operator_sse_compressed.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/FDTD/operator_sse_compressed.cpp b/FDTD/operator_sse_compressed.cpp
+index 984dae6..8684703 100644
+--- a/FDTD/operator_sse_compressed.cpp
++++ b/FDTD/operator_sse_compressed.cpp
+@@ -19,6 +19,7 @@
+ #include <iostream>
+ #include "engine_sse_compressed.h"
+ #include "engine_sse.h"
++#include "tools/useful.h"
+ 
+ #include <map>
+ #include <cstring>
+@@ -100,7 +101,13 @@ void Operator_SSE_Compressed::InitOperator()
+ 	}
+ 
+ 	Operator_sse::InitOperator();
+-	m_Op_index.Init("Op_index", numLines);
++	// one index per f4vector (x, y, zv): the operator and the engines use zv < numVectors only, and with numLines[2]
++	// entries per (x, y) the unused ones shared the cache lines of the used ones on meshes of up to 42 z lines, so the
++	// engines streamed 4 B of index per cell instead of 1 B (OPENEMS_OP_INDEX_PER_CELL=1: the old layout, to compare)
++	if (EnvFlag("OPENEMS_OP_INDEX_PER_CELL"))
++		m_Op_index.Init("Op_index", numLines);
++	else
++		m_Op_index.Init("Op_index", {numLines[0], numLines[1], numVectors});
+ }
+ 
+ void Operator_SSE_Compressed::ShowStat() const
+-- 
+2.54.0 (Apple Git-157)
+

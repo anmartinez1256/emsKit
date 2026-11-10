@@ -1,0 +1,3 @@
+# ksma_s1_n6000  2026-10-29 05:04
+stock@multithreaded:4           433.6 MC/s     14.82 s  6000 TS x 1.071 MC  others  56%  [ref]
+multithreaded:4                1013.6 MC/s      6.34 s  6000 TS x 1.071 MC  others  43%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

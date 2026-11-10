@@ -1,0 +1,4 @@
+# notch_s3_n2000  2026-11-04 05:00
+multithreaded:4                 762.2 MC/s     13.77 s  2000 TS x 5.247 MC  others  53%  runs 762/732  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-40-g5fecbb5
+gpu                            1333.5 MC/s      7.87 s  2000 TS x 5.247 MC  others  73%  runs 1334/1332  probes rel=2.3e-07 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=4.0e-08 max dB=2.8e-06  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)

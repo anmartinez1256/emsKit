@@ -1,0 +1,72 @@
+# cg28 = 85dc48c on speed-m5-gpu (v0.37.0-34-g85dc48c): the Metal diamond engine (--engine=metal-diamond) picks its
+# tiling at run time. Apple M5 (10 GPU cores), macOS 27.0.1; a shared Mac, so every number carries the other processes'
+# CPU and GPU use during the runs (bench/usage.py). Library: ~/opt/openEMS-dev/snap/cg28 (built as dev28b).
+#
+# What it does (FDTD/metal/engine_metal_diamond.mm): SetupGPU builds four tilings, K time steps per block and
+# mountains M / valleys V wide in x and y: K=4 8,8 (the old default), K=4 12,8, K=3 8,6, K=3 6,6. In the tile and K
+# sweep of cg23 (faster of two runs per setting, not paired; results/diamond_engine_cg24_cg27_2026-11-04.txt section
+# 8) four models ran best with one of these and the SMA launch and the patch tutorial with a K=2 tiling, 0.3 % and
+# 1.2 % above the best of the four; in the K sweep of cg27 (results/fused_sweep_k1_2026-11-04.txt section B) K=4 8,8
+# beat K=2 4:4 and K=1 on all six. K=2 tile 6:4, the SMA's best in the paired runs of cg24 (x1.132 over K=4 8,8; K=3
+# 8,6 x1.065), is not among the four and was not timed after cg24. (Corrected 2026-11-05: this paragraph first said
+# that every model ran best with one of the four in the sweeps of cg23 and cg27.) Each tiling has its tile buffers,
+# threads per tile and a copy of the extension words followed by its per-tile lists (excitation runs, lumped RLC
+# lists, dispersive runs); the extension floats and the state are shared. While tuning, IterateTS gives its command
+# buffers the tilings in turn (half batches of 32 steps, at most two buffers in flight), keeps per tiling the least
+# GPU time per step (GPUEndTime - GPUStartTime) of 4 timed buffers, then runs the fastest and releases the other
+# tilings' buffers. Timed are full batches and whole IterateTS calls; the short last buffer of a call and the first
+# buffer of the run (buffer mapping, GPU warm-up) run the first tiling and do not take a turn. Every tiling gives
+# every value the same operations in the same order (only independent cells change their order), so the fields do not
+# depend on the choice. Knobs: OPENEMS_DIAMOND_TUNE=n timed buffers per tiling (default 4), 0 = K=4 8,8 without
+# tuning; OPENEMS_DIAMOND_K, OPENEMS_DIAMOND_TILE and OPENEMS_DIAMOND_TIMING=2 fix one tiling as before; verbose > 0
+# or OPENEMS_DIAMOND_TIMING=1 print the choice.
+#
+# 1. Identity
+# - scripts/checks/diamond_check.sh on cg28: 72 of 72 identical: the 54 comparisons of cg27 plus, per box spec, a tuned
+#   run with OPENEMS_DIAMOND_BATCH=8 (the tuning ends within the run, after 129 steps, then K=3 6,6 or 8,6 on these
+#   41-43^3 boxes) and a run with the default batch (the tilings change every command buffer for most of the run).
+# - The six benchmark models, cg28 metal-diamond (tuned) against cg28 multithreaded:4, both OPENEMS_FTZ=1: port probes
+#   rel 0, S11/S21 0 dB on all six (results/*_cg28gpu.txt, 2026-11-04 21:42-21:44).
+# - Every run of both A/B sessions below identical to c0 (190 runs).
+#
+# 2. The tuner's choice (OPENEMS_DIAMOND_TIMING=1, one run each, others ~0.5-1 core): the timed rate of each tiling (MC/s
+#    of the fastest timed command buffer), the choice, and the steps the tuning took
+# | model (cells, steps)        | K=4 8,8 | K=4 12,8 | K=3 8,6 | K=3 6,6 | chosen    | tuning steps |
+# | SMA launch (0.871 M, 6000)  |  1726   |  1818    |  1898   |  1657   | K=3 8,6   | 584          |
+# | GCPW line (0.242 M, 15000)  |  1937   |  2184    |  1997   |  1785   | K=4 12,8  | 588          |
+# | notch x3 (5.25 M, 1200)     |  3052   |  3289    |  3154   |  2931   | K=4 12,8  | 614          |
+# | patch tutorial (0.104 M)    |  1254   |   961    |  1355   |  1778   | K=3 6,6   | 532          |
+# | notch tutorial (0.270 M)    |  1988   |  1927    |  1937   |  1920   | K=4 8,8   | 575          |
+# | patch x5 (7.86 M, 2400)     |  2997   |  2807    |  2987   |  2824   | K=4 8,8   | 623          |
+# The same choices as the best fixed tiling of the paired sweeps, and the same in every repeat (notch x3 3 of 3).
+# (The patch tutorial's IterateTS calls are 31 steps between its nf2ff dumps, one command buffer each, so its timed
+# rates include the per-call start; the order is what counts.)
+#
+# 3. Paired interleaved A/B against cg27 (bench/abtest.py, 5 rounds, 2026-11-04 21:43-21:48; quiet Mac: others' CPU
+#    0.5-1.3 cores, GPU 2-4 %). MC/s median [min-max], median paired ratio to c0 [min-max]
+# | model (steps)             | c0 cg27            | c1 cg28 (tuned)                    | c2 cg28 TUNE=0                     |
+# | SMA launch (6000)         | 1671 [1668-1674]   | 1828 [1826-1833] x1.094 [1.092-1.097] | 1673 [1671-1676] x1.001 [0.999-1.003] |
+# | GCPW line (15000)         | 1896 [1878-1898]   | 2113 [2006-2114] x1.114 [1.068-1.117] | 1895 [1809-1899] x0.999 [0.963-1.003] |
+# | notch x3 (3000)           | 3039 [3039-3045]   | 3226 [3226-3232] x1.061 [1.061-1.064] | 3033 [3033-3039] x0.998 [0.996-1.000] |
+# | patch tutorial (10500)    | 1640 [1568-1752]   | 1764 [1709-1806] x1.064 [1.010-1.152] | 1634 [1571-1651] x1.000 [0.942-1.042] |
+# | notch tutorial (16000)    | 1908 [1900-1912]   | 1902 [1896-1903] x0.996 [0.994-1.001] | 1903 [1899-1905] x0.998 [0.994-1.002] |
+# | patch x5 (2400)           | 2930 [2921-2930]   | 2917 [2908-2921] x0.995 [0.994-0.997] | 2939 [2935-2939] x1.003 [1.002-1.005] |
+# On the notch tutorial and patch x5 the default tiling is the best one; there the tuning (about 600 steps with the
+# other tilings in turn) costs 0.4-0.5 % of these short runs and nothing measurable in real runs (34k-190k steps).
+#
+# 4. The first version (dev28a, 2026-11-04 21:28-21:35, others' CPU 2.5-5 cores, GPU 2-4 %) gave every command buffer
+#    the next tiling, including the short last buffer of each IterateTS call, which is not timed. When the calls are
+#    a whole number of rounds long (notch x3: 258-step calls = eight buffers, the eighth short), the same tiling got
+#    the short buffer every call, so the tuning took 936 instead of 614 steps on notch x3 (552-1368 on the six models),
+#    and other call lengths could starve a tiling for the whole run (an independent review of the code found the same).
+#    Paired against cg27 it gave SMA x1.081, GCPW x1.106, notch x3 x1.024, patch tutorial x1.082, notch tutorial
+#    x0.993, patch x5 x0.997 (the best fixed tiling: x1.085, x1.101, x1.060, x1.075). cg28 times only full batches and
+#    whole calls and lets only those take a turn.
+#
+# 5. Independent review (three read-only reviewers with different lenses, each finding checked by two refuting
+#    verifiers, 2026-11-04 21:31-22:00, on the first version's diff): two reviewers found the round-robin problem of
+#    section 4 (confirmed for the first version, already fixed in cg28: the verifiers traced the cg28 rule and found that
+#    no call pattern can starve a tiling). The third point, that on the patch tutorial (38-step calls) the choice rests
+#    on three 32/33-step samples per tiling because its 2-6-step end-criterion calls use a fourth slot, was refuted by
+#    both verifiers as an effect on the choice: a short buffer costs more per step, so it can never make a slower tiling
+#    win, and every cg28 run picked the fastest tiling. No change.

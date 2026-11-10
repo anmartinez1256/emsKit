@@ -1,0 +1,153 @@
+{
+ "meta": {
+  "tag": "stock-v0.37.0_linux-sandbox",
+  "date": "2026-11-03T06:35:45",
+  "host": "vm",
+  "machine": "x86_64",
+  "system": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+  "engine": "fastest",
+  "threads": "0",
+  "openems_module": "/usr/local/lib/python3.13/site-packages/openEMS/__init__.py",
+  "lib_path": "/opt/openEMS/lib",
+  "quick": false
+ },
+ "timings": {
+  "slab": 3.7,
+  "cavity": 127.5,
+  "lines": 48.6
+ },
+ "results": [
+  {
+   "case": "slab_debye",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.010398861172615471,
+   "reference": 0.0,
+   "error": 0.010398861172615471,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0063; distance from non-dispersive answer 0.43"
+  },
+  {
+   "case": "slab_drude",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.02009270635051758,
+   "reference": 0.0,
+   "error": 0.02009270635051758,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0156; distance from non-dispersive answer 0.72"
+  },
+  {
+   "case": "slab_lorentz",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.01532048758575074,
+   "reference": 0.0,
+   "error": 0.01532048758575074,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0088; distance from non-dispersive answer 0.77"
+  },
+  {
+   "case": "cavity_rect",
+   "quantity": "modes found (7 expected)",
+   "value": 7.0,
+   "reference": 7.0,
+   "error": 0.0,
+   "tol": 0.25,
+   "kind": "rel",
+   "passed": true,
+   "note": "101 110 011 111 201 210 102"
+  },
+  {
+   "case": "cavity_rect",
+   "quantity": "max rel. error vs continuum",
+   "value": 0.0005504989310161387,
+   "reference": 0.0,
+   "error": 0.0005504989310161387,
+   "tol": 0.002,
+   "kind": "abs",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "cavity_rect",
+   "quantity": "max rel. error vs exact discrete Yee",
+   "value": 1.548818538832717e-08,
+   "reference": 0.0,
+   "error": 1.548818538832717e-08,
+   "tol": 1e-06,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 1.4e-08"
+  },
+  {
+   "case": "cavity_cyl",
+   "quantity": "modes found (6 expected)",
+   "value": 6.0,
+   "reference": 6.0,
+   "error": 0.0,
+   "tol": 0.25,
+   "kind": "rel",
+   "passed": true,
+   "note": "TM010:-0.04% TE111:+0.00% TM011:-0.04% TM110:-0.16% TE211:+0.02% TE011/TM111:-0.07%"
+  },
+  {
+   "case": "cavity_cyl",
+   "quantity": "max rel. error vs Bessel-zero formula",
+   "value": 0.0015835299523459976,
+   "reference": 0.0,
+   "error": 0.0015835299523459976,
+   "tol": 0.005,
+   "kind": "abs",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "wr90",
+   "quantity": "max rel. error of beta, 8-12 GHz",
+   "value": 0.0008719079135621755,
+   "reference": 0.0,
+   "error": 0.0008719079135621755,
+   "tol": 0.005,
+   "kind": "abs",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "wr90",
+   "quantity": "max S11 (dB) of the PML-terminated guide",
+   "value": -54.05498213118893,
+   "reference": -30.0,
+   "error": -24.05498213118893,
+   "tol": 0.0,
+   "kind": "max",
+   "passed": true,
+   "note": "pass if below the reference"
+  },
+  {
+   "case": "msl",
+   "quantity": "Z0 (ohm) vs Hammerstad-Jensen 47.67",
+   "value": 47.6686902895676,
+   "reference": 47.66730765404351,
+   "error": 2.9005949614834816e-05,
+   "tol": 0.02,
+   "kind": "rel",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "msl",
+   "quantity": "eps_eff vs Hammerstad-Jensen 2.8758",
+   "value": 2.8795500008866615,
+   "reference": 2.8757760531995116,
+   "error": 0.0013123232189624428,
+   "tol": 0.01,
+   "kind": "rel",
+   "passed": true,
+   "note": ""
+  }
+ ]
+}

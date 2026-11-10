@@ -1,0 +1,163 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\DisableLigatures[-]{encoding = T1, family = tt*}   % --options in \code stay two hyphens, not an en dash
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{xurl}   % long URLs in the bibliography may break at any character
+\usepackage[hidelinks]{hyperref}
+\setlist{nosep, leftmargin=1.4em}
+\renewcommand{\arraystretch}{1.12}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\MC}{MC/s}
+\newcommand{\repourl}{\url{https://github.com/anmartinez1256/emsKit}}   % the repository URL, set once, here
+\lstset{basicstyle=\ttfamily\footnotesize, breaklines=true, columns=fullflexible, keepspaces=true,
+  frame=single, framerule=0.2pt, rulecolor=\color{gray!50}, xleftmargin=4pt, xrightmargin=4pt, aboveskip=4pt, belowskip=6pt}
+\graphicspath{{figures/}}
+
+\title{\vspace{-1cm}fdtdKit: taking openEMS towards the memory ceiling of an Apple~M5\\
+\large A bit-identical speed-up of the EC-FDTD engine, and two run-length levers on the modelling side}
+\author{Angel Martinez\\ University of Texas at Austin}
+\date{Work of 2026-10-28 to 2026-11-10; draft of 2026-11-10}
+% PDF metadata: keep pdfauthor in step with the name in \author
+\hypersetup{pdftitle={fdtdKit: taking openEMS towards the memory ceiling of an Apple M5}, pdfauthor={Angel Martinez}}
+
+\begin{document}
+\sloppy
+\maketitle
+\vspace{-0.6cm}
+
+\begin{abstract}
+openEMS is a free electromagnetic field solver that uses the equivalent-circuit finite-difference time-domain
+(EC-FDTD) method. On an Apple M5 laptop its multithreaded CPU engine ran the four models of up to about a million cells
+studied here (two openEMS tutorials and two printed-circuit boards) at 268--379 million cell updates per second (\MC;
+its best of 2, 4 and 8 threads), well below the roughly 2\,000\,\MC\ that the machine's 153\,GB/s of unified memory
+allows at the 74 bytes per cell and time step of our traffic model. We report changes to the CPU engine that bring the
+same models to 1\,808--1\,961\,\MC, 4.73--6.89$\times$ the speed of stock v0.37.0 built with Apple clang, and two
+refined tutorial models of 5--8 million cells to 1.95--2.72$\times$ (snapshot cg29 of 2026-11-05, paired with stock in
+the same rounds; on the patch tutorial the fork's base alone, with upstream's background dump writer, ran 1.13$\times$
+as fast as stock in separate runs of 2026-11-03), with results identical bit for bit to stock for the same number of
+time steps; changes to the operator setup
+and the far-field post-processing that cut their times (4.1\,s to 0.9\,s and 17.9\,s to 1.0\,s on a 7.9-million-cell
+model; from the project log); an opt-in Metal engine that advances tiles of the grid several time steps at a time (the
+diamond tile schedule of luikore's openEMS pull request \#228, without its code), identical bit for bit to the CPU
+engine when the CPU, like the GPU, flushes subnormal numbers; and two changes on the modelling side (a run-end
+criterion based on the port probes, and a mesh-line merging rule with a minimum cell size) that shorten the runs
+themselves. In the same paired runs the Metal engine ran the two large models at 2\,879 and 3\,193\,\MC, 1.47 and
+1.46$\times$ the CPU engine at its best, and one board, a grounded-coplanar (GCPW) line, 1.17$\times$; it was level on
+the other, a vertical SMA launch (1.00$\times$, 1.07 million cells), and slower on the two tutorials (0.97 and
+0.93$\times$). In a sweep of three models over 0.1--7.9 million cells it was ahead in every round from 1.7--2.9
+million cells on, depending on the model, by 1.25--1.52$\times$ above 3 million, and within 0.89--1.23$\times$ of the
+CPU engine below that. Unblocked, as a fused sweep, it reaches only 67--75\,\% of that sweep's traffic bound on the large
+models: on this machine, whose GPU shares the bus with the cores, the blocking carries the gain. Together, the CPU
+engine of cg18 (patches 0001--0006, the author's installed build until cg29 replaced it on 2026-11-06) and the
+toolkit's defaults since 2026-11-04 cut the solver
+time of a complete simulation of the SMA launch from 562.7\,s with stock openEMS to 37.4\,s (15.0$\times$) and that of a
+50\,mm GCPW line from 76.5\,s to 5.2\,s (14.7$\times$; 5.8$\times$ and 8.9$\times$ with the toolkit's defaults until
+2026-11-04, a 0.02\,mm floor and a hold of 1); with cg29 the Metal engine ran these default runs 1.22 and 1.37$\times$
+faster than the CPU engine
+(paired per round, on a loaded machine). All these times are measured. We describe the measurement harness and the
+verification policy that made this safe, the mechanisms behind each gain (barriers and the neighbour flags that
+replaced them, the inner loop, work distribution, a fused E/H sweep that cuts the modelled DRAM traffic from 74 to 49
+bytes per cell, an allocation-placement valley, the boundary and dispersive-material paths, coefficient tables, the
+GPU's diamond tiles), and what did not work. Because the memory bus of one machine bounds the cell rate, we also
+outline, without measurements, how a domain-decomposed engine (openEMS has none today) could spread one model over a
+Thunderbolt-connected cluster of Mac mini or Mac Studio machines, each adding its own unified memory and bus. The
+engine patches, the benchmark harness, the result tables, the scripts and a command line that runs the harness and
+the checks (\code{emskit fdtd}) are published at \repourl.
+\end{abstract}
+
+\input{sec_intro}
+\input{sec_method}
+\input{sec_engine}
+\input{sec_beyond}
+\input{sec_gpu}
+\input{sec_modelling}
+\input{sec_results}
+\input{sec_positioning}
+\input{sec_closing}
+
+
+\begin{thebibliography}{99}\small
+\bibitem{liebig2013} T.~Liebig, A.~Rennings, S.~Held, D.~Erni, ``openEMS -- a free and open source equivalent-circuit (EC) FDTD
+  simulation platform supporting cylindrical coordinates suitable for the analysis of traveling wave MRI applications,''
+  \emph{Int. J. Numer. Model.} 26(6), 680--696, 2013. Software: \url{https://github.com/thliebig/openEMS}.
+\bibitem{yee1966} K.~S.~Yee, ``Numerical solution of initial boundary value problems involving Maxwell's equations in
+  isotropic media,'' \emph{IEEE Trans. Antennas Propag.} 14(3), 302--307, 1966.
+\bibitem{taflove} A.~Taflove, S.~C.~Hagness, \emph{Computational Electrodynamics: The Finite-Difference Time-Domain Method},
+  3rd ed., Artech House, 2005.
+\bibitem{mur1981} G.~Mur, ``Absorbing boundary conditions for the finite-difference approximation of the time-domain
+  electromagnetic-field equations,'' \emph{IEEE Trans. Electromagn. Compat.} 23(4), 377--382, 1981.
+\bibitem{berenger1994} J.-P.~Berenger, ``A perfectly matched layer for the absorption of electromagnetic waves,''
+  \emph{J. Comput. Phys.} 114(2), 185--200, 1994.
+\bibitem{roofline} S.~Williams, A.~Waterman, D.~Patterson, ``Roofline: an insightful visual performance model for
+  multicore architectures,'' \emph{Commun. ACM} 52(4), 65--76, 2009.
+\bibitem{m5} Apple Inc., ``Apple unleashes M5, the next big leap in AI performance for Apple silicon,'' press release,
+  October 2025 (unified memory bandwidth 153\,GB/s).
+  \url{https://www.apple.com/newsroom/2025/10/apple-unleashes-m5-the-next-big-leap-in-ai-performance-for-apple-silicon/}
+\bibitem{aipolicy} openEMS project, \code{AI\_POLICY.md} (disclosure trailers, sign-off, licence), in the openEMS repository, 2026.
+  \url{https://github.com/thliebig/openEMS/blob/master/AI_POLICY.md}
+\bibitem{hfssmesh} Ansys Inc., ``An introduction to multi-frequency adaptive meshing in HFSS,'' Ansys Electronics
+  documentation, 2025. \url{https://ansyshelp.ansys.com/public/Views/Secured/Electronics/v252/en/PDFs/An%20Introduction%20to%20Multi-Frequency%20Adaptive%20Meshing%20in%20HFSS.pdf}
+\bibitem{cstgpu} Dassault Syst\`emes, \emph{CST Studio Suite GPU Computing Guide}. \url{https://updates.cst.com/downloads/GPU_Computing_Guide.pdf}
+\bibitem{xfdtd} Remcom Inc., ``XStream GPU acceleration for XFdtd.'' \url{https://remcom.com/xf-xstream}
+\bibitem{h100} NVIDIA Corp., \emph{NVIDIA H100 Tensor Core GPU}, product page (H100 SXM: 3.35\,TB/s memory
+  bandwidth), fetched 2026-11-03. \url{https://www.nvidia.com/en-us/data-center/h100/}
+\bibitem{meep} A.~F.~Oskooi, D.~Roundy, M.~Ibanescu, P.~Bermel, J.~D.~Joannopoulos, S.~G.~Johnson, ``MEEP: A flexible
+  free-software package for electromagnetic simulations by the FDTD method,'' \emph{Comput. Phys. Commun.} 181(3),
+  687--702, 2010.
+\bibitem{gprmax} C.~Warren, A.~Giannopoulos, I.~Giannakis, ``gprMax: Open source software to simulate electromagnetic
+  wave propagation for Ground Penetrating Radar,'' \emph{Comput. Phys. Commun.} 209, 163--170, 2016.
+\bibitem{sophie} O.~Cessenat, ``Sophie, an FDTD code on the way to multicore, getting rid of the memory bandwidth
+  bottleneck better using cache,'' arXiv:1301.4539, 2013.
+\bibitem{fukaya2018} T.~Fukaya, T.~Iwashita, ``Time-space tiling with tile-level parallelism for the 3D FDTD method,''
+  in \emph{Proc. HPC Asia 2018}, ACM, 2018. doi:10.1145/3149457.3149478.
+\bibitem{malas2015} T.~Malas, G.~Hager, H.~Ltaief, H.~Stengel, G.~Wellein, D.~Keyes, ``Multicore-optimized wavefront
+  diamond blocking for optimizing stencil updates,'' \emph{SIAM J. Sci. Comput.} 37(4), C439--C464, 2015; arXiv:1410.3060.
+\bibitem{biergaizi154} biergaizi, ``Notes on HPC programming and openEMS optimizations,'' openEMS-Project GitHub
+  Discussion \#154, 2023--2024. \url{https://github.com/thliebig/openEMS-Project/discussions/154}
+\bibitem{biergaizi29} biergaizi, ``[FAQ] Why are openEMS simulations slow, and how to make them faster,''
+  openEMS-Project GitHub Discussion \#29, 2023. \url{https://github.com/thliebig/openEMS-Project/discussions/29}
+\bibitem{luikore228} luikore, ``Metal engine and diamond wavefront,'' openEMS pull request \#228, opened 2026-09-29;
+  benchmark and design notes \code{macos/doc/metal-benchmark.rst} (M5 Max results recorded 2026-09-17, M4 Pro
+  2026-09-28) and \code{macos/doc/metal-engine.rst} in luikore's fork of openEMS, fetched 2026-11-04.
+  \url{https://github.com/thliebig/openEMS/pull/228},
+  \url{https://github.com/luikore/openEMS/blob/master/macos/doc/metal-benchmark.rst}
+\bibitem{mollet235} S.~Mollet, ``FDTD: add a GPU engine with Metal and HIP backends,'' openEMS pull request \#235,
+  opened 2026-10-08; in master as commit c3a956b, 2026-10-17. \url{https://github.com/thliebig/openEMS/pull/235}
+\bibitem{akdag231} ismailakdag, ``FDTD: faster multithreaded engine with PML and other extensions,'' openEMS pull
+  request \#231, opened 2026-10-05. \url{https://github.com/thliebig/openEMS/pull/231}
+\bibitem{mrhv492} MrHighVoltage, ``Many optimizations: Vulkan GPU, AVX2, temporal blocking, better output-handling,''
+  openEMS-Project GitHub Discussion \#492, 2026-10-26; fork at \url{https://github.com/MrHighVoltage/openEMS}.
+  \url{https://github.com/thliebig/openEMS-Project/discussions/492}
+\bibitem{pr245} unsettledroell404, ``Multithreaded Debye and Lorentz material updates,'' openEMS pull request \#245,
+  opened 2026-10-26. \url{https://github.com/thliebig/openEMS/pull/245}
+\bibitem{pr244} nori-proto, ``extensions: set up the UPML and Debye coefficients on several threads,'' openEMS pull
+  request \#244, opened 2026-10-26. \url{https://github.com/thliebig/openEMS/pull/244}
+\bibitem{pr230} whahnsr, ``Optimize mesh delta calculation,'' openEMS pull request \#230, opened 2026-10-03.
+  \url{https://github.com/thliebig/openEMS/pull/230}
+\bibitem{sycl243} A.~Iercosan-Lucaci (lucaci32u4), ``GPU: New SYCL (Intel) backend,'' openEMS pull request \#243,
+  opened 2026-10-26. \url{https://github.com/thliebig/openEMS/pull/243}
+\bibitem{thliebig495} T.~Liebig, ``GPU and speed contributions: where this is going,'' openEMS-Project GitHub
+  Discussion \#495, 2026-10-31, with replies to 2026-11-03.
+  \url{https://github.com/thliebig/openEMS-Project/discussions/495}
+\bibitem{rdmatb5} Apple Inc., \emph{macOS Tahoe 26.2 Release Notes}, section ``RDMA over Thunderbolt'' (low-latency
+  communication between Thunderbolt~5 hosts), and ``TN3205: Low-latency communication with RDMA over Thunderbolt,''
+  technical note, first published 2026-03-19 (available starting with macOS 26.2 on Macs with Apple silicon with
+  Thunderbolt~5); Apple Developer Documentation, fetched 2026-11-08.
+  \url{https://developer.apple.com/documentation/macos-release-notes/macos-26_2-release-notes},
+  \url{https://developer.apple.com/documentation/technotes/tn3205-low-latency-communication-with-rdma-over-thunderbolt}
+\bibitem{macmini} Apple Inc., \emph{Mac mini technical specifications}, fetched 2026-11-03 (M5 Pro: up to 64\,GB,
+  307\,GB/s). \url{https://www.apple.com/mac-mini/specs/}
+\bibitem{studiom5} ``Apple announces the M5 Ultra Mac Studio with up to 512GB of RAM,'' Macworld, August 2026 (M5 Ultra:
+  1.2\,TB/s). \url{https://www.macworld.com/article/3220024/apple-announces-the-m5-ultra-mac-studio-with-up-to-512gb-of-ram.html}
+\end{thebibliography}
+\end{document}

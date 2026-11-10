@@ -1,0 +1,43 @@
+Diamond-blocked Metal engine: dispersive materials on the GPU (snapshots cg22, cg23), 2026-11-04
+================================================================================================
+cg22 = 57511e8 (v0.37.0-28-g57511e8) on speed-m5-gpu: Engine_Ext_LorentzMaterial (Drude/Lorentz materials and the
+conducting sheets, an order-2 Lorentz extension with voltage ADEs) on the GPU. cg23 = 452f905 (v0.37.0-29-g452f905):
++ Engine_Ext_DebyeMaterial. Both only as exactly those classes (typeid), not as subclasses. The CPU code changes only by
+friend declarations (engine_ext_dispersive.h, engine_ext_lorentzmaterial.h, engine_ext_debyematerial.h and the three
+operator headers). Snapshots ~/opt/openEMS-dev/snap/cg22, cg23 (three dylibs, cgNN.patch vs 7bb294f, BASE). Neither is
+installed (~/opt/openEMS is cg18). The libraries' version strings lag one commit, as with cg19-cg21.
+
+Stage order per tile (the CPU engine's: Pre hooks in reverse extension order, Post and Apply in extension order;
+UPML has the highest priority, Mur, lumped RLC and the dispersive extensions priority 0, the excitation -1000):
+  E step: [Mur Pre, Lorentz Pre, Debye Pre]  (read the field only)  -> UPML Pre -> update -> UPML Post ->
+          [Mur Post, Debye Post]  (read the field only) -> Apply list in extension order (Mur faces, lumped RLC,
+          dispersive: field -= ADE per order) -> voltage excitation
+  H step: Lorentz Pre (current ADEs) -> UPML Pre -> update -> UPML Post -> dispersive current Apply -> current excitation
+
+1. Bit identity, box tests (scripts/checks/diamond_check.sh): cg22 48 of 48 (diamond_check_cg22_2026-11-04.txt),
+   cg23 54 of 54 (diamond_check_cg23_2026-11-04.txt); CPU reference = multithreaded, 4 threads, OPENEMS_FTZ=1;
+   K = 1, 2, 3, 4, 8 and tile 7,0 / 96 threads / batch 3 for every case. New cases: two conducting sheets (a z plane
+   and an x plane) on a Mur box; a two-pole Debye block on a Mur box (the block changes 97 % of the field values vs the
+   same box without it); PML_8/MUR/PEC/PML_8/MUR/PML_8 with delayed E and soft H excitations, 16 lumped elements, two
+   Drude/Lorentz blocks (eps plasma + Lorentz pole + mue plasma: voltage and current ADEs with the Lorentz term; eps
+   plasma only: without it), the sheets and the Debye block.
+   scripts/checks/debye_check.sh on cg23 (reference cg22): PASS.
+
+2. CPU paths vs stock v0.37.0 (bench/check.sh cg22 cg22, LITE=1, RFSIM_PATH set): ALL IDENTICAL, 6 models; tables
+   *_cg22.txt (loaded Mac: the CPU speeds there are low; the cg18 tables stay the CPU reference speeds).
+
+3. All six models now run on the GPU (tables *_cg22gpu.txt, reference = cg22 multithreaded 4 threads with
+   OPENEMS_FTZ=1, same load for the three columns, load avg 5-7):
+   | model (cells)            | CPU 4 thr FTZ | metal-diamond | upstream gpu | vs FTZ CPU (both GPU engines) | cg18 CPU best, quiet |
+   | GCPW line (0.24 M)       |  761          | 1465          | 1329         | probes rel 0, S21 0           | 1760                 |
+   | SMA launch (0.87 M)      |  755          | 1307          | 1127         | probes rel 0, S11/S21 0       | 1361                 |
+   | notch tutorial (0.27 M)  |  949          | 1816          | 1622         | probes rel 0, S11/S21 0       | 1961                 |
+   | notch x3 (5.25 M)        | 1008          | 2961          | 1354         | probes rel 0, S11 0           | 2046                 |
+   | patch tutorial (0.10 M)  |  994          | 1590          | 1050         | probes rel 0, S11 0           | 1880                 |
+   | patch x5 (7.86 M)        | 1310          | 2884          | 1491         | probes rel 0, S11 0           | 1716                 |
+   GCPW on cg23 (kgcpw_s1_n15000_cg23gpu.txt): 1454 MC/s, identical. The GCPW sheets: 2 orders, the default threads
+   rule gives 256 per tile there.
+
+4. Not on the GPU yet (CPU loops on the same memory, with a message naming the extension): TFSF, steady-state,
+   cylinder / multigrid, any subclass of the dispersive extensions. Probes and dumps run on the CPU between
+   IterateTS calls, as before.

@@ -1,0 +1,7 @@
+# notch_s3_n2000  2026-11-04 08:45
+stock@multithreaded:8           790.9 MC/s     13.27 s  2000 TS x 5.247 MC  others  70%  [ref]  openEMS v0.37.0
+cg21@multithreaded:4           1734.7 MC/s      6.05 s  2000 TS x 5.247 MC  others  53%  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-26-gcd80d8c
+cg21@multithreaded:8           1325.1 MC/s      7.92 s  2000 TS x 5.247 MC  others  52%  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-26-gcd80d8c
+cg21@fastest                   1089.8 MC/s      9.63 s  2000 TS x 5.247 MC  others 284%  busy emskit-phase1:83,emskit-phase1:82,emskit-phase1:82  (auto-picked 8 threads)  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0           2774.6 MC/s      3.78 s  2000 TS x 5.247 MC  others 283%  busy emskit-phase1:82,emskit-phase1:82,emskit-phase1:82  probes rel=2.3e-07 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=4.0e-08 max dB=2.8e-06  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg21@metal-diamond:0)

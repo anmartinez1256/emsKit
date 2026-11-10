@@ -1,0 +1,7 @@
+# notch_s1_n16000  2026-10-29 05:03
+stock@multithreaded:4           322.1 MC/s     13.40 s  16000 TS x 0.270 MC  others  36%  runs 322/320  busy mediaanalysisd:21  [ref]
+cg11@multithreaded:1            572.5 MC/s      7.54 s  16000 TS x 0.270 MC  others  15%  runs 569/572  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@multithreaded:4           1797.4 MC/s      2.40 s  16000 TS x 0.270 MC  others  14%  runs 1797/1783  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@multithreaded:8           1483.7 MC/s      2.91 s  16000 TS x 0.270 MC  others  36%  runs 1393/1484  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@multithreaded:10          1073.8 MC/s      4.02 s  16000 TS x 0.270 MC  others  30%  runs 1074/1050  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@fastest                   1641.6 MC/s      2.63 s  16000 TS x 0.270 MC  others  38%  runs 1630/1642  (auto-picked 4 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

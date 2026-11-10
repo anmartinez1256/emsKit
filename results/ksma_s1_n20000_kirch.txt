@@ -1,0 +1,6 @@
+# ksma_s1_n20000  2026-10-29 03:59
+stock@multithreaded:4           256.3 MC/s     83.56 s  20000 TS x 1.071 MC  others 148%  runs 248/256  busy WindowServer:36,mediaanalysisd:32  [ref]
+multithreaded:4                 443.2 MC/s     48.33 s  20000 TS x 1.071 MC  others  19%  runs 421/443  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:8                 525.9 MC/s     40.73 s  20000 TS x 1.071 MC  others  64%  runs 526/461  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+fastest                         521.5 MC/s     41.07 s  20000 TS x 1.071 MC  others  75%  runs 522/513  busy WindowServer:29  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+gpu                            1134.5 MC/s     18.88 s  20000 TS x 1.071 MC  others 110%  runs 1016/1135  busy WindowServer:37,KirchhoffStudio:36  probes rel=3.5e-07  S11: max|dS|=1.4e-07 max dB=1.5e-05  S21: max|dS|=3.7e-08 max dB=5.2e-07

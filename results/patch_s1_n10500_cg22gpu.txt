@@ -1,0 +1,5 @@
+# patch_s1_n10500  2026-11-04 09:07
+cg22@multithreaded:4#OPENEMS_FTZ=1    993.8 MC/s      1.09 s  10500 TS x 0.104 MC  others 242%  busy emskit-phase1:85,swiftpm-testing-:85,mediaanalysisd:26  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg22@metal-diamond:0#OPENEMS_FTZ=1   1589.8 MC/s      0.68 s  10500 TS x 0.104 MC  others 200%  busy emskit-phase1:85,swiftpm-testing-:84  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+cg22@gpu                       1050.1 MC/s      1.04 s  10500 TS x 0.104 MC  others 216%  busy emskit-phase1:85,swiftpm-testing-:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg22@metal-diamond:0#OPENEMS_FTZ=1, cg22@gpu)

@@ -1,0 +1,7 @@
+# patch_s1_n10500  2026-10-28 13:30
+multithreaded:2                 279.7 MC/s      3.89 s  10500 TS x 0.104 MC  others  45%  runs 280/280  [ref]
+cg8@multithreaded:1             652.2 MC/s      1.67 s  10500 TS x 0.104 MC  others  48%  runs 647/652  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg8@multithreaded:4            1805.6 MC/s      0.60 s  10500 TS x 0.104 MC  others  50%  runs 1789/1806  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg8@multithreaded:8            1530.3 MC/s      0.71 s  10500 TS x 0.104 MC  others  48%  runs 1530/1497  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg8@multithreaded:10           1524.7 MC/s      0.71 s  10500 TS x 0.104 MC  others  49%  runs 1523/1525  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg8@fastest                    1443.6 MC/s      0.75 s  10500 TS x 0.104 MC  others  45%  runs 1422/1444  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

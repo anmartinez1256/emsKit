@@ -1,0 +1,198 @@
+{
+  "exit" : 0,
+  "invocations" : [
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-B",
+        "-c",
+        "import sys, json, time; sys.path.insert(0, sys.argv[1]); import usage; s = usage.Sampler(); time.sleep(float(sys.argv[2])); r = s.stop()\nprint('FDTDKIT_LOAD ' + json.dumps(dict(load=r, processesSeen=len(getattr(s, 'cpu1', {})), gpuClientsSeen=len(getattr(s, 'gpu1', {})), utilSamples=len(getattr(s, 'util', [])))))",
+        "\/work\/emsKit\/bench",
+        "1"
+      ],
+      "cwd" : "\/work\/emsKit",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : null,
+      "ran" : false,
+      "role" : "sampler-check",
+      "seconds" : null
+    },
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-u",
+        "-B",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-ab-4242\/fdtdkit_run.py",
+        "--repo",
+        "\/work\/emsKit",
+        "--control-fd",
+        "3",
+        "--report",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-ab-4242\/launcher-ab.json",
+        "exec",
+        "--",
+        "\/opt\/py\/bin\/python3",
+        "-W",
+        "ignore",
+        "\/work\/emsKit\/bench\/abtest.py",
+        "notch",
+        "--scale",
+        "3",
+        "--nrts",
+        "2000",
+        "--rounds",
+        "3",
+        "--configs",
+        "stock@multithreaded:4",
+        "cg29@multithreaded:4",
+        "--runs",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-ab-4242\/runs",
+        "--out",
+        "\/work\/ab.txt"
+      ],
+      "cwd" : "\/work\/emsKit",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "OPENEMS_BENCH_SNAPS" : "\/Users\/tester\/opt\/openEMS-dev\/snap",
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : "ab-1",
+      "ran" : false,
+      "role" : "ab",
+      "seconds" : null
+    },
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-B",
+        "-c",
+        "import sys, json, time; sys.path.insert(0, sys.argv[1]); import usage; s = usage.Sampler(); time.sleep(float(sys.argv[2])); r = s.stop()\nprint('FDTDKIT_LOAD ' + json.dumps(dict(load=r, processesSeen=len(getattr(s, 'cpu1', {})), gpuClientsSeen=len(getattr(s, 'gpu1', {})), utilSamples=len(getattr(s, 'util', [])))))",
+        "\/work\/emsKit\/bench",
+        "1"
+      ],
+      "cwd" : "\/work\/emsKit",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : null,
+      "ran" : false,
+      "role" : "sampler-check",
+      "seconds" : null
+    }
+  ],
+  "jobs" : [
+    {
+      "configs" : [
+        {
+          "cfg" : "stock@multithreaded:4",
+          "engine" : "multithreaded",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "16211733a1f05e2f39f0f8f2f70c125115349e1e4d2054cbcf9d1b39b7a0e605",
+                "uuid" : "B1A89DA1-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "7021ea76fe886303e33e4d69e0d5d13547705a3d597f78e5c2b764c5cd6486ac",
+                "uuid" : "B1A89DA1-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "664becc79a230d1ae86e44fe4f20e5a15cc2f6b6adf904ee24178c2971eee765",
+                "uuid" : "B1A89DA1-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "stock"
+          },
+          "nodumps" : false,
+          "threads" : 4
+        },
+        {
+          "cfg" : "cg29@multithreaded:4",
+          "engine" : "multithreaded",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "87a1d5a960dd353ca97c0ef8704d15e9767eb2c8fbb990eefb4bd162c956a694",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "34e1115017d50f5e0c0aa00320c2946e9956ee551208a51b995e363cdcb4e6e7",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "90a25d09f860f722dac73e998a82aa6d5898e54fa4201a1f86c9ea80ad8b0495",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "cg29"
+          },
+          "nodumps" : false,
+          "threads" : 4
+        }
+      ],
+      "id" : "ab-1",
+      "inputs" : [
+
+      ],
+      "knobs" : {
+
+      },
+      "model" : "notch",
+      "nrts" : 2000,
+      "options" : {
+
+      },
+      "outputs" : [
+        {
+          "path" : "\/work\/ab.txt",
+          "role" : "record"
+        }
+      ],
+      "role" : "ab",
+      "rounds" : 3,
+      "scale" : 3,
+      "tool" : "abtest"
+    }
+  ],
+  "status" : "ok"
+}

@@ -1,0 +1,667 @@
+From 8f9d55e20bfa85bdf373341843248105ef4490d8 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 01:51:09 -0600
+Subject: [PATCH 25/27] Multithreaded engine: neighbour flags instead of the
+ two barriers of the fused sweep
+
+With the fused sweep every timestep still ended at two barriers of all threads. On the Apple M5 (4 P + 6 E
+cores) a thread that macOS moves to an E core, or that loses its core to another process, holds up all the
+others: at 8 threads they waited 24-27 % of the time. A thread needs its neighbours only: the voltages of its
+last x-line need the currents of the line after its slab, which the next thread updates (its line before the
+slab), and its line before the slab needs the final voltages of the previous thread's last line.
+FusedTimestepFlags() replaces the barriers by two step counters per thread (StepFlag: it spins like SpinBarrier
+for OPENEMS_BARRIER_SPIN_US, then sleeps on a condition variable; seq_cst store and load, so no wake-up is
+lost). Before its last block a thread waits until the next thread has done its line before the slab in the
+previous timestep, then publishes its sweep; before its line before the slab it waits for the previous thread's
+sweep of this timestep, then publishes that line. Every cell sees the same operands as with the barriers
+(bit-identical). Neighbours are at most one timestep apart, threads t and t+k at most k.
+
+The threads are then at different timesteps, so the extensions' line hooks must not depend on a common one:
+TS_LOCAL (engine_extension.h) declares that they keep no state shared by x-lines that changes from one
+timestep to the next and read the timestep through GetNumberOfTimesteps(), which returns the calling engine
+thread's own count while the flags run (thread_local). Mur (fast path), UPML (vector and scalar SSE paths), the
+excitation, the dispersive family (Lorentz/Drude, conducting sheets, Debye) and lumped RLC declare it. Lumped
+RLC moved its [n], [n-1], [n-2] containers on by a pointer rotation once per timestep (a mutex and an atomic
+stamp in its line hooks); it now takes them from the timestep itself, [k] = base[(k-ts-1) mod 3], the same
+arrays as the rotation (a slot indexed by the timestep, as MrHighVoltage proposed in upstream Discussion
+#492). With an extension that does not declare it (the steady-state detection, until the next commit), the
+barriers stay and the verbose message names that extension; OPENEMS_FLAGS=0 keeps them too. The flags count
+the timesteps of one IterateTS() call; numTS moves on after it.
+
+Verified bit-identical against the barriers and against stock v0.37.0: bench/check.sh (six models), boxes with
+Mur, PML_8, lumped RLC, conducting sheets, Drude/Lorentz and Debye blocks at 1 to 10 threads (76 runs, 48 of
+them with flags), scripts/checks/debye_check.sh, and a stress run with OPENEMS_BARRIER_SPIN_US=0 (every wait
+that is not satisfied at once sleeps) at 3, 8 and 10 threads and the automatic count, under a watchdog: no hang.
+Paired interleaved A/B in one build, flags against OPENEMS_FLAGS=0, 5 rounds, other processes on 0.3-0.6
+cores, median MC/s and median paired ratio:
+  model            4 threads             8 threads
+  GCPW line        1573 -> 1598 x1.016   1337 -> 1719 x1.286
+  notch tutorial   1621 -> 1650 x1.015   1481 -> 1805 x1.227
+  SMA launch       1263 -> 1307 x1.035   1437 -> 1590 x1.109
+  patch tutorial   1644 -> 1722 x1.055   1577 -> 1702 x1.073
+  patch x5         1659 -> 1708 x1.029   1802 -> 1985 x1.102
+  notch x3         1694 -> 1739 x1.019   2006 -> 2081 x1.077
+The per-thread timestep costs the barrier path nothing measurable (the build before runs at x0.97-1.02 of it).
+OPENEMS_FUSED_STAT at 8 threads: the threads wait 10-22 % of the time (patch x5, SMA, GCPW).
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp               | 150 +++++++++++++++++++++-
+ FDTD/engine_multithread.h                 |  26 ++++
+ FDTD/extensions/engine_ext_dispersive.cpp |   2 +-
+ FDTD/extensions/engine_ext_excitation.cpp |   2 +-
+ FDTD/extensions/engine_ext_lumpedRLC.cpp  |  80 ++++++------
+ FDTD/extensions/engine_ext_lumpedRLC.h    |  24 ++--
+ FDTD/extensions/engine_ext_mur_abc.h      |   2 +-
+ FDTD/extensions/engine_ext_upml.h         |   2 +-
+ FDTD/extensions/engine_extension.h        |   5 +
+ tools/spin_barrier.h                      |   3 +
+ 10 files changed, 234 insertions(+), 62 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 187715f..1595a72 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -50,6 +50,10 @@ using std::endl;
+ using std::fixed;
+ using std::setprecision;
+ 
++//! the timestep of an engine thread in a fused sweep with neighbour flags (t_OwnTS), see GetNumberOfTimesteps()
++static thread_local bool t_OwnTS = false;
++static thread_local unsigned int t_TS = 0;
++
+ //! \brief construct an Engine_Multithread instance
+ //! it's the responsibility of the caller to free the returned pointer
+ Engine_Multithread* Engine_Multithread::New(const Operator_Multithread* op, unsigned int numThreads)
+@@ -77,6 +81,9 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_opt_speed = false;
+ 	m_auto_threads = false;
+ 	m_Fused = false;
++	m_UseFlags = false;
++	m_SweepDone = 0;
++	m_BoundaryDone = 0;
+ 	m_FusedStat = 0;
+ 	m_FusedStatThreads = 0;
+ 	m_Balance = false;
+@@ -189,6 +196,11 @@ void Engine_Multithread::Reset()
+ 		delete[] m_FusedStat;
+ 		m_FusedStat = 0;
+ 		m_FusedStatThreads = 0;
++		delete[] m_SweepDone;
++		m_SweepDone = 0;
++		delete[] m_BoundaryDone;
++		m_BoundaryDone = 0;
++		m_UseFlags = false;
+ 		delete m_startBarrier;
+ 		m_startBarrier = 0;
+ 		delete m_stopBarrier;
+@@ -309,8 +321,17 @@ double Engine_Multithread::RunTimesteps(unsigned int n)
+ {
+ 	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+ 	m_iterTS = n;
++	const bool flags = m_Fused && m_UseFlags;
++	if (flags)   // the flags count the timesteps of this call
++		for (unsigned int t=0; t<m_numThreads; ++t)
++		{
++			m_SweepDone[t].value.store(0, std::memory_order_relaxed);
++			m_BoundaryDone[t].value.store(0, std::memory_order_relaxed);
++		}
+ 	m_startBarrier->wait(); // start the threads
+ 	m_stopBarrier->wait(); // wait for the threads to finish n time steps
++	if (flags)   // no barrier counted them
++		numTS += n;
+ 	return std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
+ }
+ 
+@@ -602,8 +623,34 @@ void Engine_Multithread::SetupFused()
+ 	m_LineCost.clear();
+ 	const char* bal = getenv("OPENEMS_BALANCE");
+ 	m_Balance = (m_numThreads>1) && !(bal && *bal && (atoi(bal)==0));
++
++	// neighbour flags instead of the two barriers per timestep, when every extension's line hooks allow the threads
++	// to be at different timesteps (TS_LOCAL)
++	const char* fenv = getenv("OPENEMS_FLAGS");
++	m_UseFlags = (m_numThreads>1) && !(fenv && *fenv && (atoi(fenv)==0));
++	std::string nonlocal;
++	for (int k=0; k<N; ++k)
++		if (!(m_Eng_exts.at(k)->GetUsedHooks() & Engine_Extension::TS_LOCAL))
++		{
++			m_UseFlags = false;
++			nonlocal = m_Eng_exts.at(k)->GetExtensionName();
++		}
++	delete[] m_SweepDone;
++	delete[] m_BoundaryDone;
++	m_SweepDone = m_BoundaryDone = 0;
++	if (m_UseFlags)
++	{
++		m_SweepDone = new StepFlag[m_numThreads];
++		m_BoundaryDone = new StepFlag[m_numThreads];
++		for (unsigned int t=0; t<m_numThreads; ++t)
++		{
++			m_SweepDone[t].value = m_SweepDone[t].sleepers = 0;
++			m_BoundaryDone[t].value = m_BoundaryDone[t].sleepers = 0;
++		}
++	}
+ 	m_Fused = true;
+-	ReportFused("fused sweep, " + std::to_string(nb) + " blocks of x-lines");
++	ReportFused("fused sweep, " + std::to_string(nb) + " blocks of x-lines" +
++				(m_UseFlags ? ", neighbour flags" : (nonlocal.empty() ? "" : ", barriers (the extension \"" + nonlocal + "\" is not TS_LOCAL)")));
+ }
+ 
+ // SetupFused() runs after every change of the thread count, and the level engines of a cylindrical multigrid
+@@ -692,12 +739,101 @@ void Engine_Multithread::FusedTimestep(int threadID)
+ 	m_IterateBarrier->wait(&numTS);
+ }
+ 
++unsigned int Engine_Multithread::GetNumberOfTimesteps()
++{
++	return t_OwnTS ? t_TS : numTS;
++}
++
++void Engine_Multithread::StepFlag::Publish(unsigned int v)
++{
++	// seq_cst store and load: either the neighbour sees the new value before it sleeps, or this sees it asleep
++	value.store(v, std::memory_order_seq_cst);
++	if (sleepers.load(std::memory_order_seq_cst)>0)
++	{
++		std::lock_guard<std::mutex> lock(mutex);
++		cond.notify_all();
++	}
++}
++
++std::chrono::steady_clock::duration Engine_Multithread::StepFlag::WaitFor(unsigned int v)
++{
++	if (value.load(std::memory_order_acquire)>=v)
++		return std::chrono::steady_clock::duration::zero();
++	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
++	const std::chrono::steady_clock::time_point stop = t0 + SpinBarrier::SpinTime();
++	for (unsigned int n=1;;++n)
++	{
++		if (value.load(std::memory_order_acquire)>=v)
++			return std::chrono::steady_clock::now()-t0;
++		SpinBarrier::CpuRelax();
++		if (((n%128)==0) && (std::chrono::steady_clock::now()>stop))
++			break;
++	}
++	std::unique_lock<std::mutex> lock(mutex);
++	sleepers.fetch_add(1, std::memory_order_seq_cst);
++	while (value.load(std::memory_order_seq_cst)<v)
++		cond.wait(lock);
++	sleepers.fetch_sub(1, std::memory_order_relaxed);
++	return std::chrono::steady_clock::now()-t0;
++}
++
++void Engine_Multithread::FusedTimestepFlags(int threadID, unsigned int step)
++{
++	// FusedTimestep() with the two barriers replaced by flags of the two neighbours (step = timesteps done in this
++	// IterateTS() call). The voltages of the last line need the currents of the line after the slab, which the next
++	// thread updates (its line before the slab) and which read these voltages: the last block waits until the next
++	// thread has done that line in the previous timestep. The line before the slab needs the final voltages of the
++	// previous thread's last line, of this timestep, and that thread must have read the old currents of the line:
++	// it waits until the previous thread's sweep of this timestep is done. Same operands for every cell as with the
++	// barriers (bit-identical); the extensions' line hooks see this thread's timestep (TS_LOCAL).
++	const unsigned int b0 = m_SlabBlocks[threadID], b1 = m_SlabBlocks[threadID+1];
++	const unsigned int start = m_Blocks[b0];
++	const bool last = ((unsigned int)threadID+1==m_numThreads);
++	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
++	std::chrono::steady_clock::duration waited = std::chrono::steady_clock::duration::zero();
++	for (unsigned int b=b0; b<b1; ++b)
++	{
++		if ((b+1==b1) && !last)
++			waited += m_BoundaryDone[threadID+1].WaitFor(step);
++		const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
++		RunLineHooks(0, x0, x1);
++		UpdateVoltages(x0, x1-x0);
++		RunLineHooks(1, x0, x1);
++		RunLineHooks(2, x0, x1);
++		FusedCurrents((x0==start) ? x0 : x0-1, x1-1);
++	}
++	m_SweepDone[threadID].Publish(step+1);
++	const std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
++	FusedStat& stat = m_FusedStat[threadID];
++	stat.busy += std::chrono::duration<double>(t1-t0-waited).count();
++	stat.lines += m_Blocks[b1]-start;
++	std::chrono::steady_clock::duration waited2 = std::chrono::steady_clock::duration::zero();
++	if (threadID>0)
++	{
++		waited2 = m_SweepDone[threadID-1].WaitFor(step+1);
++		FusedCurrents(start-1, start);
++		m_BoundaryDone[threadID].Publish(step+1);
++	}
++	++t_TS;
++	static const bool timing = EnvFlag("OPENEMS_FUSED_STAT");
++	if (timing)
++	{
++		// sweep without the wait / wait for the next thread / line before the slab / wait for the previous thread
++		stat.sweep += std::chrono::duration<double>(t1-t0-waited).count();
++		stat.wait1 += std::chrono::duration<double>(waited).count();
++		stat.wait2 += std::chrono::duration<double>(waited2).count();
++		stat.bound += std::chrono::duration<double>(std::chrono::steady_clock::now()-t1-waited2).count();
++		++stat.steps;
++	}
++}
++
+ void Engine_Multithread::PrintFusedStat() const
+ {
+ 	if (!m_FusedStat || (m_FusedStatThreads==0) || (m_FusedStat[0].steps==0))
+ 		return;
+ 	cout << "Fused sweep timing (OPENEMS_FUSED_STAT), " << m_FusedStatThreads << " threads, " << m_FusedStat[0].steps << " timesteps, ms per thread"
+-		 << " (sweep / wait 1 / line before the slab / wait 2):" << endl;
++		 << (m_UseFlags ? " (sweep / wait for the next thread / line before the slab / wait for the previous thread):"
++						: " (sweep / wait 1 / line before the slab / wait 2):") << endl;
+ 	for (unsigned int t=0; t<m_FusedStatThreads; ++t)
+ 	{
+ 		const FusedStat& s = m_FusedStat[t];
+@@ -808,8 +944,17 @@ void thread::operator()()
+ 
+ 		DEBUG_TIME( Timer timer1 );
+ 
++		// neighbour flags: this thread counts its own timesteps (the extensions read them, see GetNumberOfTimesteps)
++		const bool flags = m_enginePtr->m_Fused && m_enginePtr->m_UseFlags;
++		t_TS = m_enginePtr->numTS;
++		t_OwnTS = flags;
+ 		for (unsigned int iter=0; iter<m_enginePtr->m_iterTS; ++iter)
+ 		{
++			if (flags)
++			{
++				m_enginePtr->FusedTimestepFlags(m_threadID, iter);
++				continue;
++			}
+ 			if (m_enginePtr->m_Fused)
+ 			{
+ 				m_enginePtr->FusedTimestep(m_threadID);
+@@ -864,6 +1009,7 @@ void thread::operator()()
+ 			m_enginePtr->Apply2Current(m_threadID);
+ 		}
+ 
++		t_OwnTS = false;
+ 		m_enginePtr->m_stopBarrier->wait();
+ 	}
+ 
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index 4aa7fd7..503b4f6 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -22,6 +22,9 @@
+ #include "engine_sse_compressed.h"
+ #include "tools/spin_barrier.h"
+ #include <atomic>
++#include <chrono>
++#include <condition_variable>
++#include <mutex>
+ 
+ #include <boost/thread.hpp>
+ #include <boost/fusion/include/list.hpp>
+@@ -103,6 +106,9 @@ public:
+ 	virtual void Apply2Current()        {throw std::runtime_error("Engine_Multithread::Apply2Current without thread ID is invalid");}
+ 	virtual void Apply2Current(int threadID);
+ 
++	//! On an engine thread of a fused sweep with neighbour flags: that thread's timestep (the threads run apart)
++	virtual unsigned int GetNumberOfTimesteps();
++
+ protected:
+ 	Engine_Multithread(const Operator_Multithread* op);
+ 	void changeNumThreads(unsigned int numThreads);
+@@ -138,6 +144,26 @@ protected:
+ 	std::string m_FusedMsg; //!< the last fused-sweep line printed (verbose>0), see ReportFused()
+ 	void ReportFused(const std::string& msg);
+ 	void FusedTimestep(int threadID);
++
++	//! Neighbour flags (the fused sweep when every extension is TS_LOCAL; OPENEMS_FLAGS=0 keeps the barriers): a thread
++	//! waits for its neighbours only, instead of the two barriers of every timestep. A timestep count one thread
++	//! publishes and its neighbour waits for (spins like SpinBarrier, then sleeps); 256 B apart, so that two of them
++	//! never share a cache line (C++11: new does not align).
++	struct StepFlag
++	{
++		std::atomic<unsigned int> value;    //!< timesteps done in this IterateTS() call
++		std::atomic<unsigned int> sleepers; //!< the neighbour sleeps on cond
++		std::mutex mutex;
++		std::condition_variable cond;
++		char pad[256-2*sizeof(std::atomic<unsigned int>)-sizeof(std::mutex)-sizeof(std::condition_variable)];
++		void Publish(unsigned int v);
++		//! returns the time it waited (0 without a wait)
++		std::chrono::steady_clock::duration WaitFor(unsigned int v);
++	};
++	bool m_UseFlags;
++	StepFlag* m_SweepDone;    //!< per thread: timesteps of which its sweep (all voltages of its slab) is done
++	StepFlag* m_BoundaryDone; //!< per thread: timesteps of which the currents of the line before its slab are done
++	void FusedTimestepFlags(int threadID, unsigned int step);
+ 	//! time and x-lines of each thread's sweep, to size the slabs (threads on efficiency cores are slower, PML lines cost more)
+ 	struct FusedStat
+ 	{
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index 6733783..a1bd1e4 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -104,7 +104,7 @@ unsigned int Engine_Ext_Dispersive::GetUsedHooks() const
+ 
+ unsigned int Engine_Ext_Dispersive::DispersiveHooks() const
+ {
+-	return (AnyVoltADE() ? APPLY_VOLT : 0) | (AnyCurrADE() ? APPLY_CURR : 0) | (m_LinesReady ? LINE_HOOKS : 0);
++	return (AnyVoltADE() ? APPLY_VOLT : 0) | (AnyCurrADE() ? APPLY_CURR : 0) | (m_LinesReady ? LINE_HOOKS | TS_LOCAL : 0);
+ }
+ 
+ void Engine_Ext_Dispersive::SetNumberOfThreads(int nrThread)
+diff --git a/FDTD/extensions/engine_ext_excitation.cpp b/FDTD/extensions/engine_ext_excitation.cpp
+index 53f53fe..2ad5847 100644
+--- a/FDTD/extensions/engine_ext_excitation.cpp
++++ b/FDTD/extensions/engine_ext_excitation.cpp
+@@ -25,7 +25,7 @@
+ unsigned int Engine_Ext_Excitation::GetUsedHooks() const
+ {
+ 	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Excitation);
+-	return APPLY_VOLT | (m_Op_Exc->GetCurrCount() ? APPLY_CURR : 0) | LINE_HOOKS;
++	return APPLY_VOLT | (m_Op_Exc->GetCurrCount() ? APPLY_CURR : 0) | LINE_HOOKS | TS_LOCAL;
+ }
+ 
+ Engine_Ext_Excitation::Engine_Ext_Excitation(Operator_Ext_Excitation* op_ext) : Engine_Extension(op_ext)
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.cpp b/FDTD/extensions/engine_ext_lumpedRLC.cpp
+index 2f06b1a..35eaa4e 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.cpp
++++ b/FDTD/extensions/engine_ext_lumpedRLC.cpp
+@@ -31,8 +31,8 @@ Engine_Ext_LumpedRLC::Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC* op_ext_RLC) :
+ 	v_Vdn		= new FDTD_FLOAT*[3];
+ 	v_Jn		= new FDTD_FLOAT*[3];
+ 	v_Il		= NULL;
+-	m_RotatedVd = -1;
+-	m_RotatedJ = -1;
++	for (unsigned int k = 0 ; k < 3 ; k++)
++		v_Vdn[k] = v_Jn[k] = m_VdBase[k] = m_JBase[k] = NULL;
+ 
+ 	// No additional allocations are required if there are no actual lumped elements.
+ 	if (!(m_Op_Ext_RLC->RLC_count))
+@@ -63,6 +63,8 @@ Engine_Ext_LumpedRLC::Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC* op_ext_RLC) :
+ 			v_Jn[k][posIdx] = 0.0;
+ 			v_Vdn[k][posIdx] = 0.0;
+ 		}
++		m_VdBase[k] = v_Vdn[k];
++		m_JBase[k] = v_Jn[k];
+ 	}
+ 
+ }
+@@ -76,8 +78,8 @@ Engine_Ext_LumpedRLC::~Engine_Ext_LumpedRLC()
+ 
+ 		for (unsigned int k = 0 ; k < 3 ; k++)
+ 		{
+-			delete[] v_Vdn[k];
+-			delete[] v_Jn[k];
++			delete[] m_VdBase[k];
++			delete[] m_JBase[k];
+ 		}
+ 	}
+ 
+@@ -94,25 +96,12 @@ Engine_Ext_LumpedRLC::~Engine_Ext_LumpedRLC()
+ 
+ }
+ 
+-void Engine_Ext_LumpedRLC::Rotate(FDTD_FLOAT** c)
+-{
+-	FDTD_FLOAT	*v_temp;
+-	v_temp = c[2];
+-	c[2] = c[1];
+-	c[1] = c[0];
+-	c[0] = v_temp;
+-}
+-
+-void Engine_Ext_LumpedRLC::RotateOnce(std::atomic<int>& stamp, FDTD_FLOAT** c)
++void Engine_Ext_LumpedRLC::SetSlots(FDTD_FLOAT** c, FDTD_FLOAT* const* base, unsigned int ts)
+ {
+-	const int ts = m_Eng->GetNumberOfTimesteps();
+-	if (stamp.load(std::memory_order_acquire)==ts)
+-		return;
+-	std::lock_guard<std::mutex> lock(m_RotateMutex);
+-	if (stamp.load(std::memory_order_relaxed)==ts)
+-		return;
+-	Rotate(c);
+-	stamp.store(ts, std::memory_order_release);
++	// rotated once at the start of every timestep: c[2] = c[1], c[1] = c[0], c[0] = the old c[2]
++	const unsigned int r = (ts+1)%3;
++	for (unsigned int k = 0 ; k < 3 ; k++)
++		c[k] = base[(k+3-r)%3];
+ }
+ 
+ void Engine_Ext_LumpedRLC::LineRange(unsigned int x0, unsigned int x1, unsigned int& n0, unsigned int& n1) const
+@@ -121,13 +110,13 @@ void Engine_Ext_LumpedRLC::LineRange(unsigned int x0, unsigned int x1, unsigned
+ 	n1 = std::lower_bound(m_X.begin(), m_X.end(), x1) - m_X.begin();
+ }
+ 
+-void Engine_Ext_LumpedRLC::UpdateInductorCurrents(const unsigned int* order, unsigned int n0, unsigned int n1)
++void Engine_Ext_LumpedRLC::UpdateInductorCurrents(const FDTD_FLOAT* vd1, const unsigned int* order, unsigned int n0, unsigned int n1)
+ {
+ 	// In pre-process, only update the parallel inductor current:
+ 	for (unsigned int k = n0 ; k < n1 ; k++)
+ 	{
+ 		const unsigned int pIdx = order ? order[k] : k;
+-		v_Il[pIdx] += (m_Op_Ext_RLC->v_RLC_i2v[pIdx])*(m_Op_Ext_RLC->v_RLC_ilv[pIdx])*v_Vdn[1][pIdx];
++		v_Il[pIdx] += (m_Op_Ext_RLC->v_RLC_i2v[pIdx])*(m_Op_Ext_RLC->v_RLC_ilv[pIdx])*vd1[pIdx];
+ 	}
+ }
+ 
+@@ -137,22 +126,23 @@ void Engine_Ext_LumpedRLC::DoPreVoltageUpdates()
+ 		return;
+ 
+ 	// Iterate Vd containers
+-	Rotate(v_Vdn);
+-	UpdateInductorCurrents(NULL, 0, m_Op_Ext_RLC->RLC_count);
++	SetSlots(v_Vdn, m_VdBase, m_Eng->GetNumberOfTimesteps());
++	UpdateInductorCurrents(v_Vdn[1], NULL, 0, m_Op_Ext_RLC->RLC_count);
+ }
+ 
+ void Engine_Ext_LumpedRLC::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	if (!m_Op_Ext_RLC->RLC_count)
+ 		return;
+-	RotateOnce(m_RotatedVd, v_Vdn);
++	FDTD_FLOAT* vd[3];
++	SetSlots(vd, m_VdBase, m_Eng->GetNumberOfTimesteps());
+ 	unsigned int n0, n1;
+ 	LineRange(x0, x1, n0, n1);
+-	UpdateInductorCurrents(m_Order.data(), n0, n1);
++	UpdateInductorCurrents(vd[1], m_Order.data(), n0, n1);
+ }
+ 
+ template <typename EngType>
+-void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1)
++void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng, FDTD_FLOAT* const* vd, FDTD_FLOAT* const* j, const unsigned int* order, unsigned int n0, unsigned int n1)
+ {
+ 	unsigned int **pos = m_Op_Ext_RLC->v_RLC_pos;
+ 	int *dir = m_Op_Ext_RLC->v_RLC_dir;
+@@ -161,7 +151,7 @@ void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng, const unsigned int*
+ 	for (unsigned int k = n0 ; k < n1 ; k++)
+ 	{
+ 		const unsigned int pIdx = order ? order[k] : k;
+-		v_Vdn[0][pIdx] = eng->EngType::GetVolt(dir[pIdx],pos[0][pIdx],pos[1][pIdx],pos[2][pIdx]);
++		vd[0][pIdx] = eng->EngType::GetVolt(dir[pIdx],pos[0][pIdx],pos[1][pIdx],pos[2][pIdx]);
+ 	}
+ 
+ 	// Post process: Calculate node voltage with respect to the lumped RLC auxilliary quantity, J
+@@ -169,21 +159,21 @@ void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng, const unsigned int*
+ 	{
+ 		const unsigned int pIdx = order ? order[k] : k;
+ 		// Calculate updated node voltage, with series and parallel additions
+-		v_Vdn[0][pIdx] = 	(m_Op_Ext_RLC->v_RLC_vvd[pIdx])*(
+-							v_Vdn[0][pIdx] - v_Il[pIdx]						// Addition for Parallel inductor
++		vd[0][pIdx] = 	(m_Op_Ext_RLC->v_RLC_vvd[pIdx])*(
++							vd[0][pIdx] - v_Il[pIdx]						// Addition for Parallel inductor
+ 							+
+-							(m_Op_Ext_RLC->v_RLC_vv2[pIdx])*v_Vdn[2][pIdx]	// Vd[n-2] addition
++							(m_Op_Ext_RLC->v_RLC_vv2[pIdx])*vd[2][pIdx]	// Vd[n-2] addition
+ 							+
+-							(m_Op_Ext_RLC->v_RLC_vj1[pIdx])*v_Jn[1][pIdx]	// J[n-1] addition
++							(m_Op_Ext_RLC->v_RLC_vj1[pIdx])*j[1][pIdx]	// J[n-1] addition
+ 							+
+-							(m_Op_Ext_RLC->v_RLC_vj2[pIdx])*v_Jn[2][pIdx]);	// J[n-2] addition
++							(m_Op_Ext_RLC->v_RLC_vj2[pIdx])*j[2][pIdx]);	// J[n-2] addition
+ 
+ 		// Update J[0]
+-		v_Jn[0][pIdx] =	(m_Op_Ext_RLC->v_RLC_ib0[pIdx])*(v_Vdn[0][pIdx] - v_Vdn[2][pIdx])
++		j[0][pIdx] =	(m_Op_Ext_RLC->v_RLC_ib0[pIdx])*(vd[0][pIdx] - vd[2][pIdx])
+ 						-
+-						((m_Op_Ext_RLC->v_RLC_b1[pIdx])*(m_Op_Ext_RLC->v_RLC_ib0[pIdx]))*v_Jn[1][pIdx]
++						((m_Op_Ext_RLC->v_RLC_b1[pIdx])*(m_Op_Ext_RLC->v_RLC_ib0[pIdx]))*j[1][pIdx]
+ 						-
+-						((m_Op_Ext_RLC->v_RLC_b2[pIdx])*(m_Op_Ext_RLC->v_RLC_ib0[pIdx]))*v_Jn[2][pIdx];
++						((m_Op_Ext_RLC->v_RLC_b2[pIdx])*(m_Op_Ext_RLC->v_RLC_ib0[pIdx]))*j[2][pIdx];
+ 	}
+ 
+ 
+@@ -191,7 +181,7 @@ void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng, const unsigned int*
+ 	for (unsigned int k = n0 ; k < n1 ; k++)
+ 	{
+ 		const unsigned int pIdx = order ? order[k] : k;
+-		eng->EngType::SetVolt(dir[pIdx],pos[0][pIdx],pos[1][pIdx],pos[2][pIdx],v_Vdn[0][pIdx]);
++		eng->EngType::SetVolt(dir[pIdx],pos[0][pIdx],pos[1][pIdx],pos[2][pIdx],vd[0][pIdx]);
+ 	}
+ }
+ 
+@@ -201,18 +191,22 @@ void Engine_Ext_LumpedRLC::Apply2Voltages()
+ 		return;
+ 
+ 	// Iterate J containers
+-	Rotate(v_Jn);
+-	ENG_DISPATCH_ARGS(Apply2VoltagesImpl, (const unsigned int*)NULL, 0u, m_Op_Ext_RLC->RLC_count);
++	SetSlots(v_Jn, m_JBase, m_Eng->GetNumberOfTimesteps());
++	ENG_DISPATCH_ARGS(Apply2VoltagesImpl, v_Vdn, v_Jn, (const unsigned int*)NULL, 0u, m_Op_Ext_RLC->RLC_count);
+ }
+ 
+ void Engine_Ext_LumpedRLC::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
+ {
+ 	if (!m_Op_Ext_RLC->RLC_count)
+ 		return;
+-	RotateOnce(m_RotatedJ, v_Jn);
++	const unsigned int ts = m_Eng->GetNumberOfTimesteps();
++	FDTD_FLOAT* vd[3];
++	FDTD_FLOAT* j[3];
++	SetSlots(vd, m_VdBase, ts);
++	SetSlots(j, m_JBase, ts);
+ 	unsigned int n0, n1;
+ 	LineRange(x0, x1, n0, n1);
+ 	// the fused sweep runs on the SSE engines only
+ 	if (n0<n1)
+-		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, m_Order.data(), n0, n1);
++		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, vd, j, m_Order.data(), n0, n1);
+ }
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.h b/FDTD/extensions/engine_ext_lumpedRLC.h
+index be21cf7..4862c7b 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.h
++++ b/FDTD/extensions/engine_ext_lumpedRLC.h
+@@ -23,8 +23,6 @@
+ #include "FDTD/engine.h"
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
+-#include <atomic>
+-#include <mutex>
+ #include <vector>
+ 
+ class Operator_Ext_LumpedRLC;
+@@ -41,7 +39,7 @@ public:
+ 	Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC *op_ext_RLC);
+ 	virtual ~Engine_Ext_LumpedRLC();
+ 
+-	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_LumpedRLC); return PRE_VOLT | APPLY_VOLT | LINE_HOOKS;}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_LumpedRLC); return PRE_VOLT | APPLY_VOLT | LINE_HOOKS | TS_LOCAL;}
+ 
+ 	virtual void DoPreVoltageUpdates();
+ 	virtual void Apply2Voltages();
+@@ -50,17 +48,17 @@ public:
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 
+ protected:
+-	//! update the elements order[n0..n1) (the elements n0..n1 if order is NULL)
++	//! update the elements order[n0..n1) (the elements n0..n1 if order is NULL), with the [n],[n-1],[n-2] containers vd and j
+ 	template <typename EngType>
+-	void Apply2VoltagesImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1);
+-	void UpdateInductorCurrents(const unsigned int* order, unsigned int n0, unsigned int n1);
+-
+-	//! the [n],[n-1],[n-2] containers move on once per timestep
+-	static void Rotate(FDTD_FLOAT** c);
+-	//! line hooks: the first call of a timestep rotates (the other threads wait for it)
+-	void RotateOnce(std::atomic<int>& stamp, FDTD_FLOAT** c);
+-	std::mutex m_RotateMutex;
+-	std::atomic<int> m_RotatedVd, m_RotatedJ; //!< timestep of the last rotation by a line hook
++	void Apply2VoltagesImpl(EngType* eng, FDTD_FLOAT* const* vd, FDTD_FLOAT* const* j, const unsigned int* order, unsigned int n0, unsigned int n1);
++	void UpdateInductorCurrents(const FDTD_FLOAT* vd1, const unsigned int* order, unsigned int n0, unsigned int n1);
++
++	//! The [n],[n-1],[n-2] containers move on once per timestep, from the first one on: at timestep ts, [k] is
++	//! the array base[(k-ts-1) mod 3]. The line hooks take them from their own timestep (TS_LOCAL), the
++	//! single hooks set v_Vdn and v_Jn (the same arrays as a rotation of the pointers at every timestep).
++	static void SetSlots(FDTD_FLOAT** c, FDTD_FLOAT* const* base, unsigned int ts);
++	FDTD_FLOAT* m_VdBase[3];
++	FDTD_FLOAT* m_JBase[3];
+ 
+ 	//! the elements sorted by x-line, for the line hooks
+ 	std::vector<unsigned int> m_Order, m_X;
+diff --git a/FDTD/extensions/engine_ext_mur_abc.h b/FDTD/extensions/engine_ext_mur_abc.h
+index d50090f..196248a 100644
+--- a/FDTD/extensions/engine_ext_mur_abc.h
++++ b/FDTD/extensions/engine_ext_mur_abc.h
+@@ -34,7 +34,7 @@ public:
+ 	virtual ~Engine_Ext_Mur_ABC();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+-	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Mur_ABC); return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS : 0);}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Mur_ABC); return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS | TS_LOCAL : 0);}
+ 
+ 	virtual void DoPreVoltageUpdates() {Engine_Ext_Mur_ABC::DoPreVoltageUpdates(0);}
+ 	virtual void DoPreVoltageUpdates(int threadID);
+diff --git a/FDTD/extensions/engine_ext_upml.h b/FDTD/extensions/engine_ext_upml.h
+index 14ce1ef..2f2cfda 100644
+--- a/FDTD/extensions/engine_ext_upml.h
++++ b/FDTD/extensions/engine_ext_upml.h
+@@ -36,7 +36,7 @@ public:
+ 	virtual ~Engine_Ext_UPML();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+-	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_UPML); return PRE_VOLT | POST_VOLT | PRE_CURR | POST_CURR | PREPOST_WRITES_FIELDS | ((m_Vec || m_Sse) ? LINE_HOOKS : 0);}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_UPML); return PRE_VOLT | POST_VOLT | PRE_CURR | POST_CURR | PREPOST_WRITES_FIELDS | ((m_Vec || m_Sse) ? LINE_HOOKS | TS_LOCAL : 0);}
+ 
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index 071a080..df82438 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -53,6 +53,7 @@ public:
+ 	enum Hooks {PRE_VOLT=1, POST_VOLT=2, APPLY_VOLT=4, PRE_CURR=8, POST_CURR=16, APPLY_CURR=32,
+ 				PREPOST_WRITES_FIELDS=64, //!< its Pre/Post hooks do change engine fields (e.g. the UPML)
+ 				LINE_HOOKS=128, //!< implements the *Lines() hooks below, for the fused sweep
++				TS_LOCAL=256,   //!< its line hooks also work while the threads are at different timesteps, see below
+ 				LEGACY_HOOKS=~0u};
+ 	//! Which of the six update hooks this extension implements (or'ed Hooks).
+ 	/*!
+@@ -98,6 +99,10 @@ public:
+ 	  Invariant: the engine never updates the currents of the last x-line (NX-1, they stay 0) and no
+ 	  excitation entry can sit on it, so the fused sweep never calls the *CurrentLines() hooks for it;
+ 	  a current hook of an extension must therefore be a no-op on NX-1 (true for every extension in tree).
++	  TS_LOCAL: the line hooks keep no state shared by x-lines that changes from one timestep to the next, and
++	  read the timestep through GetNumberOfTimesteps() only. When every extension declares it, the threads of the
++	  fused sweep wait for their neighbours only, so they can be timesteps apart from each other (each one counts
++	  its own timesteps, which GetNumberOfTimesteps() returns on that thread).
+ 	  */
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
+diff --git a/tools/spin_barrier.h b/tools/spin_barrier.h
+index f4998cc..69ccbd8 100644
+--- a/tools/spin_barrier.h
++++ b/tools/spin_barrier.h
+@@ -88,6 +88,8 @@ protected:
+ 		return 50;
+ 	}
+ 
++public:
++	//! the spin-wait hint of the CPU (also used by the neighbour flags of Engine_Multithread)
+ 	static inline void CpuRelax()
+ 	{
+ 		// the yield hint exists from ARMv6K (both spellings of the ARMv6KZ macro: clang, GCC) and on ARMv6-M
+@@ -101,6 +103,7 @@ protected:
+ #endif
+ 	}
+ 
++protected:
+ 	const unsigned int m_numThreads;
+ 	std::atomic<unsigned int> m_count;
+ 	std::atomic<unsigned int> m_generation;
+-- 
+2.54.0 (Apple Git-157)
+

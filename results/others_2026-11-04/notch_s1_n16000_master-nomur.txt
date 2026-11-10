@@ -1,0 +1,4 @@
+# notch_s1_n16000  2026-11-04 06:11
+multithreaded:4                 398.6 MC/s     10.83 s  16000 TS x 0.270 MC  others  93%  runs 399/289  busy mediaanalysisd:40  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            2374.3 MC/s      1.82 s  16000 TS x 0.270 MC  others  43%  runs 1452/2374  probes rel=1.0e-06  S11: max|dS|=1.7e-06 max dB=2.6e-04  S21: max|dS|=2.4e-06 max dB=3.4e-05  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)

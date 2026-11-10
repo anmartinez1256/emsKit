@@ -1,0 +1,240 @@
+# CPU engine items (step 3) and the other forks' ideas (step 4) of NEXT_WORK_PROMPT.md: snapshot cg29, 2026-11-05.
+# Apple M5 (4 P + 6 E cores), macOS 27.0.1. Branch speed-m5-gpu of the openEMS fork: 85dc48c (= cg28) + the commits of
+# section 1; diff in ~/opt/openEMS-dev/snap/cg29/cg29.patch (against origin/gpu-engine 7bb294f). All numbers are the
+# multithreaded engine (CPU) unless a line says GPU.
+# The Mac was shared the whole time: other processes took 0.3-6 cores (given per line as "others", % of one core). Every
+# speed comparison is a paired interleaved A/B (bench/abtest.py: the configs run in turn, round after round; the ratio
+# is the per-round ratio of the two configs, median [min-max] over the rounds), so a slow phase of the machine hits both
+# configs of a round alike. An item is kept only when it gains clearly outside the spread of the rounds on the models
+# it is for and costs nothing outside the noise on the others. devNN are scratchpad builds of the working tree at that
+# point; each item has a knob that turns it off in the same build, and the A/B ran knob against knob.
+# Raw tables: the scratchpad's cpu29*.txt .. cpu43b.txt, summarised here.
+#
+# 1. Kept: one commit per topic, each bit-identical to stock v0.37.0 (section 3)
+# | commit  | topic (knob that turns it off or selects)                 | paired A/B in one build (others' load)                 |
+# | 09c170c | operator index per z-vector, not per cell                 | patch x5 x1.119 (4 thr) x1.101 (8), notch x3 x1.042 /  |
+# |         | (OPENEMS_OP_INDEX_PER_CELL=1)                             | x1.052, the other four x1.005-x1.021, 5 rounds         |
+# |         |                                                           | (0.3-1.4 cores)                                        |
+# | 8587ebc | item 2: conducting-sheet ADE orders merged, 4 positions   | GCPW x1.041 (4 thr) x1.031 (8), 8 rounds; models       |
+# |         | per f4vector (OPENEMS_ADE_MERGED=0)                       | without sheets unaffected (0.3-0.5 cores)              |
+# | 29981cd | item 1: UPML scalar SSE path, four y-rows per group       | SMA x1.183 (1 thr) x1.125 (4) x1.129 (8), 6 rounds     |
+# |         | (OPENEMS_PML_YVEC=0)                                      | (0.4-0.6 cores)                                        |
+# | 3e5d678 | UPML operator coefficients on the setup threads (PR #244) | UPML build SMA 0.086 -> 0.022 s, notch x3 0.090 ->     |
+# |         |                                                           | 0.035 s, notch tutorial 0.013 -> 0.005 s (6 rounds)    |
+# | 12aeaff | steady-state detection: line hooks (fused sweep)          | upstream cases, fused vs OPENEMS_FUSED=0: pml x1.36    |
+# |         |                                                           | (4 thr), inhomogeneous x1.29 / x1.34, ideal x0.98 /    |
+# |         |                                                           | x0.80 (4 / 8 thr; recovered by the flags)              |
+# | 2cebd7c | Debye material: line hooks                                | upstream dispersive case 40.8 -> 263.9 MC/s (4 thr,    |
+# |         |                                                           | x6.5), 43.8 -> 439.9 (8 thr, x10.0)                    |
+# | bfd1298 | item 9, as geometry coefficient tables (100 B per         | SMA x1.067 (8 thr) x1.033 (auto) x1.025 (4) x0.992 (1),|
+# |         | operator instead of 192) when the packed exceed 4 MB      | 8 rounds (0.3-0.4 cores); the other five models stay   |
+# |         | (OPENEMS_COEF=packed|geom)                                | packed (<= 1.5 MB of tables)                           |
+# | 9e64203 | OPENEMS_FUSED_STAT=1: per-thread time split of the sweep  | diagnostic                                             |
+# | 050271c | item 5: neighbour flags instead of the two barriers       | 4 thr x1.015-x1.055, 8 thr x1.073-x1.286 on the six    |
+# |         | (OPENEMS_FLAGS=0); lumped RLC slots by timestep           | models (5 rounds, 0.3-0.6 cores; table below)          |
+# |         | (MrHighVoltage's idea, Discussion #492)                   |                                                        |
+# | c86f402 | steady-state detection TS_LOCAL (runs on the flags)       | upstream ideal x1.18 (8 thr) x1.13 (auto), ideal M     |
+# |         |                                                           | x1.07 / x1.05, inhomogeneous x1.41 (8), pml x1.05 (8)  |
+# | 1620939 | item 4 in part: no flag spin above the performance-core   | 6-10 thr and auto x1.0-x1.25, 4 thr unchanged (table   |
+# |         | count (OPENEMS_FLAGS_SPIN_US)                             | below)                                                 |
+# Load: the range of the configurations' medians of the other processes' CPU over an A/B run (abtest's summary lines).
+# The commit messages of 09c170c and 29981cd give 0.4-1.7 and 0.4-0.7 cores for their runs; the raw tables (cpu29.txt,
+# cpu29c.txt) give the ranges above (0.31-1.42 and 0.42-0.64 cores).
+# Neighbour flags against the barriers (dev32, 5 rounds, others 0.3-0.6 cores), median MC/s and median paired ratio:
+#   | model          | 4 threads             | 8 threads             |
+#   | GCPW line      | 1573 -> 1598 x1.016   | 1337 -> 1719 x1.286   |
+#   | notch tutorial | 1621 -> 1650 x1.015   | 1481 -> 1805 x1.227   |
+#   | SMA launch     | 1263 -> 1307 x1.035   | 1437 -> 1590 x1.109   |
+#   | patch tutorial | 1644 -> 1722 x1.055   | 1577 -> 1702 x1.073   |
+#   | patch x5       | 1659 -> 1708 x1.029   | 1802 -> 1985 x1.102   |
+#   | notch x3       | 1694 -> 1739 x1.019   | 2006 -> 2081 x1.077   |
+#   OPENEMS_FUSED_STAT at 8 threads: the threads wait 24-27 % of the time at the barriers, 10-22 % on the flags.
+# Flag spin 0 against 50 us (dev33, OPENEMS_BARRIER_SPIN_US=0, 4 rounds; others 0.3-2 cores, patch x5 at 4 and 6
+# threads under 5-6 cores), median paired ratio:
+#   | model          | 4 thr  | 6 thr  | 8 thr  | 10 thr | auto   |
+#   | GCPW line      | x1.065 | x1.064 | x1.061 | x1.066 | x1.054 |
+#   | notch tutorial | x1.008 | x1.054 | x0.976 | x1.095 | x1.105 |
+#   | SMA launch     | x0.989 | x1.099 | x1.018 | x1.021 | x0.999 |
+#   | patch tutorial | x1.013 | x1.068 | x1.061 | x1.004 | x1.252 |
+#   | patch x5       | x0.991 | x1.017 | x1.004 | x1.001 | x1.013 |
+#   | notch x3       | x0.978 | x1.034 | x0.987 | x1.061 | x1.036 |
+#   At 4 threads (all on performance cores) no gain and notch x3 -2 % in every round: the spin stays up to the
+#   performance-core count. The committed default against the build before (dev34 vs dev33, 4 rounds, 0.3-0.5 cores):
+#   GCPW x1.088 (8 thr) x1.123 (auto), notch tutorial x1.094 / x1.051; 4 threads x0.999 / x0.998.
+#
+# 2. Measured and dropped (the step 3 list and the step 4 ideas)
+# - item 3, thread-count cache (OPENEMS_THREAD_CACHE: the automatic count's choice stored per model and reused; dev29
+#   .. dev30): automatic threads at real run lengths, 5 rounds: GCPW 34300 steps x1.021 [0.893-1.044] (others 0.5-0.8
+#   cores), SMA 50320 steps x1.002 [0.993-1.013] (0.5-0.6): within the noise (the search costs ~1.5 s of a 10-80 s
+#   run and finds the same count). Removed.
+# - item 4, stable P/E assignment by per-thread QoS (OPENEMS_QOS=3: the first P threads user-interactive, the others
+#   utility; 4: the first P user-initiated, the others utility), longer spin (OPENEMS_BARRIER_SPIN_US=200) and faster
+#   slab balancing (OPENEMS_BALANCE_MS=5), dev30d, with the barriers, 8 threads, 5 rounds (others 0.3-0.5 cores):
+#   | model          | QOS=3  | SPIN 200 | BALANCE_MS=5 |
+#   | patch x5       | x1.002 | x0.977   | x1.000       |
+#   | notch x3       | x0.992 | x0.971   | x0.991       |
+#   | SMA launch     | x0.949 | x0.907   | x0.991       |
+#   | GCPW line      | x1.357 | x1.122   | x1.001       |
+#   | notch tutorial | x1.189 | x1.084   | x1.008       |
+#   at 4 threads SPIN 200 and BALANCE_MS=5 x0.988-1.023 (GCPW, notch and patch tutorials). QoS 3/4 again with the
+#   neighbour flags (dev32/dev33, against QoS 1 = the default): 8 threads GCPW x1.22, notch tutorial x1.20, patch
+#   tutorial x1.10, SMA x1.015, patch x5 x0.947, notch x3 x0.965 (cpu39, 5 rounds, others 0.3-0.6); automatic count
+#   GCPW x0.886, notch tutorial x0.948, SMA x0.906, patch tutorial x1.246, patch x5 x0.971, notch x3 x1.008 (cpu42, 4
+#   rounds, others 0.4-5 cores). Gains on two to three models and losses of 3-11 % on the others, the automatic count
+#   loses on three of six: all three removed (BALANCE_MS and SPIN 200 had no effect or lost; the per-thread QoS split
+#   is not stable across models). The thread loop keeps QoS 1 (user-initiated) for every thread, as in cg15. The
+#   opposite of the longer spin is kept for the flags: no spin above the performance-core count (commit 1620939).
+# - item 6, Mur z-face vectors (OPENEMS_MUR_GATHER: the Mur cells of a z-face gathered four at a time; dev30c), 6
+#   rounds: GCPW x1.012 [0.959-1.019] / x0.998, patch tutorial x0.994 / x1.004, patch x5 x1.007 / x0.982 at 4 / 8
+#   threads (others 0.4-2 cores): within the noise. Removed.
+# - item 7, line masks (OPENEMS_LINE_MASKS: per x-line bit masks of the extensions with work on that line, so the fused
+#   sweep skips the empty line-hook calls; dev29a/dev29b), 5-8 rounds: alone x0.960-1.014 at 4 and 8 threads on the six
+#   models; on top of the operator index per z-vector x0.994-1.020; GCPW (the model with the most hook calls: ~20 per
+#   line and step) x1.005 / x1.009 at 4 / 8 threads (8 rounds): within the noise. Removed.
+# - item 9, split packed coefficient tables (OPENEMS_COEF=split: the distinct f4vectors in one table and four 16-bit ids
+#   per operator, as the diamond engine's split tables; dev30f/dev30g), 5 rounds: SMA x0.960 (4 thr), x0.999 (8),
+#   x0.952 (1); GCPW x0.954 / x0.933 / x0.949; patch x5 x0.971 / x1.023; notch x3 x0.967 / x0.989: the extra id loads
+#   cost more than the smaller tables save. Replaced by the geometry layout (kept, section 1). The bound (dev30e,
+#   OPENEMS_DBG_OPMASK=1: every z-vector uses operator 0, wrong fields, timing only): SMA x1.140 / x1.128 / x1.076 at
+#   4 / 8 / 1 threads, GCPW x1.086 / x1.027, patch x5 and notch x3 within the noise: only the SMA launch (64410
+#   operators, 12.4 MB of packed tables) streams its tables from memory.
+# - item 10, spin barriers for the start and stop of IterateTS: not built. The boards' IterateTS calls are 50-300 ms
+#   (probe intervals of 490-1179 steps), so the two condition-variable wake-ups per call (20-40 us) are under 0.1 %;
+#   the patch tutorial's 31-step calls (~1.7 ms) could gain 1-2 % at most (estimate). The SpinBarrier is also not a
+#   boost interruption point, so changeNumThreads()' interrupt_all/join_all would need a new shutdown path.
+# - item 8 (upstream Metal engine: one dispatch for all Mur faces): skipped, the diamond engine (cg19-cg28) replaces
+#   the upstream GPU engine.
+# - the automatic count's tuning window (OPENEMS_TUNE_WINDOW_MS=50 instead of 150; dev30g, dev32): short runs gain
+#   (8000-15000 steps: GCPW x1.053, notch tutorial x1.100 against 150 ms; cpu35, 4 rounds), but at the real run
+#   lengths the gain is gone: GCPW 34300 steps x1.017 [0.861-1.120], SMA 20000 steps x0.993 (cpu40, 3-4 rounds); both
+#   windows pick 9-10 threads there. The knob stays (cg13), the default stays 150 ms.
+# - temporal blocking (MrHighVoltage, upstream Discussion #492: k timesteps per sweep of a block, trapezoids between
+#   the threads): the standalone upper bound kb_tbk (the fork's fused IJKN loops, one independent sub-grid per thread,
+#   so no halo exchange and no extension hooks; bit-identical for every k), 6 rounds, ratio to k=1:
+#   | grid (cells)             | threads | k=2    | k=3    | k=4    | others   |
+#   | 209x209x180 (7.9 M)      | 4       | x1.038 | x1.032 | x0.958 | 0.5 core |
+#   |                          | 8       | x1.005 | x1.020 | x0.990 |          |
+#   | 700x250x30 (5.25 M)      | 4       | x0.976 | x0.972 | x0.971 | 1.2 core |
+#   |                          | 8       | x1.059 | x1.056 | x1.055 |          |
+#   At most +6 % as the upper bound, against +10-14 % for k=2 in the 2026-10-28 kernel (kb_tb.cpp: the stock
+#   arithmetic with its invariants hoisted and the 12 coefficient tables, also a fused sweep on one independent
+#   sub-grid per thread). Why the fork's loops gain less was not examined (k=2 keeps five x-lines of V and I live per
+#   thread, 4.3 MB on the 7.9 M grid; the four P cores share one 16 MB L2, sysctl hw.perflevel0.l2cachesize).
+#   Corrected 2026-11-05: this paragraph first called kb_tb.cpp the stock loops with more bytes per cell and gave a
+#   cache explanation as fact.
+#   A real version (halo lines per thread, every extension's line hooks per sub-step) would gain less. Not built.
+# - MrHighVoltage's thread tuner that scores real time steps: already in the fork (since step 2, cg8: numThreads=0
+#   times pieces of the real IterateTS calls, see engine_multithread.h TuneThreads()).
+# - upstream PR #231 (UPML rows along z, no barrier for an extension without work in a phase): both already in the
+#   fork (the hook plan of step 2 and the UPML f4vector/scalar SSE paths of cg11-cg14, now the y-rows of commit D).
+# - upstream PR #244 (Noriaki Takashima): the UPML part is taken (section 1, credited in the commit); its Debye part
+#   (Debye coefficients on the setup threads) has no measurable share of any model's setup (no Debye in the six models;
+#   the Debye slab's setup is 0.02 s). Not taken.
+# - upstream PR #245 (Roel Bude): its strict-order check is the model for the uniqueness guard of the merged ADE
+#   (commit C, credited); the rest (the unfused dispersive hooks split over the threads) is not needed, the fused
+#   sweep's line hooks already run on every thread.
+#
+# 3. Identity of snapshot cg29 (1620939, all eleven commits; checks of 2026-11-05 02:01-02:41)
+# - bench/check.sh cg29 (RFSIM_PATH set, so all six models): stock v0.37.0 as the reference, at check.sh's thread
+#   count per model (8 for patch x5 and notch x3, 2 for the patch tutorial, 4 for the notch tutorial and the two
+#   boards), against cg29 at 1, 4, 8 and 10 threads, the automatic count, the geometry tables forced at 4 threads
+#   (OPENEMS_COEF=geom), the packed tables forced at 8 (OPENEMS_COEF=packed) and the barriers instead of the flags
+#   at 8 (OPENEMS_FLAGS=0):
+#   every run of the 9 configs equals the reference on all six models (probes rel 0, S-parameters 0;
+#   results/*_cg29.txt). The speeds in those tables are the faster of two unpaired runs under the check's load, not
+#   comparisons.
+# - scripts/checks/debye_check.sh: basic = sse-compressed = multithreaded (4) on the Debye box, and equal to cg28: PASS.
+# - bench/validation: 15 of 15 with the multithreaded engine at 4 threads and 15 of 15 with the fastest engine
+#   (results/validation_cg29_mt4.md, validation_cg29_fastest.md); the three dispersive slabs equal the basic engine (0).
+# - cylindrical multigrid (scripts/cylinder_multigrid/run_cyl.py, 1500 steps, 4 threads): 2 HDF5 files, 34 datasets,
+#   0 differences against stock.
+# - box checks against the template hooks of the same build (the basic or sse-compressed engine, whose extension code
+#   is stock's; scratchpad ade/): sheets and Drude/Lorentz 16 of 16 identical, UPML boxes 25 of 25, Mur boxes 35 of
+#   35; steady-state detection 42 comparisons identical (raw fields, the probe file, the detection's trace of every
+#   period evaluation; stock's probe file and stop step too) and 49 more on the neighbour flags (28 runs on the
+#   flags; at 8 and 10 threads with the new zero spin, at 3 and 4 with the 50 us spin).
+# - run-mode matrix (45 small models; reference stock basic, stock multithreaded at 1 thread on cylindrical meshes;
+#   compared: stock multithreaded at 2 threads and cg29 basic, sse, sse-compressed, multithreaded at 1, 2, 4 and 8
+#   threads, with the barriers, unfused, with the geometry tables): 461 comparisons identical.
+#   The 10 others are all one model, endcrit4 (energy end criterion, a 0.7 s run): stock runs to the step limit
+#   (1496 steps), every cg29 config stops at step 255, and its 64 probe lines equal the first 64 of stock's 375. The
+#   cause is the base branch, not cg29: origin/gpu-engine contains upstream commit eb1c5ee ("RunFDTD: check the end
+#   criteria every Nyquist period in the first minute"), so a short run checks the criterion before v0.37.0 would.
+# - scripts/checks/diamond_check.sh: 72 of 72 identical (the Metal diamond engine against the multithreaded engine
+#   with OPENEMS_FTZ=1; cg29 changes the CPU side of that comparison).
+# - GPU: OPENEMS_FTZ=1 bench.py, metal-diamond against multithreaded at 4 threads, all six models: probes rel 0 and
+#   S-parameters 0 on every one (results/*_cg29gpu.txt).
+#
+# 4. Speed: cg18 (patches 0001-0006, the build installed on the author's Mac) against cg29, paired interleaved, 5 rounds,
+#    each model on its default mesh (the SMA launch on 0.871 M cells, the toolkit's 0.05 mm floor), bench/abtest.py,
+#    2026-11-05 02:41-02:53; OPENEMS_THREAD_CACHE=0 (no effect on either build). Median MC/s [min-max], median paired
+#    ratio [min-max], the other processes' CPU in cores (the larger of the two configs' medians); every run identical.
+#   | model (cells)              | threads | cg18               | cg29               | cg29 / cg18          | others |
+#   | GCPW line (0.242 M)        | 4       | 1524.5 [1489-1583] | 1616.4 [1611-1675] | x1.064 [1.058-1.082] | 0.4 |
+#   | GCPW line (0.242 M)        | 8       | 1291.7 [1287-1305] | 1854.7 [1841-1864] | x1.428 [1.425-1.446] | 0.3 |
+#   | GCPW line (0.242 M)        | auto    | 1327.4 [1318-1334] | 1729.0 [1699-1731] | x1.298 [1.284-1.314] | 0.4 |
+#   | notch tutorial (0.270 M)   | 4       | 1576.5 [1521-1582] | 1621.2 [1537-1632] | x1.032 [0.971-1.049] | 0.4 |
+#   | notch tutorial (0.270 M)   | 8       | 1425.3 [1414-1433] | 1976.0 [1961-1991] | x1.393 [1.373-1.407] | 0.3 |
+#   | notch tutorial (0.270 M)   | auto    | 1446.1 [1444-1451] | 1849.1 [1835-1890] | x1.275 [1.271-1.307] | 0.4 |
+#   | SMA launch (0.871 M)       | 4       | 1060.3 [1001-1076] | 1284.3 [1227-1300] | x1.226 [1.141-1.283] | 0.5 |
+#   | SMA launch (0.871 M)       | 8       | 1151.4 [1139-1204] | 1646.5 [1590-1695] | x1.435 [1.362-1.475] | 0.4 |
+#   | SMA launch (0.871 M)       | auto    | 1109.8 [1100-1146] | 1587.9 [1554-1618] | x1.416 [1.356-1.467] | 0.4 |
+#   | patch tutorial (0.104 M)   | 4       | 1612.4 [1595-1641] | 1710.3 [1671-1763] | x1.061 [1.043-1.074] | 0.3 |
+#   | patch tutorial (0.104 M)   | 8       | 1565.7 [1534-1572] | 1794.7 [1788-1815] | x1.148 [1.140-1.184] | 0.4 |
+#   | patch tutorial (0.104 M)   | auto    | 1406.0 [1403-1416] | 1794.9 [1766-1808] | x1.271 [1.256-1.288] | 0.3 |
+#   | patch x5 (7.863 M)         | 4       | 1509.6 [1449-1527] | 1646.6 [1616-1688] | x1.106 [1.070-1.133] | 0.5 |
+#   | patch x5 (7.863 M)         | 8       | 1534.2 [1529-1573] | 1937.4 [1922-1949] | x1.257 [1.232-1.269] | 0.6 |
+#   | patch x5 (7.863 M)         | auto    | 1544.2 [1477-1573] | 1883.3 [1861-1891] | x1.218 [1.195-1.275] | 0.5 |
+#   | notch x3 (5.247 M)         | 4       | 1639.8 [1630-1658] | 1720.5 [1685-1729] | x1.051 [1.016-1.056] | 0.5 |
+#   | notch x3 (5.247 M)         | 8       | 1870.7 [1476-1905] | 2133.1 [1510-2159] | x1.134 [1.018-1.140] | 0.6 |
+#   | notch x3 (5.247 M)         | auto    | 1956.2 [1922-1973] | 2207.1 [2177-2228] | x1.131 [1.124-1.133] | 0.5 |
+#   | SMA launch (1.071 M)       | 8       | 1306.7 [1164-1347] | 1768.1 [1611-1877] | x1.372 [1.345-1.394] | 0.7 |
+#   | SMA launch (1.071 M)       | auto    | 1275.3 [1237-1293] | 1758.8 [1690-1795] | x1.379 [1.367-1.388] | 0.6 |
+#   The last three rows were measured afterwards, 2026-11-05 07:05-07:19, in quiet rounds (each round once the other
+#   processes were at most 150 % CPU and 10 % GPU, run again up to three times when a run saw more; abtest --quiet 150
+#   --redo 3): notch x3 at the automatic count over 5 rounds, of which the fifth was kept after three redos with the
+#   others at 4.2-4.4 cores and is left out here (with it: cg18 1947.1, cg29 2204.8, x1.132 [1.124-1.495]); the SMA
+#   launch on the 1.071 M-cell mesh of the documents' table (RFSIM_MIN_CELL=0.02), 4 rounds of 5000 steps, at 8 threads
+#   and at the automatic count. Over the six models (the SMA launch on its 0.871 M mesh) cg29 runs x1.03-x1.23 at 4
+#   threads, x1.13-x1.44 at 8 and x1.13-x1.42 with the automatic count; on the 1.071 M mesh the SMA launch gains
+#   x1.37-x1.38 at 8 threads and at the automatic count.
+#   The absolute rates move between sessions (the cg18 tables of 2026-11-03 have the patch tutorial at 1880.4 MC/s
+#   and the notch tutorial at 1960.8; here cg18 reached 1612.4 and 1576.5), so the paired ratio is the comparison.
+#   The table of the documents (stock, cg29 on the CPU, the Metal diamond engine; the SMA launch on the 1.07 M mesh of
+#   the README) is results/speed_cg29_2026-11-05.txt.
+#
+# 5. Upstream's benchmark cases (benchmark/cases.py of master; steady-state detection on every sinusoidal source),
+#    cg18 / cg28 / cg29, paired interleaved, 4 rounds, every run identical across the three builds
+#   Measured 2026-11-05 07:19-09:17 (scratchpad ss/ss_ab.py with SS_QUIET=150 SS_REDO=3, raw output ss/ss_ab_cg29q.txt,
+#   table by ss/gen_ss.py): each round started once the other processes used at most 150 % CPU and 10 % GPU and was
+#   run again, up to three times, when a run saw more (52 attempts discarded over the 15 rows). A round kept after the
+#   third redo with a loaded run is left out when at least two clean rounds remain ("3 of 4"); otherwise every round
+#   is used and the row says how many were loaded. S = 100 mesh lines per direction (1 M cells), 3000 steps; M = 200
+#   lines (8 M cells), 600 steps. Rates: median [min-max] over the rounds; ratio: median [min-max] of the per-round
+#   ratios; others: the other processes' CPU over the runs used, median [max] cores. Every run's probe files (et, ht,
+#   port_*) equal the first run's of its row (180 runs kept, none different), so cg18, cg28 and cg29 give the same
+#   bits. cg18 and cg28 run every case on the unfused plan (no line hooks for the steady-state detection), cg29 on the
+#   fused sweep.
+#   | case            | thr  | cg18 MC/s          | cg29 MC/s          | cg29 / cg18           | others    | rounds      |
+#   | ideal S         | 4    | 2265.9 [2262-2272] | 2676.0 [2656-2696] | x1.182 [1.169-1.190]  | 0.4 [0.8] | 4           |
+#   | ideal S         | 8    | 3040.6 [3005-3064] | 3384.4 [3315-3397] | x1.112 [1.085-1.130]  | 0.4 [1.3] | 4           |
+#   | ideal S         | auto | 2361.5 [2232-2439] | 2799.7 [2762-2894] | x1.183 [1.140-1.297]  | 0.7 [1.4] | 4           |
+#   | ideal M         | 4    | 1360.1 [1328-1373] | 1845.8 [1830-1874] | x1.364 [1.343-1.387]  | 0.6 [1.5] | 4           |
+#   | ideal M         | 8    | 1483.2 [1445-1513] | 1843.7 [1730-2041] | x1.249 [1.188-1.349]  | 1.6 [3.2] | 4, 3 loaded |
+#   | ideal M         | auto | 1263.3 [904-1530]  | 1578.2 [1441-1829] | x1.250 [1.195-1.594]  | 2.3 [5.2] | 4, 3 loaded |
+#   | pml S           | 4    | 478.2 [339-638]    | 950.5 [876-1028]   | x1.996 [1.610-2.588]  | 0.7 [1.4] | 4           |
+#   | pml S           | 8    | 597.6 [542-634]    | 1341.6 [1170-1375] | x2.178 [2.081-2.391]  | 0.5 [1.5] | 4           |
+#   | pml S           | auto | 630.2 [626-644]    | 1323.8 [1308-1341] | x2.111 [2.032-2.119]  | 0.4 [0.5] | 4           |
+#   | inhomogeneous S | 4    | 553.4 [457-636]    | 871.6 [834-1074]   | x1.738 [1.413-1.825]  | 1.4 [1.5] | 4           |
+#   | inhomogeneous S | 8    | 581.5 [552-617]    | 1271.2 [1155-1287] | x2.089 [2.080-2.301]  | 0.8 [1.4] | 4           |
+#   | inhomogeneous S | auto | 605.2 [592-610]    | 1240.8 [1118-1247] | x2.038 [1.890-2.068]  | 0.5 [1.2] | 4           |
+#   | dispersive S    | 4    | 64.5 [58-66]       | 272.7 [267-275]    | x4.249 [4.110-4.562]  | 0.4 [0.8] | 4           |
+#   | dispersive S    | 8    | 66.9 [59-68]       | 454.0 [403-475]    | x6.892 [6.395-7.191]  | 0.5 [1.4] | 4           |
+#   | dispersive S    | auto | 62.1 [58-68]       | 499.2 [459-589]    | x7.398 [7.330-10.145] | 0.6 [1.3] | 3 of 4      |
+#   cg28 runs x0.92-x1.03 of cg18 (median per row; cg19-cg28 added the Metal engine), so cg29 / cg28 tells the same as
+#   cg29 / cg18 (both in the raw file). The two loaded rows, the ideal case M at 8 threads and with the automatic count
+#   (07:25-08:14), ran while other sessions loaded the Mac, among them builds and snapshot runs of another session from
+#   07:12 to 07:31: 3 of their 4 rounds stayed loaded through the third redo, and their rates are not comparable with
+#   the other rows. On the other rows cg29 runs x1.11-x1.36 of cg18 on the homogeneous ideal box, x1.74-x2.18 on the
+#   pml and inhomogeneous cases and x4.25-x7.40 on the dispersive case (a Lorentz and a Debye block, whose Debye hooks
+#   the unfused plan runs on one thread).

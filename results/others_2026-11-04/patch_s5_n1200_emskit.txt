@@ -1,0 +1,5 @@
+# patch_s5_n1200  2026-11-04 04:11
+stock@multithreaded:8           849.2 MC/s     11.11 s  1200 TS x 7.863 MC  others  74%  runs 766/849  busy KirchhoffStudio:31,WindowServer:22  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4           1363.5 MC/s      6.92 s  1200 TS x 7.863 MC  others  21%  runs 1350/1363  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1509.6 MC/s      6.25 s  1200 TS x 7.863 MC  others  25%  runs 1510/1230  (auto-picked 6 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 3 configs equals the reference

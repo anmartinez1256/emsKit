@@ -1,0 +1,4 @@
+# patch_s5_n1200  2026-11-04 04:14
+multithreaded:4                 975.7 MC/s      9.67 s  1200 TS x 7.863 MC  others  82%  runs 976/956  busy 2.1.312:24  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    884.3 MC/s     10.67 s  1200 TS x 7.863 MC  others 127%  runs 829/884  busy 2.1.312:38,WindowServer:35,KirchhoffStudio:27  probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)

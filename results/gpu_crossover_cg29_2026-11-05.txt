@@ -1,0 +1,1289 @@
+# GPU against CPU by grid size: snapshot cg29 (1620939), Apple M5 (4 P + 6 E cores, 10 GPU cores), macOS 27.0.1, 2026-11-05.
+# The question (the author, 2026-11-05): at how many cells does the GPU engine become faster than the CPU engine, and why is
+# it slower below that? Drawn in paper/figures/fig_crossover.py; text in paper/sec_gpu.tex ("Where the GPU overtakes the CPU").
+#
+# Method. Three bench models (bench/models.py) at several mesh scales: the patch antenna of the patch tutorial (scale 1
+# = the patch tutorial, 0.104 M cells; scale 5 = patch x5, 7.863 M), the notch filter of the notch tutorial (scale 1 =
+# the notch tutorial, 0.270 M; scale 3 = notch x3, 5.247 M) and the toolkit's GCPW line (scale 1 = the GCPW line of the
+# tables, 0.242 M; its scale multiplies the cell size, so a smaller scale gives more cells). Each point is one paired,
+# interleaved run of bench/abtest.py with 4 rounds; in every round the four configurations run in turn: c0 the
+# multithreaded engine at 8 threads, c1 at 4 threads, c2 the metal-diamond engine, c3 the metal-diamond engine with
+# OPENEMS_DIAMOND_TIMING=1 (GPU busy time per IterateTS call; c3/c2 over the points: see the checks). Every run waited
+# (at most 1800 s) until the other processes used at most 150 % CPU and 10 % of the GPU, and was run again when they
+# used more of either during it, up to 3 times (--quiet 150 --quiet-max 1800 --run-redo 3; the discarded runs are the
+# raw output's "# redo" lines; one run, notch filter s1 r0 c1, went ahead after the 1800 s with the others at 774 %
+# CPU, in a round that is left out). A round "kept after 3 redos" with a loaded run is left out of a point's medians
+# when at least two clean rounds remain ("rounds": "3 of 4"; "N loaded" = fewer remained, so they are used). Steps:
+# enough for a time loop of about 2 s on the small grids (36 500 on the patch tutorial), 3 000 on the large ones; the
+# models' probes and dumps as in the bench (the patch's nf2ff dumps end an IterateTS call every 31 steps at scale 1).
+# Passes (scripts/gpu_crossover/sweep.sh runs the same list in one go): 10:24-16:15 the first 21 points; 16:17-16:33 the
+# GCPW line at 3.2 and 5.1 M cells and patch scales 2.5 and 3 again (their first pass had 3 of 4 rounds loaded; the
+# table uses the re-runs, the first pass is in the raw output); 16:33-16:37 the run-length check (section 5);
+# 16:37-16:42 the patch at 2.9 M and the GCPW line at 2.4 M cells, inside the two gaps around the crossover. Load: other
+# sessions' builds and solvers, load average 1.7-17.5 at the start of a point; in the runs used the others took 0.5-1.3
+# cores and 1-5 % of the GPU (median of a point; at most 1.5 cores and 9 %).
+#
+# Columns. MC/s = million Yee cells per second of the time loop (openEMS's own figure), median [min-max] over the rounds
+# used; "*" marks the CPU thread count with the higher median (8 threads at every point). GPU / CPU best = median
+# [min-max] of the per-round ratio of c2 to that thread count. From the c3 runs (median over the rounds used): GPU busy
+# = GPU busy time / time loop; gaps = time inside IterateTS with the GPU idle (starting and finishing the call's command
+# buffers); outside = time loop outside IterateTS (probes, dumps and the rest of the main loop, on the CPU); GPU-only =
+# cells x steps / GPU busy time, the GPU's rate while it works; steps/call; GPU ms/call and idle ms/call = GPU busy and
+# idle time per IterateTS call (idle = time loop - busy; on the large grids, with 4-28 calls per run, it includes the
+# start and end of the loop); tiling = the tuner's choice (K, M,V) in the c3 runs used, with counts where they differ
+# (the plain GPU runs do not report theirs); tiles/dispatch = tiles in one dispatch of each tiling listed, fewest (MM)
+# to most (VV), x threads per tile, from a verbose 100-step run of the point; others = the other processes' CPU in cores
+# and GPU in %, median [max] over every run used. Tiles, cells and probe checks: scripts/gpu_crossover/ (tiles.py,
+# cells.py, analyze.py; mkresult.py assembles this file). The run folders with the probe files are not published.
+#
+# 1. Per point (rows by model, then cells)
+# | model               | cells   | steps | CPU 8 thr          | CPU 4 thr        | GPU              | GPU / CPU best       | GPU busy | gaps | outside | GPU-only | steps/call | GPU ms/call | idle ms/call | tiling                  | tiles/dispatch               | others              | rounds          |
+# | patch antenna s1    | 0.104 M | 36500 | 1766 [1626-1811] * | 1757 [1511-1758] | 1956 [1900-1974] | x1.107 [1.090-1.169] | 81 %     | 11 % | 8 %     | 2510     | 31         | 1.27        | 0.30         | K=3 6,6                 | 16-25 x 256                  | 0.8 [1.4] / 2 [3] % | 3 of 4, redo 12 |
+# | patch antenna s1.25 | 0.179 M | 21000 | 2208 [2206-2229] * | 1551 [1517-2106] | 2072 [1982-2088] | x0.936 [0.898-0.940] | 85 %     | 7 %  | 9 %     | 2413     | 36         | 2.67        | 0.49         | K=3 6,6                 | 25-36 x 256                  | 0.7 [1.5] / 2 [5] % | 3 of 4, redo 16 |
+# | patch antenna s1.5  | 0.295 M | 13000 | 2447 [1860-2453] * | 2161 [2102-2173] | 2373 [2367-2376] | x0.968 [0.967-1.276] | 90 %     | 4 %  | 7 %     | 2645     | 45         | 5.07        | 0.59         | K=3 8,6                 | 25-36 x 512                  | 0.6 [1.1] / 4 [5] % | 3 of 4, redo 10 |
+# | patch antenna s1.75 | 0.426 M | 9000  | 2443 [2163-2636] * | 2245 [1777-2348] | 2646 [2640-2660] | x1.091 [1.003-1.225] | 91 %     | 3 %  | 6 %     | 2898     | 49         | 7.16        | 0.70         | K=4 12,8                | 16-25 x 1024                 | 0.8 [1.5] / 4 [5] % | 4, redo 7       |
+# | patch antenna s2    | 0.619 M | 6000  | 2825 [2820-2872] * | 2033 [1897-2401] | 2674 [2660-2678] | x0.942 [0.931-0.949] | 94 %     | 2 %  | 5 %     | 2860     | 56         | 12.02       | 0.83         | K=4 12,8 x2, K=3 8,6 x1 | 16-25 x 1024, 36-49 x 512    | 0.7 [1.4] / 4 [5] % | 3 of 4, redo 8  |
+# | patch antenna s2.5  | 1.129 M | 3500  | 3003 [2952-3049] * | 2389 [2386-2398] | 2812 [2808-2815] | x0.936 [0.921-0.954] | 95 %     | 1 %  | 4 %     | 2953     | 69         | 26.23       | 1.26         | K=4 12,8                | 25-36 x 1024                 | 0.5 [1.3] / 4 [5] % | 4               |
+# | patch antenna s3    | 1.849 M | 3000  | 2881 [2855-2903] * | 2183 [2153-2197] | 2860 [2853-2872] | x0.993 [0.983-1.006] | 97 %     | 1 %  | 3 %     | 2961     | 81         | 50.64       | 1.68         | K=4 12,8                | 36-49 x 1024                 | 0.5 [0.6] / 4 [5] % | 4               |
+# | patch antenna s3.5  | 2.864 M | 3000  | 2478 [2458-2509] * | 1889 [1852-1953] | 2733 [2573-2739] | x1.100 [1.035-1.110] | 97 %     | 1 %  | 2 %     | 2810     | 115        | 117.59      | 3.02         | K=3 8,6                 | 121-144 x 1024               | 0.6 [0.8] / 4 [5] % | 4               |
+# | patch antenna s4    | 4.170 M | 3000  | 2166 [2161-2172] * | 1790 [1787-1792] | 2818 [2818-2818] | x1.301 [1.297-1.304] | 98 %     | 0 %  | 1 %     | 2876     | 107        | 155.36      | 2.86         | K=3 8,6                 | 144-169 x 1024               | 1.2 [1.4] / 4 [5] % | 2 of 4, redo 22 |
+# | patch antenna s5    | 7.863 M | 3000  | 1919 [1910-1929] * | 1643 [1618-1752] | 2908 [2891-2912] | x1.517 [1.499-1.523] | 99 %     | 0 %  | 1 %     | 2956     | 130        | 346.96      | 5.22         | K=4 8,8                 | 169-196 x 1024               | 1.3 [1.3] / 4 [5] % | 3 of 4, redo 6  |
+# | notch filter s1     | 0.270 M | 14000 | 2125 [2084-2127] * | 1900 [1441-1910] | 1900 [1892-1904] | x0.894 [0.890-0.913] | 97 %     | 2 %  | 1 %     | 1959     | 81         | 11.14       | 0.32         | K=4 8,8                 | 75-96 x 256                  | 0.7 [1.4] / 1 [9] % | 3 of 4, redo 14 |
+# | notch filter s1.25  | 0.503 M | 7500  | 2367 [2304-2374] * | 1882 [1821-1910] | 2305 [2299-2311] | x0.974 [0.969-1.003] | 98 %     | 1 %  | 1 %     | 2344     | 129        | 27.75       | 0.48         | K=4 12,8                | 75-96 x 256                  | 0.5 [0.8] / 1 [1] % | 4, redo 3       |
+# | notch filter s1.5   | 0.818 M | 4500  | 2661 [2594-2715] * | 2062 [1864-2098] | 2693 [2536-2714] | x1.020 [0.934-1.031] | 99 %     | 1 %  | 1 %     | 2752     | 167        | 49.55       | 0.68         | K=4 12,8                | 108-133 x 256                | 0.7 [1.3] / 1 [7] % | 4, redo 2       |
+# | notch filter s2     | 1.722 M | 3000  | 2622 [2472-2702] * | 2041 [1942-2090] | 3001 [2994-3010] | x1.145 [1.108-1.217] | 99 %     | 0 %  | 1 %     | 3036     | 150        | 85.09       | 1.21         | K=4 8,8                 | 290-330 x 256                | 1.2 [1.4] / 1 [7] % | 4, redo 11      |
+# | notch filter s2.5   | 3.135 M | 3000  | 2192 [2177-2213] * | 1713 [1688-1862] | 3080 [3074-3081] | x1.405 [1.389-1.415] | 99 %     | 0 %  | 1 %     | 3081     | 167        | 169.56      | 1.71         | K=4 12,8                | 261-300 x 512                | 0.8 [1.2] / 2 [4] % | 3 of 4, redo 11 |
+# | notch filter s3     | 5.247 M | 3000  | 2236 [2220-2252] * | 1672 [1626-1719] | 3220 [3193-3246] | x1.440 [1.418-1.462] | 99 %     | 0 %  | 1 %     | 3239     | 200        | 324.00      | 2.33         | K=4 12,8                | 374-420 x 512                | 1.0 [1.5] / 3 [8] % | 2 of 4, redo 17 |
+# | GCPW line s2        | 0.105 M | 36000 | 1573 [1516-1579] * | 1540 [1460-1566] | 1930 [1921-1932] | x1.227 [1.223-1.267] | 99 %     | 1 %  | 1 %     | 1956     | 462        | 24.71       | 0.35         | K=4 12,8                | 18-30 x 256                  | 1.2 [1.4] / 4 [5] % | 4, redo 3       |
+# | GCPW line s1.3      | 0.156 M | 24500 | 1729 [1358-1822] * | 1662 [1640-1739] | 1778 [1695-1779] | x1.028 [0.976-1.248] | 99 %     | 1 %  | 1 %     | 1799     | 350        | 30.37       | 0.39         | K=4 12,8                | 27-40 x 256                  | 0.5 [1.5] / 5 [5] % | 3 of 4, redo 5  |
+# | GCPW line s1        | 0.242 M | 15500 | 1967 [1927-2009] * | 1729 [1614-1776] | 2099 [2098-2102] | x1.068 [1.045-1.089] | 99 %     | 1 %  | 1 %     | 2123     | 388        | 44.16       | 0.50         | K=4 12,8                | 40-55 x 256                  | 0.5 [1.4] / 4 [5] % | 4, redo 4       |
+# | GCPW line s0.8      | 0.415 M | 9000  | 2469 [2392-2528] * | 2122 [2023-2159] | 2666 [2481-2669] | x1.064 [1.013-1.114] | 99 %     | 0 %  | 1 %     | 2701     | 500        | 76.77       | 0.86         | K=4 12,8                | 48-65 x 256                  | 0.5 [0.9] / 4 [5] % | 4, redo 1       |
+# | GCPW line s0.65     | 0.645 M | 6000  | 2570 [2537-2625] * | 2118 [2089-2149] | 2602 [2462-2628] | x1.001 [0.970-1.024] | 99 %     | 0 %  | 1 %     | 2649     | 462        | 112.34      | 1.04         | K=3 8,6                 | 133-160 x 256                | 0.5 [1.4] / 4 [5] % | 4, redo 6       |
+# | GCPW line s0.5      | 1.417 M | 3000  | 2763 [2726-2774] * | 2069 [1934-2089] | 2747 [2708-2755] | x0.993 [0.981-1.009] | 99 %     | 0 %  | 1 %     | 2783     | 600        | 305.64      | 3.29         | K=3 8,6                 | 270-308 x 256                | 0.5 [1.4] / 4 [5] % | 4, redo 2       |
+# | GCPW line s0.4      | 2.379 M | 3000  | 2395 [1989-2421] * | 1798 [1576-1909] | 2795 [2722-2833] | x1.167 [1.124-1.424] | 99 %     | 0 %  | 1 %     | 2849     | 750        | 626.33      | 5.13         | K=4 12,8 x3, K=3 8,6 x1 | 168-198 x 512, 360-403 x 256 | 0.6 [1.4] / 4 [5] % | 4, redo 4       |
+# | GCPW line s0.35     | 3.247 M | 3000  | 2348 [2122-2412] * | 1849 [1534-1910] | 2933 [2932-2934] | x1.250 [1.216-1.382] | 99 %     | 0 %  | 1 %     | 2960     | 750        | 822.84      | 8.56         | K=3 8,6                 | 429-476 x 256                | 0.6 [1.5] / 5 [7] % | 3 of 4, redo 4  |
+# | GCPW line s0.3      | 5.057 M | 3000  | 2263 [2258-2281] * | 1833 [1830-1848] | 3028 [3022-3028] | x1.337 [1.327-1.341] | 99 %     | 0 %  | 1 %     | 3053     | 750        | 1242.50     | 11.25        | K=3 8,6                 | 585-640 x 256                | 0.5 [0.7] / 4 [5] % | 4               |
+#
+# 2. Where the GPU overtakes the CPU. There is no single size. The GPU is ahead in every round from 1.7 M cells on the
+# notch filter, 2.4 M on the GCPW line and 2.9 M on the patch antenna (medians x1.10-1.52 from there, x1.25-1.52 from
+# 3.1 M cells on); the medians cross for the last time at about 0.66, 1.45 and 1.91 M cells. Below that the two engines
+# are within x0.89-1.23 of each other and the side depends on the model: the GPU leads on the GCPW line at 0.11-0.42 M
+# cells (x1.03-1.23), trails on the notch filter (x0.89 at 0.27 M) and changes sides on the patch antenna (x0.94-1.11 up
+# to 1.85 M). On grids that small the session moves the ratio as well (section 5).
+# crossover patch antenna: the GPU is faster at every size from 2.864 M cells up (measured to 7.863 M); the last crossing is at about 1.91 M cells, between 1.849 (x0.993) and 2.864 M (x1.100), log-linear between the two medians; all crossings: CPU ahead above ~0.15 M (between 0.104 and 0.179 M), GPU ahead above ~0.32 M (between 0.295 and 0.426 M), CPU ahead above ~0.54 M (between 0.426 and 0.619 M), GPU ahead above ~1.91 M (between 1.849 and 2.864 M)
+# crossover notch filter: the GPU is faster at every size from 0.818 M cells up (measured to 5.247 M); the last crossing is at about 0.66 M cells, between 0.503 (x0.974) and 0.818 M (x1.020), log-linear between the two medians
+# crossover GCPW line: the GPU is faster at every size from 2.379 M cells up (measured to 5.057 M); the last crossing is at about 1.45 M cells, between 1.417 (x0.993) and 2.379 M (x1.167), log-linear between the two medians; all crossings: CPU ahead above ~0.73 M (between 0.645 and 1.417 M), GPU ahead above ~1.45 M (between 1.417 and 2.379 M)
+# every round patch antenna: the GPU ahead in every round used at every size from 2.864 M cells (x1.035 or more); the next smaller point 1.849 M: x0.993 [0.983-1.006]
+# every round notch filter: the GPU ahead in every round used at every size from 1.722 M cells (x1.108 or more); the next smaller point 0.818 M: x1.020 [0.934-1.031]
+# every round GCPW line: the GPU ahead in every round used at every size from 2.379 M cells (x1.124 or more); the next smaller point 1.417 M: x0.993 [0.981-1.009]
+#
+# 3. Why the GPU's lead narrows on small grids, or turns into a loss (the c3 columns of section 1):
+# (a) It waits for the CPU. Between IterateTS calls the CPU records the probes and evaluates the dumps while the GPU
+#     idles ("outside"), and starting and finishing a call's command buffers leaves it idle too ("gaps"): 0.30-0.50 ms
+#     per call on the smallest grids. On the patch antenna at scale 1 (the patch tutorial) a call ends every 31 steps,
+#     at the nf2ff dumps, and holds 1.27 ms of GPU work, so the GPU is busy 81 % of the loop (79-82 % per run here,
+#     73-79 % in the later runs of section 5); 94 % at 0.62 M cells, 98-99 % from 4.2 M. On the patch antenna, up to
+#     0.62 M cells, its rate over busy time alone (GPU-only, 2413-2898 MC/s) is above the CPU's at every point
+#     (1766-2825): on those grids the waiting decides. The notch filter and the GCPW line end a call every 81-750 steps
+#     and keep the GPU busy 97-99 % at every size.
+# (b) Its own rate is lower on small grids: GPU-only 1959 MC/s on the notch filter at 0.27 M cells against 3239 at 5.2
+#     M, 1799-1956 on the GCPW line at 0.11-0.16 M against 3053 at 5.1 M. A dispatch there has few tiles for the 10 GPU
+#     cores (notch filter at 0.27 M: 75-96 tiles of 256 threads; GCPW line at 0.11 M: 18-30) and short columns (4
+#     z-vectors), and the edge work makes up more of the cells (the 8-cell PML and the Mur faces on the notch filter,
+#     the conducting sheets and the Mur faces on the GCPW line). These causes were not separated; the patch antenna at
+#     0.10 M cells (16-25 tiles of 256 threads, 12 z-vectors) ran 2510 MC/s over busy time.
+# (c) The CPU is at its best in the middle of the range: 1573-2208 MC/s at 0.10-0.27 M cells, 2570-3003 at 0.62-1.85 M,
+#     above the 2273 MC/s the cores reach from DRAM (paper, section "Where the ceiling is": one independent sub-grid per
+#     thread, 111 GB/s at 49 B per cell), presumably because the caches then carry part of the traffic (not measured),
+#     and 1919-2263 at 4.2-7.9 M cells, at or below that ceiling, while the GPU runs 2818-3220 there.
+#
+# 4. Checks
+# checks: every CPU run (4 and 8 threads, every round) identical to the CPU reference (8 threads, round 0)
+# GPU port probes against the CPU reference (8 threads, round 0; no FTZ in either), every GPU run used: max 1.7e-06 relative (bench.py's per-file max|v - v_ref| / max|v_ref|) over the files whose reference peak is a normal float
+#   notch filter s2.5: port_it_2A (CPU peak 1.7e-39, GPU peak 0.0e+00), port_it_2B (CPU peak 5.6e-39, GPU peak 0.0e+00), port_ut_2A (CPU peak 1.8e-40, GPU peak 0.0e+00), port_ut_2B (CPU peak 6.4e-40, GPU peak 0.0e+00), port_ut_2C (CPU peak 2.2e-39, GPU peak 0.0e+00): subnormal on the CPU because the wave has not reached the port in this run; the GPU flushes subnormals to zero, so bench.py's ratio is 1 there by construction
+# bench.py's own figure, all files: max 1.0e+00 relative
+# TIMING=1 vs plain GPU (c3/c2, median of the per-point medians): x1.000 [0.984-1.026]
+#
+# 5. Run length and session: the patch tutorial (scale 1, 0.104 M cells) at the bench's 10 500 steps (the speed table's
+# count, x0.93 there) and at the sweep's 36 500, paired in one session four hours after the sweep's point (16:32-16:37,
+# others 0.3-0.7 cores), each twice; configs c0 multithreaded:8, c1 metal-diamond, c2 metal-diamond with TIMING=1.
+#   10 500 steps: x0.929 [0.912-0.956] and x0.907 [0.892-0.948]; CPU 1887 and 1926 MC/s, GPU 1740 and 1735.
+#   36 500 steps: x0.972 [0.929-0.973] and x0.953 [0.937-0.978]; CPU 1910 and 1904 MC/s, GPU 1852 and 1819.
+#   The sweep's point (36 500 steps, 12:29-12:37): x1.107 [1.090-1.169]; CPU 1766, GPU 1956.
+#   TIMING runs (per run): busy 74-79 % at 10 500 steps and 73-76 % at 36 500 (the sweep's 79-82 %); GPU-only 2184-2254
+#   and 2421-2465 MC/s (sweep 2443-2515); outside 10-14 % and 12-15 % (sweep 8-10 %); gaps 11-12 % in all.
+# So the run length moves this ratio by about 4 % (the GPU's own rate is 10 % lower in the shorter runs), and the session
+# by 14-16 % (in the later session the CPU ran 8 % faster, and the CPU's work between the GPU's calls took longer, so the
+# GPU waited more): on grids this small the two engines are close, and which one leads depends on the session.
+#
+# Raw output (bench/abtest.py), file by file: the sweep (out/), the first pass of patch scales 2.5 and 3 (replaced by
+# the re-runs above), the run-length check.
+# ---- out/notch_s1_n14000.txt
+# notch_s1_n14000  2026-11-05 10:24  load avg 13.78  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c0   1003.9 MC/s  others cpu  516% gpu   9%  reference
+# r0 c0: redo 1 of 3 (the others at 516 % CPU, 9 % GPU during the run)
+# redo r0 c0   1041.4 MC/s  others cpu  418% gpu   3%  reference
+# r0 c0: redo 2 of 3 (the others at 418 % CPU, 3 % GPU during the run)
+# redo r0 c0   1237.4 MC/s  others cpu  441% gpu   2%  reference
+# r0 c0: redo 3 of 3 (the others at 441 % CPU, 2 % GPU during the run)
+# r0 c1: others still 774 % CPU after 1800 s (kernel_task:258 emskit:144 Python:110 swiftpm-testing-:95 swift-frontend:34 swift-frontend:32 ApplicationsStor:30); the run goes ahead
+# redo r0 c1    235.0 MC/s  others cpu  613% gpu  10%  identical
+# r0 c1: redo 1 of 3 (the others at 613 % CPU, 10 % GPU during the run)
+# redo r0 c1   1155.3 MC/s  others cpu  494% gpu   2%  identical
+# r0 c1: redo 2 of 3 (the others at 494 % CPU, 2 % GPU during the run)
+# redo r0 c1   1183.5 MC/s  others cpu  370% gpu   2%  identical
+# r0 c1: redo 3 of 3 (the others at 370 % CPU, 2 % GPU during the run)
+# redo r0 c2   1902.3 MC/s  others cpu  153% gpu   1%  probes rel 9.4e-07
+# r0 c2: redo 1 of 3 (the others at 153 % CPU, 1 % GPU during the run)
+# redo r0 c2   1854.8 MC/s  others cpu  295% gpu  32%  probes rel 9.4e-07
+# r0 c2: redo 2 of 3 (the others at 295 % CPU, 32 % GPU during the run)
+# redo r0 c2   1892.9 MC/s  others cpu  192% gpu   1%  probes rel 9.4e-07
+# r0 c2: redo 3 of 3 (the others at 192 % CPU, 1 % GPU during the run)
+r0 c0   1608.6 MC/s  others cpu  275% gpu   9%  reference
+r0 c1   1533.2 MC/s  others cpu  135% gpu   2%  identical
+r0 c2   1882.5 MC/s  others cpu  141% gpu   5%  probes rel 9.4e-07
+r0 c3   1899.7 MC/s  others cpu   80% gpu   1%  probes rel 9.4e-07
+# r0: kept after 3 redos although a run saw the others above the limit
+# redo r1 c1   1758.7 MC/s  others cpu   89% gpu  14%  identical
+# r1 c1: redo 1 of 3 (the others at 89 % CPU, 14 % GPU during the run)
+r1 c0   2126.9 MC/s  others cpu   42% gpu   3%  identical
+r1 c1   1909.7 MC/s  others cpu   91% gpu   6%  identical
+r1 c2   1891.9 MC/s  others cpu  139% gpu   4%  probes rel 9.4e-07
+r1 c3   1907.3 MC/s  others cpu   89% gpu   0%  probes rel 9.4e-07
+# redo r2 c2   1888.7 MC/s  others cpu  262% gpu   0%  probes rel 9.4e-07
+# r2 c2: redo 1 of 3 (the others at 262 % CPU, 0 % GPU during the run)
+r2 c0   2084.2 MC/s  others cpu   72% gpu   2%  identical
+r2 c1   1899.6 MC/s  others cpu   76% gpu   1%  identical
+r2 c2   1903.5 MC/s  others cpu   57% gpu   1%  probes rel 9.4e-07
+r2 c3   1902.7 MC/s  others cpu   43% gpu   1%  probes rel 9.4e-07
+# redo r3 c0   1405.1 MC/s  others cpu  316% gpu   1%  identical
+# r3 c0: redo 1 of 3 (the others at 316 % CPU, 1 % GPU during the run)
+# redo r3 c0   1489.4 MC/s  others cpu  286% gpu   1%  identical
+# r3 c0: redo 2 of 3 (the others at 286 % CPU, 1 % GPU during the run)
+# redo r3 c1   1419.1 MC/s  others cpu  153% gpu   2%  identical
+# r3 c1: redo 1 of 3 (the others at 153 % CPU, 2 % GPU during the run)
+r3 c0   2124.7 MC/s  others cpu   56% gpu   1%  identical
+r3 c1   1441.2 MC/s  others cpu  104% gpu   9%  identical
+r3 c2   1900.1 MC/s  others cpu   67% gpu   1%  probes rel 9.4e-07
+r3 c3   1904.3 MC/s  others cpu   65% gpu   0%  probes rel 9.4e-07
+# summary notch_s1_n14000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2104.4 [1609-2127]  x1.000 [1.000-1.000]  others 64%/3%  identical,reference
+c1 cg29@multithreaded:4                                           1716.4 [1441-1910]  x0.905 [0.678-0.953]  others 97%/4%  identical
+c2 cg29@metal-diamond                                             1896.0 [1883-1904]  x0.904 [0.890-1.170]  others 103%/3%  probes rel 9.4e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1903.5 [1900-1907]  x0.905 [0.896-1.181]  others 72%/0%  probes rel 9.4e-07
+# ---- out/notch_s1.25_n7500.txt
+# notch_s1.25_n7500  2026-11-05 11:44  load avg 4.05  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c2   2096.8 MC/s  others cpu  474% gpu   1%  probes rel 7.5e-07
+# r0 c2: redo 1 of 3 (the others at 474 % CPU, 1 % GPU during the run)
+r0 c0   2304.2 MC/s  others cpu   57% gpu   1%  reference
+r0 c1   1909.6 MC/s  others cpu   59% gpu   1%  identical
+r0 c2   2310.6 MC/s  others cpu   51% gpu   0%  probes rel 7.5e-07
+r0 c3   2304.8 MC/s  others cpu   54% gpu   1%  probes rel 7.5e-07
+# redo r1 c0   1610.6 MC/s  others cpu  252% gpu  10%  identical
+# r1 c0: redo 1 of 3 (the others at 252 % CPU, 10 % GPU during the run)
+r1 c0   2362.7 MC/s  others cpu   34% gpu   1%  identical
+r1 c1   1899.6 MC/s  others cpu   32% gpu   1%  identical
+r1 c2   2308.1 MC/s  others cpu   53% gpu   0%  probes rel 7.5e-07
+r1 c3   2302.3 MC/s  others cpu   85% gpu   0%  probes rel 7.5e-07
+r2 c0   2373.7 MC/s  others cpu   49% gpu   1%  identical
+r2 c1   1821.2 MC/s  others cpu   72% gpu   1%  identical
+r2 c2   2299.0 MC/s  others cpu   73% gpu   0%  probes rel 7.5e-07
+r2 c3   2304.2 MC/s  others cpu   71% gpu   0%  probes rel 7.5e-07
+# redo r3 c0   2310.1 MC/s  others cpu  165% gpu   1%  identical
+# r3 c0: redo 1 of 3 (the others at 165 % CPU, 1 % GPU during the run)
+r3 c0   2370.6 MC/s  others cpu   33% gpu   1%  identical
+r3 c1   1864.8 MC/s  others cpu   32% gpu   1%  identical
+r3 c2   2301.0 MC/s  others cpu   41% gpu   0%  probes rel 7.5e-07
+r3 c3   2304.2 MC/s  others cpu   42% gpu   0%  probes rel 7.5e-07
+# summary notch_s1.25_n7500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2366.6 [2304-2374]  x1.000 [1.000-1.000]  others 41%/1%  identical,reference
+c1 cg29@multithreaded:4                                           1882.2 [1821-1910]  x0.795 [0.767-0.829]  others 46%/1%  identical
+c2 cg29@metal-diamond                                             2304.6 [2299-2311]  x0.974 [0.969-1.003]  others 52%/0%  probes rel 7.5e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2304.2 [2302-2305]  x0.973 [0.971-1.000]  others 62%/0%  probes rel 7.5e-07
+# ---- out/notch_s1.5_n4500.txt
+# notch_s1.5_n4500  2026-11-05 11:46  load avg 1.73  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2714.7 MC/s  others cpu   35% gpu   1%  reference
+r0 c1   2079.6 MC/s  others cpu   69% gpu   1%  identical
+r0 c2   2536.0 MC/s  others cpu  105% gpu   0%  probes rel 7.4e-07
+r0 c3   2722.1 MC/s  others cpu   86% gpu   0%  probes rel 7.4e-07
+r1 c0   2690.9 MC/s  others cpu   53% gpu   1%  identical
+r1 c1   2044.5 MC/s  others cpu   81% gpu   2%  identical
+r1 c2   2714.0 MC/s  others cpu   65% gpu   1%  probes rel 7.4e-07
+r1 c3   2709.6 MC/s  others cpu   67% gpu   2%  probes rel 7.4e-07
+r2 c0   2631.6 MC/s  others cpu   71% gpu   2%  identical
+r2 c1   2098.5 MC/s  others cpu   35% gpu   0%  identical
+r2 c2   2712.4 MC/s  others cpu   53% gpu   1%  probes rel 7.4e-07
+r2 c3   2720.7 MC/s  others cpu   56% gpu   0%  probes rel 7.4e-07
+# redo r3 c1   1753.3 MC/s  others cpu  157% gpu   4%  identical
+# r3 c1: redo 1 of 3 (the others at 157 % CPU, 4 % GPU during the run)
+# redo r3 c2   2669.4 MC/s  others cpu  157% gpu   5%  probes rel 7.4e-07
+# r3 c2: redo 1 of 3 (the others at 157 % CPU, 5 % GPU during the run)
+r3 c0   2593.7 MC/s  others cpu   57% gpu   1%  identical
+r3 c1   1864.5 MC/s  others cpu  128% gpu   7%  identical
+r3 c2   2674.0 MC/s  others cpu  129% gpu   6%  probes rel 7.4e-07
+r3 c3   2670.7 MC/s  others cpu  115% gpu   5%  probes rel 7.4e-07
+# summary notch_s1.5_n4500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2661.3 [2594-2715]  x1.000 [1.000-1.000]  others 55%/1%  identical,reference
+c1 cg29@multithreaded:4                                           2062.1 [1864-2099]  x0.763 [0.719-0.797]  others 75%/1%  identical
+c2 cg29@metal-diamond                                             2693.2 [2536-2714]  x1.020 [0.934-1.031]  others 85%/1%  probes rel 7.4e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2715.2 [2671-2722]  x1.018 [1.003-1.034]  others 76%/1%  probes rel 7.4e-07
+# ---- out/notch_s2_n3000.txt
+# notch_s2_n3000  2026-11-05 11:49  load avg 2.79  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1   1948.3 MC/s  others cpu  152% gpu   6%  identical
+# r0 c1: redo 1 of 3 (the others at 152 % CPU, 6 % GPU during the run)
+# redo r0 c1   1808.2 MC/s  others cpu  153% gpu   6%  identical
+# r0 c1: redo 2 of 3 (the others at 153 % CPU, 6 % GPU during the run)
+# redo r0 c1   1534.9 MC/s  others cpu  204% gpu   6%  identical
+# r0 c1: redo 3 of 3 (the others at 204 % CPU, 6 % GPU during the run)
+r0 c0   2687.8 MC/s  others cpu  109% gpu   6%  reference
+r0 c1   2040.1 MC/s  others cpu  126% gpu   6%  identical
+r0 c2   2999.3 MC/s  others cpu  120% gpu   7%  probes rel 3.0e-07
+r0 c3   2984.4 MC/s  others cpu  144% gpu   7%  probes rel 3.0e-07
+# redo r1 c0   2337.5 MC/s  others cpu  194% gpu   6%  identical
+# r1 c0: redo 1 of 3 (the others at 194 % CPU, 6 % GPU during the run)
+r1 c0   2471.9 MC/s  others cpu  143% gpu   1%  identical
+r1 c1   1941.8 MC/s  others cpu  129% gpu   3%  identical
+r1 c2   3009.5 MC/s  others cpu   85% gpu   1%  probes rel 3.0e-07
+r1 c3   2998.6 MC/s  others cpu   77% gpu   1%  probes rel 3.0e-07
+# redo r2 c0   2317.2 MC/s  others cpu  156% gpu   1%  identical
+# r2 c0: redo 1 of 3 (the others at 156 % CPU, 1 % GPU during the run)
+# redo r2 c3   2971.1 MC/s  others cpu  193% gpu   2%  probes rel 3.0e-07
+# r2 c3: redo 1 of 3 (the others at 193 % CPU, 2 % GPU during the run)
+# redo r2 c3   2999.2 MC/s  others cpu  164% gpu   3%  probes rel 3.0e-07
+# r2 c3: redo 2 of 3 (the others at 164 % CPU, 3 % GPU during the run)
+# redo r2 c3   2965.5 MC/s  others cpu  246% gpu   3%  probes rel 3.0e-07
+# r2 c3: redo 3 of 3 (the others at 246 % CPU, 3 % GPU during the run)
+r2 c0   2701.9 MC/s  others cpu  128% gpu   1%  identical
+r2 c1   2090.0 MC/s  others cpu   80% gpu   1%  identical
+r2 c2   2993.8 MC/s  others cpu  135% gpu   1%  probes rel 3.0e-07
+r2 c3   2963.3 MC/s  others cpu  134% gpu   5%  probes rel 3.0e-07
+# redo r3 c0   2431.8 MC/s  others cpu  180% gpu   1%  identical
+# r3 c0: redo 1 of 3 (the others at 180 % CPU, 1 % GPU during the run)
+# redo r3 c0   2219.5 MC/s  others cpu  189% gpu   1%  identical
+# r3 c0: redo 2 of 3 (the others at 189 % CPU, 1 % GPU during the run)
+# redo r3 c0   1046.0 MC/s  others cpu  581% gpu   1%  identical
+# r3 c0: redo 3 of 3 (the others at 581 % CPU, 1 % GPU during the run)
+r3 c0   2557.0 MC/s  others cpu  114% gpu   1%  identical
+r3 c1   2041.8 MC/s  others cpu   70% gpu   1%  identical
+r3 c2   3003.6 MC/s  others cpu   67% gpu   1%  probes rel 3.0e-07
+r3 c3   3023.0 MC/s  others cpu   48% gpu   1%  probes rel 3.0e-07
+# summary notch_s2_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2622.4 [2472-2702]  x1.000 [1.000-1.000]  others 121%/1%  identical,reference
+c1 cg29@multithreaded:4                                           2040.9 [1942-2090]  x0.780 [0.759-0.799]  others 103%/2%  identical
+c2 cg29@metal-diamond                                             3001.4 [2994-3009]  x1.145 [1.108-1.217]  others 103%/1%  probes rel 3.0e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2991.5 [2963-3023]  x1.146 [1.097-1.213]  others 106%/3%  probes rel 3.0e-07
+# ---- out/notch_s2.5_n3000.txt
+# notch_s2.5_n3000  2026-11-05 11:58  load avg 6.82  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1   1583.3 MC/s  others cpu  158% gpu   1%  identical
+# r0 c1: redo 1 of 3 (the others at 158 % CPU, 1 % GPU during the run)
+# redo r0 c1    733.6 MC/s  others cpu  665% gpu   1%  identical
+# r0 c1: redo 2 of 3 (the others at 665 % CPU, 1 % GPU during the run)
+# redo r0 c3   3063.5 MC/s  others cpu  161% gpu   2%  probes rel 1.0e+00
+# r0 c3: redo 1 of 3 (the others at 161 % CPU, 2 % GPU during the run)
+# redo r0 c3   3054.4 MC/s  others cpu  153% gpu   3%  probes rel 1.0e+00
+# r0 c3: redo 2 of 3 (the others at 153 % CPU, 3 % GPU during the run)
+# redo r0 c3   2962.8 MC/s  others cpu  430% gpu   8%  probes rel 1.0e+00
+# r0 c3: redo 3 of 3 (the others at 430 % CPU, 8 % GPU during the run)
+r0 c0   2266.2 MC/s  others cpu   89% gpu   1%  reference
+r0 c1   1855.0 MC/s  others cpu   62% gpu   2%  identical
+r0 c2   2887.4 MC/s  others cpu  122% gpu   5%  probes rel 1.0e+00
+r0 c3   2871.5 MC/s  others cpu  300% gpu   2%  probes rel 1.0e+00
+# r0: kept after 3 redos although a run saw the others above the limit
+# redo r1 c0   1189.0 MC/s  others cpu  380% gpu   5%  identical
+# r1 c0: redo 1 of 3 (the others at 380 % CPU, 5 % GPU during the run)
+r1 c0   2177.0 MC/s  others cpu   97% gpu   2%  identical
+r1 c1   1688.5 MC/s  others cpu   55% gpu   2%  identical
+r1 c2   3081.3 MC/s  others cpu   48% gpu   2%  probes rel 1.0e+00
+r1 c3   3038.4 MC/s  others cpu  122% gpu   4%  probes rel 1.0e+00
+# redo r2 c0   2147.2 MC/s  others cpu  162% gpu   4%  identical
+# r2 c0: redo 1 of 3 (the others at 162 % CPU, 4 % GPU during the run)
+# redo r2 c2   3074.5 MC/s  others cpu  170% gpu   1%  probes rel 1.0e+00
+# r2 c2: redo 1 of 3 (the others at 170 % CPU, 1 % GPU during the run)
+# redo r2 c2   3056.2 MC/s  others cpu  158% gpu   1%  probes rel 1.0e+00
+# r2 c2: redo 2 of 3 (the others at 158 % CPU, 1 % GPU during the run)
+# redo r2 c2   3045.6 MC/s  others cpu  196% gpu   1%  probes rel 1.0e+00
+# r2 c2: redo 3 of 3 (the others at 196 % CPU, 1 % GPU during the run)
+r2 c0   2192.2 MC/s  others cpu  123% gpu   1%  identical
+r2 c1   1862.3 MC/s  others cpu   56% gpu   1%  identical
+r2 c2   3079.6 MC/s  others cpu   63% gpu   2%  probes rel 1.0e+00
+r2 c3   3049.9 MC/s  others cpu  109% gpu   2%  probes rel 1.0e+00
+# redo r3 c0   1896.1 MC/s  others cpu  156% gpu   2%  identical
+# r3 c0: redo 1 of 3 (the others at 156 % CPU, 2 % GPU during the run)
+r3 c0   2212.9 MC/s  others cpu   96% gpu   3%  identical
+r3 c1   1713.1 MC/s  others cpu   61% gpu   2%  identical
+r3 c2   3074.5 MC/s  others cpu   56% gpu   2%  probes rel 1.0e+00
+r3 c3   3079.4 MC/s  others cpu   95% gpu   2%  probes rel 1.0e+00
+# summary notch_s2.5_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2202.6 [2177-2266]  x1.000 [1.000-1.000]  others 97%/2%  identical,reference
+c1 cg29@multithreaded:4                                           1784.0 [1688-1862]  x0.797 [0.774-0.850]  others 58%/2%  identical
+c2 cg29@metal-diamond                                             3077.0 [2887-3081]  x1.397 [1.274-1.415]  others 60%/2%  probes rel 1.0e+00
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    3044.1 [2871-3079]  x1.391 [1.267-1.396]  others 115%/2%  probes rel 1.0e+00
+# ---- out/notch_s3_n3000.txt
+# notch_s3_n3000  2026-11-05 12:15  load avg 6.54  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2252.1 MC/s  others cpu   79% gpu   2%  reference
+r0 c1   1718.6 MC/s  others cpu   71% gpu   1%  identical
+r0 c2   3193.2 MC/s  others cpu  132% gpu   8%  probes rel 1.6e-07
+r0 c3   3193.2 MC/s  others cpu  149% gpu   8%  probes rel 1.6e-07
+# redo r1 c0   2018.2 MC/s  others cpu  178% gpu   4%  identical
+# r1 c0: redo 1 of 3 (the others at 178 % CPU, 4 % GPU during the run)
+# redo r1 c0   1933.9 MC/s  others cpu  162% gpu   7%  identical
+# r1 c0: redo 2 of 3 (the others at 162 % CPU, 7 % GPU during the run)
+# redo r1 c0   1903.5 MC/s  others cpu  255% gpu   8%  identical
+# r1 c0: redo 3 of 3 (the others at 255 % CPU, 8 % GPU during the run)
+# redo r1 c1   1428.5 MC/s  others cpu  287% gpu   7%  identical
+# r1 c1: redo 1 of 3 (the others at 287 % CPU, 7 % GPU during the run)
+# redo r1 c1   1681.9 MC/s  others cpu  167% gpu   7%  identical
+# r1 c1: redo 2 of 3 (the others at 167 % CPU, 7 % GPU during the run)
+# redo r1 c2   3161.1 MC/s  others cpu  223% gpu  10%  probes rel 1.6e-07
+# r1 c2: redo 1 of 3 (the others at 223 % CPU, 10 % GPU during the run)
+r1 c0   1863.0 MC/s  others cpu  223% gpu   7%  identical
+r1 c1   1737.6 MC/s  others cpu  128% gpu   7%  identical
+r1 c2   3199.6 MC/s  others cpu  128% gpu   7%  probes rel 1.6e-07
+r1 c3   3206.2 MC/s  others cpu  135% gpu   3%  probes rel 1.6e-07
+# r1: kept after 3 redos although a run saw the others above the limit
+# redo r2 c0   2159.4 MC/s  others cpu  157% gpu   4%  identical
+# r2 c0: redo 1 of 3 (the others at 157 % CPU, 4 % GPU during the run)
+# redo r2 c0   1975.2 MC/s  others cpu  231% gpu   4%  identical
+# r2 c0: redo 2 of 3 (the others at 231 % CPU, 4 % GPU during the run)
+# redo r2 c1   1366.5 MC/s  others cpu  275% gpu  12%  identical
+# r2 c1: redo 1 of 3 (the others at 275 % CPU, 12 % GPU during the run)
+r2 c0   2220.3 MC/s  others cpu  102% gpu   2%  identical
+r2 c1   1626.3 MC/s  others cpu   78% gpu   3%  identical
+r2 c2   3245.8 MC/s  others cpu   96% gpu   3%  probes rel 1.6e-07
+r2 c3   3239.2 MC/s  others cpu  101% gpu   3%  probes rel 1.6e-07
+# redo r3 c0   1871.9 MC/s  others cpu  257% gpu   3%  identical
+# r3 c0: redo 1 of 3 (the others at 257 % CPU, 3 % GPU during the run)
+# redo r3 c1   1510.8 MC/s  others cpu  169% gpu   2%  identical
+# r3 c1: redo 1 of 3 (the others at 169 % CPU, 2 % GPU during the run)
+# redo r3 c1   1199.0 MC/s  others cpu  306% gpu   2%  identical
+# r3 c1: redo 2 of 3 (the others at 306 % CPU, 2 % GPU during the run)
+# redo r3 c1   1055.1 MC/s  others cpu  501% gpu   3%  identical
+# r3 c1: redo 3 of 3 (the others at 501 % CPU, 3 % GPU during the run)
+# redo r3 c2   3225.9 MC/s  others cpu  834% gpu   2%  probes rel 1.6e-07
+# r3 c2: redo 1 of 3 (the others at 834 % CPU, 2 % GPU during the run)
+# redo r3 c2   3206.2 MC/s  others cpu  158% gpu   2%  probes rel 1.6e-07
+# r3 c2: redo 2 of 3 (the others at 158 % CPU, 2 % GPU during the run)
+# redo r3 c2   3199.6 MC/s  others cpu  174% gpu   5%  probes rel 1.6e-07
+# r3 c2: redo 3 of 3 (the others at 174 % CPU, 5 % GPU during the run)
+# redo r3 c3   2959.1 MC/s  others cpu  568% gpu  22%  probes rel 1.6e-07
+# r3 c3: redo 1 of 3 (the others at 568 % CPU, 22 % GPU during the run)
+r3 c0   2174.3 MC/s  others cpu   78% gpu   3%  identical
+r3 c1   1078.2 MC/s  others cpu  424% gpu   3%  identical
+r3 c2   3199.6 MC/s  others cpu  329% gpu   2%  probes rel 1.6e-07
+r3 c3   3245.8 MC/s  others cpu   85% gpu   2%  probes rel 1.6e-07
+# r3: kept after 3 redos although a run saw the others above the limit
+# summary notch_s3_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2197.3 [1863-2252]  x1.000 [1.000-1.000]  others 90%/3%  identical,reference
+c1 cg29@multithreaded:4                                           1672.4 [1078-1738]  x0.748 [0.496-0.933]  others 103%/3%  identical
+c2 cg29@metal-diamond                                             3199.6 [3193-3246]  x1.467 [1.418-1.717]  others 130%/5%  probes rel 1.6e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    3222.7 [3193-3246]  x1.476 [1.418-1.721]  others 118%/3%  probes rel 1.6e-07
+# ---- out/patch_s1_n36500.txt
+# patch_s1_n36500  2026-11-05 12:29  load avg 12.71  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   1766.5 MC/s  others cpu   47% gpu   2%  reference
+r0 c1   1757.8 MC/s  others cpu   94% gpu   2%  identical
+r0 c2   1956.0 MC/s  others cpu   77% gpu   1%  probes rel 3.8e-07
+r0 c3   1989.4 MC/s  others cpu   64% gpu   1%  probes rel 3.8e-07
+# redo r1 c2   2041.0 MC/s  others cpu  179% gpu   1%  probes rel 3.8e-07
+# r1 c2: redo 1 of 3 (the others at 179 % CPU, 1 % GPU during the run)
+# redo r1 c3   2002.1 MC/s  others cpu  174% gpu   3%  probes rel 3.8e-07
+# r1 c3: redo 1 of 3 (the others at 174 % CPU, 3 % GPU during the run)
+r1 c0   1811.2 MC/s  others cpu  118% gpu   2%  identical
+r1 c1   1757.4 MC/s  others cpu   62% gpu   3%  identical
+r1 c2   1974.5 MC/s  others cpu  103% gpu   1%  probes rel 3.8e-07
+r1 c3   2028.5 MC/s  others cpu  110% gpu   1%  probes rel 3.8e-07
+# redo r2 c3   2021.8 MC/s  others cpu  166% gpu   1%  probes rel 3.8e-07
+# r2 c3: redo 1 of 3 (the others at 166 % CPU, 1 % GPU during the run)
+r2 c0   1626.0 MC/s  others cpu   87% gpu   2%  identical
+r2 c1   1510.8 MC/s  others cpu   66% gpu   2%  identical
+r2 c2   1900.5 MC/s  others cpu   58% gpu   1%  probes rel 3.8e-07
+r2 c3   2006.0 MC/s  others cpu  145% gpu   2%  probes rel 3.8e-07
+# redo r3 c0   1445.1 MC/s  others cpu  164% gpu  62%  identical
+# r3 c0: redo 1 of 3 (the others at 164 % CPU, 62 % GPU during the run)
+# redo r3 c0   1104.8 MC/s  others cpu  390% gpu   2%  identical
+# r3 c0: redo 2 of 3 (the others at 390 % CPU, 2 % GPU during the run)
+# redo r3 c0   1558.6 MC/s  others cpu  153% gpu   2%  identical
+# r3 c0: redo 3 of 3 (the others at 153 % CPU, 2 % GPU during the run)
+# redo r3 c1   1279.5 MC/s  others cpu  229% gpu   2%  identical
+# r3 c1: redo 1 of 3 (the others at 229 % CPU, 2 % GPU during the run)
+# redo r3 c1   1154.9 MC/s  others cpu  295% gpu   2%  identical
+# r3 c1: redo 2 of 3 (the others at 295 % CPU, 2 % GPU during the run)
+# redo r3 c1   1411.3 MC/s  others cpu  162% gpu   2%  identical
+# r3 c1: redo 3 of 3 (the others at 162 % CPU, 2 % GPU during the run)
+# redo r3 c2   1981.7 MC/s  others cpu  202% gpu   1%  probes rel 3.8e-07
+# r3 c2: redo 1 of 3 (the others at 202 % CPU, 1 % GPU during the run)
+# redo r3 c2   1982.5 MC/s  others cpu  219% gpu   1%  probes rel 3.8e-07
+# r3 c2: redo 2 of 3 (the others at 219 % CPU, 1 % GPU during the run)
+# redo r3 c2   2019.3 MC/s  others cpu  179% gpu   1%  probes rel 3.8e-07
+# r3 c2: redo 3 of 3 (the others at 179 % CPU, 1 % GPU during the run)
+r3 c0   1458.4 MC/s  others cpu  281% gpu   2%  identical
+r3 c1   1404.7 MC/s  others cpu   67% gpu   2%  identical
+r3 c2   1926.3 MC/s  others cpu  120% gpu   1%  probes rel 3.8e-07
+r3 c3   1976.4 MC/s  others cpu  121% gpu   1%  probes rel 3.8e-07
+# r3: kept after 3 redos although a run saw the others above the limit
+# summary patch_s1_n36500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1696.3 [1458-1811]  x1.000 [1.000-1.000]  others 103%/2%  identical,reference
+c1 cg29@multithreaded:4                                           1634.1 [1405-1758]  x0.967 [0.929-0.995]  others 66%/2%  identical
+c2 cg29@metal-diamond                                             1941.2 [1900-1975]  x1.138 [1.090-1.321]  others 90%/1%  probes rel 3.8e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1997.7 [1976-2028]  x1.180 [1.120-1.355]  others 116%/1%  probes rel 3.8e-07
+# ---- out/patch_s1.25_n21000.txt
+# patch_s1.25_n21000  2026-11-05 12:37  load avg 7.33  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1    654.3 MC/s  others cpu  667% gpu   3%  identical
+# r0 c1: redo 1 of 3 (the others at 667 % CPU, 3 % GPU during the run)
+# redo r0 c1    792.6 MC/s  others cpu  425% gpu   2%  identical
+# r0 c1: redo 2 of 3 (the others at 425 % CPU, 2 % GPU during the run)
+# redo r0 c1   1233.9 MC/s  others cpu  250% gpu   5%  identical
+# r0 c1: redo 3 of 3 (the others at 250 % CPU, 5 % GPU during the run)
+# redo r0 c2   1603.3 MC/s  others cpu  374% gpu   2%  probes rel 4.9e-07
+# r0 c2: redo 1 of 3 (the others at 374 % CPU, 2 % GPU during the run)
+# redo r0 c2   1797.0 MC/s  others cpu  854% gpu   2%  probes rel 4.9e-07
+# r0 c2: redo 2 of 3 (the others at 854 % CPU, 2 % GPU during the run)
+r0 c0   2208.1 MC/s  others cpu   69% gpu   2%  reference
+r0 c1   2106.0 MC/s  others cpu   54% gpu   5%  identical
+r0 c2   1981.8 MC/s  others cpu   86% gpu   2%  probes rel 4.9e-07
+r0 c3   2039.3 MC/s  others cpu   78% gpu   2%  probes rel 4.9e-07
+# redo r1 c0   1190.8 MC/s  others cpu  384% gpu   5%  identical
+# r1 c0: redo 1 of 3 (the others at 384 % CPU, 5 % GPU during the run)
+# redo r1 c0    957.2 MC/s  others cpu  623% gpu   5%  identical
+# r1 c0: redo 2 of 3 (the others at 623 % CPU, 5 % GPU during the run)
+# redo r1 c0   1472.0 MC/s  others cpu  261% gpu   7%  identical
+# r1 c0: redo 3 of 3 (the others at 261 % CPU, 7 % GPU during the run)
+# redo r1 c1    718.2 MC/s  others cpu  554% gpu   9%  identical
+# r1 c1: redo 1 of 3 (the others at 554 % CPU, 9 % GPU during the run)
+# redo r1 c1    850.1 MC/s  others cpu  498% gpu   5%  identical
+# r1 c1: redo 2 of 3 (the others at 498 % CPU, 5 % GPU during the run)
+# redo r1 c1    932.6 MC/s  others cpu  467% gpu   5%  identical
+# r1 c1: redo 3 of 3 (the others at 467 % CPU, 5 % GPU during the run)
+# redo r1 c2   1710.7 MC/s  others cpu  479% gpu   2%  probes rel 4.9e-07
+# r1 c2: redo 1 of 3 (the others at 479 % CPU, 2 % GPU during the run)
+# redo r1 c2   1401.3 MC/s  others cpu  812% gpu   2%  probes rel 4.9e-07
+# r1 c2: redo 2 of 3 (the others at 812 % CPU, 2 % GPU during the run)
+# redo r1 c2   1741.8 MC/s  others cpu  570% gpu   2%  probes rel 4.9e-07
+# r1 c2: redo 3 of 3 (the others at 570 % CPU, 2 % GPU during the run)
+# redo r1 c3   1426.9 MC/s  others cpu  819% gpu   2%  probes rel 4.9e-07
+# r1 c3: redo 1 of 3 (the others at 819 % CPU, 2 % GPU during the run)
+r1 c0   1453.7 MC/s  others cpu  296% gpu  10%  identical
+r1 c1    957.5 MC/s  others cpu  430% gpu  10%  identical
+r1 c2   1470.0 MC/s  others cpu  838% gpu   2%  probes rel 4.9e-07
+r1 c3   2075.3 MC/s  others cpu   46% gpu   2%  probes rel 4.9e-07
+# r1: kept after 3 redos although a run saw the others above the limit
+# redo r2 c1   1547.5 MC/s  others cpu  169% gpu   5%  identical
+# r2 c1: redo 1 of 3 (the others at 169 % CPU, 5 % GPU during the run)
+r2 c0   2205.5 MC/s  others cpu   53% gpu   5%  identical
+r2 c1   1551.0 MC/s  others cpu  102% gpu   5%  identical
+r2 c2   2072.5 MC/s  others cpu   56% gpu   2%  probes rel 4.9e-07
+r2 c3   2065.6 MC/s  others cpu   66% gpu   2%  probes rel 4.9e-07
+r3 c0   2229.1 MC/s  others cpu   35% gpu   5%  identical
+r3 c1   1516.7 MC/s  others cpu  150% gpu   5%  identical
+r3 c2   2087.5 MC/s  others cpu   65% gpu   2%  probes rel 4.9e-07
+r3 c3   1974.6 MC/s  others cpu   62% gpu   2%  probes rel 4.9e-07
+# summary patch_s1.25_n21000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2206.8 [1454-2229]  x1.000 [1.000-1.000]  others 61%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1533.9 [958-2106]  x0.692 [0.659-0.954]  others 126%/5%  identical
+c2 cg29@metal-diamond                                             2027.2 [1470-2087]  x0.938 [0.898-1.011]  others 75%/2%  probes rel 4.9e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2052.5 [1975-2075]  x0.930 [0.886-1.428]  others 64%/2%  probes rel 4.9e-07
+# ---- out/patch_s1.5_n13000.txt
+# patch_s1.5_n13000  2026-11-05 13:14  load avg 5.69  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c2   2112.7 MC/s  others cpu  267% gpu   2%  probes rel 2.1e-07
+# r0 c2: redo 1 of 3 (the others at 267 % CPU, 2 % GPU during the run)
+# redo r0 c2   2357.3 MC/s  others cpu  178% gpu   2%  probes rel 2.1e-07
+# r0 c2: redo 2 of 3 (the others at 178 % CPU, 2 % GPU during the run)
+# redo r0 c2   2366.5 MC/s  others cpu  168% gpu   2%  probes rel 2.1e-07
+# r0 c2: redo 3 of 3 (the others at 168 % CPU, 2 % GPU during the run)
+r0 c0   2453.3 MC/s  others cpu   46% gpu   5%  reference
+r0 c1   2160.6 MC/s  others cpu   58% gpu   5%  identical
+r0 c2   2375.5 MC/s  others cpu   69% gpu   2%  probes rel 2.1e-07
+r0 c3   2373.6 MC/s  others cpu   81% gpu   2%  probes rel 2.1e-07
+r1 c0   1860.4 MC/s  others cpu  110% gpu   5%  identical
+r1 c1   2101.6 MC/s  others cpu   55% gpu   5%  identical
+r1 c2   2373.3 MC/s  others cpu   47% gpu   2%  probes rel 2.1e-07
+r1 c3   2357.8 MC/s  others cpu  107% gpu   2%  probes rel 2.1e-07
+r2 c0   2447.1 MC/s  others cpu   96% gpu   5%  identical
+r2 c1   2173.0 MC/s  others cpu   40% gpu   5%  identical
+r2 c2   2366.7 MC/s  others cpu   47% gpu   2%  probes rel 2.1e-07
+r2 c3   2363.9 MC/s  others cpu   58% gpu   2%  probes rel 2.1e-07
+# redo r3 c1   1742.5 MC/s  others cpu  155% gpu   5%  identical
+# r3 c1: redo 1 of 3 (the others at 155 % CPU, 5 % GPU during the run)
+# redo r3 c1   1343.7 MC/s  others cpu  240% gpu   5%  identical
+# r3 c1: redo 2 of 3 (the others at 240 % CPU, 5 % GPU during the run)
+# redo r3 c1   1010.0 MC/s  others cpu  445% gpu   5%  identical
+# r3 c1: redo 3 of 3 (the others at 445 % CPU, 5 % GPU during the run)
+# redo r3 c2   2337.7 MC/s  others cpu  244% gpu   2%  probes rel 2.1e-07
+# r3 c2: redo 1 of 3 (the others at 244 % CPU, 2 % GPU during the run)
+# redo r3 c2   2297.4 MC/s  others cpu  275% gpu   2%  probes rel 2.1e-07
+# r3 c2: redo 2 of 3 (the others at 275 % CPU, 2 % GPU during the run)
+# redo r3 c2   2332.2 MC/s  others cpu  274% gpu   2%  probes rel 2.1e-07
+# r3 c2: redo 3 of 3 (the others at 274 % CPU, 2 % GPU during the run)
+# redo r3 c3   2336.2 MC/s  others cpu  255% gpu   2%  probes rel 2.1e-07
+# r3 c3: redo 1 of 3 (the others at 255 % CPU, 2 % GPU during the run)
+r3 c0   2312.5 MC/s  others cpu   71% gpu   5%  identical
+r3 c1   1343.3 MC/s  others cpu  194% gpu   5%  identical
+r3 c2   2335.6 MC/s  others cpu  304% gpu   2%  probes rel 2.1e-07
+r3 c3   2357.7 MC/s  others cpu   48% gpu   2%  probes rel 2.1e-07
+# r3: kept after 3 redos although a run saw the others above the limit
+# summary patch_s1.5_n13000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2379.8 [1860-2453]  x1.000 [1.000-1.000]  others 84%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2131.1 [1343-2173]  x0.884 [0.581-1.130]  others 57%/5%  identical
+c2 cg29@metal-diamond                                             2370.0 [2336-2376]  x0.989 [0.967-1.276]  others 58%/2%  probes rel 2.1e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2360.8 [2358-2374]  x0.994 [0.966-1.267]  others 70%/2%  probes rel 2.1e-07
+# ---- out/patch_s1.75_n9000.txt
+# patch_s1.75_n9000  2026-11-05 13:18  load avg 5.62  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1   1518.3 MC/s  others cpu  362% gpu   5%  identical
+# r0 c1: redo 1 of 3 (the others at 362 % CPU, 5 % GPU during the run)
+# redo r0 c1   1600.6 MC/s  others cpu  215% gpu   5%  identical
+# r0 c1: redo 2 of 3 (the others at 215 % CPU, 5 % GPU during the run)
+# redo r0 c1   1451.2 MC/s  others cpu  188% gpu   5%  identical
+# r0 c1: redo 3 of 3 (the others at 188 % CPU, 5 % GPU during the run)
+# redo r0 c2   2466.0 MC/s  others cpu  187% gpu   2%  probes rel 3.8e-07
+# r0 c2: redo 1 of 3 (the others at 187 % CPU, 2 % GPU during the run)
+r0 c0   2627.0 MC/s  others cpu   49% gpu   5%  reference
+r0 c1   2170.8 MC/s  others cpu   45% gpu   5%  identical
+r0 c2   2659.7 MC/s  others cpu  147% gpu   3%  probes rel 3.8e-07
+r0 c3   2631.9 MC/s  others cpu   96% gpu   3%  probes rel 3.8e-07
+# redo r1 c1   1678.3 MC/s  others cpu  163% gpu   5%  identical
+# r1 c1: redo 1 of 3 (the others at 163 % CPU, 5 % GPU during the run)
+r1 c0   2258.1 MC/s  others cpu  142% gpu   5%  identical
+r1 c1   2347.9 MC/s  others cpu   46% gpu   5%  identical
+r1 c2   2640.1 MC/s  others cpu   63% gpu   2%  probes rel 3.8e-07
+r1 c3   2650.6 MC/s  others cpu   50% gpu   2%  probes rel 3.8e-07
+# redo r2 c3   2519.1 MC/s  others cpu  212% gpu   2%  probes rel 3.8e-07
+# r2 c3: redo 1 of 3 (the others at 212 % CPU, 2 % GPU during the run)
+# redo r2 c3   2656.9 MC/s  others cpu  150% gpu   2%  probes rel 3.8e-07
+# r2 c3: redo 2 of 3 (the others at 150 % CPU, 2 % GPU during the run)
+r2 c0   2636.4 MC/s  others cpu   44% gpu   5%  identical
+r2 c1   2318.8 MC/s  others cpu  108% gpu   5%  identical
+r2 c2   2643.7 MC/s  others cpu   52% gpu   2%  probes rel 3.8e-07
+r2 c3   2642.6 MC/s  others cpu  146% gpu   2%  probes rel 3.8e-07
+r3 c0   2162.6 MC/s  others cpu  141% gpu   5%  identical
+r3 c1   1776.9 MC/s  others cpu  144% gpu   5%  identical
+r3 c2   2648.3 MC/s  others cpu   89% gpu   2%  probes rel 3.8e-07
+r3 c3   2644.6 MC/s  others cpu   63% gpu   2%  probes rel 3.8e-07
+# summary patch_s1.75_n9000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2442.6 [2163-2636]  x1.000 [1.000-1.000]  others 95%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2244.8 [1777-2348]  x0.853 [0.822-1.040]  others 77%/5%  identical
+c2 cg29@metal-diamond                                             2646.0 [2640-2660]  x1.091 [1.003-1.225]  others 76%/2%  probes rel 3.8e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2643.6 [2632-2651]  x1.088 [1.002-1.223]  others 79%/2%  probes rel 3.8e-07
+# ---- out/patch_s2_n6000.txt
+# patch_s2_n6000  2026-11-05 13:20  load avg 4.33  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2824.6 MC/s  others cpu   72% gpu   5%  reference
+r0 c1   1896.7 MC/s  others cpu  143% gpu   5%  identical
+r0 c2   2660.3 MC/s  others cpu   58% gpu   2%  probes rel 4.5e-07
+r0 c3   2682.0 MC/s  others cpu   97% gpu   3%  probes rel 4.5e-07
+# redo r1 c2   2665.6 MC/s  others cpu  180% gpu   3%  probes rel 4.5e-07
+# r1 c2: redo 1 of 3 (the others at 180 % CPU, 3 % GPU during the run)
+# redo r1 c2   2671.6 MC/s  others cpu  178% gpu   3%  probes rel 4.5e-07
+# r1 c2: redo 2 of 3 (the others at 178 % CPU, 3 % GPU during the run)
+r1 c0   2872.2 MC/s  others cpu   47% gpu   5%  identical
+r1 c1   2032.7 MC/s  others cpu  112% gpu   5%  identical
+r1 c2   2674.1 MC/s  others cpu   66% gpu   3%  probes rel 4.5e-07
+r1 c3   2604.5 MC/s  others cpu  119% gpu   3%  probes rel 4.5e-07
+# redo r2 c3   2683.6 MC/s  others cpu  163% gpu   3%  probes rel 4.5e-07
+# r2 c3: redo 1 of 3 (the others at 163 % CPU, 3 % GPU during the run)
+r2 c0   2820.3 MC/s  others cpu   46% gpu   5%  identical
+r2 c1   2400.7 MC/s  others cpu   49% gpu   5%  identical
+r2 c2   2677.5 MC/s  others cpu   68% gpu   3%  probes rel 4.5e-07
+r2 c3   2663.8 MC/s  others cpu   64% gpu   2%  probes rel 4.5e-07
+# redo r3 c2   2599.7 MC/s  others cpu  185% gpu   4%  probes rel 4.5e-07
+# r3 c2: redo 1 of 3 (the others at 185 % CPU, 4 % GPU during the run)
+# redo r3 c2   1792.8 MC/s  others cpu  247% gpu   3%  probes rel 4.5e-07
+# r3 c2: redo 2 of 3 (the others at 247 % CPU, 3 % GPU during the run)
+# redo r3 c2   2544.3 MC/s  others cpu  175% gpu   3%  probes rel 4.5e-07
+# r3 c2: redo 3 of 3 (the others at 175 % CPU, 3 % GPU during the run)
+# redo r3 c3   2525.2 MC/s  others cpu  189% gpu   3%  probes rel 4.5e-07
+# r3 c3: redo 1 of 3 (the others at 189 % CPU, 3 % GPU during the run)
+# redo r3 c3   2295.1 MC/s  others cpu  369% gpu   3%  probes rel 4.5e-07
+# r3 c3: redo 2 of 3 (the others at 369 % CPU, 3 % GPU during the run)
+r3 c0   2932.1 MC/s  others cpu   47% gpu   5%  identical
+r3 c1   2406.5 MC/s  others cpu   57% gpu   5%  identical
+r3 c2   2522.3 MC/s  others cpu  199% gpu   3%  probes rel 4.5e-07
+r3 c3   2637.4 MC/s  others cpu   65% gpu   2%  probes rel 4.5e-07
+# r3: kept after 3 redos although a run saw the others above the limit
+# summary patch_s2_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2848.4 [2820-2932]  x1.000 [1.000-1.000]  others 47%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2216.7 [1897-2407]  x0.764 [0.671-0.851]  others 84%/5%  identical
+c2 cg29@metal-diamond                                             2667.2 [2522-2678]  x0.936 [0.860-0.949]  others 67%/3%  probes rel 4.5e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2650.6 [2605-2682]  x0.926 [0.900-0.949]  others 81%/3%  probes rel 4.5e-07
+# ---- out/patch_s4_n3000.txt
+# patch_s4_n3000  2026-11-05 14:35  load avg 4.42  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c0   2241.9 MC/s  others cpu  181% gpu   5%  reference
+# r0 c0: redo 1 of 3 (the others at 181 % CPU, 5 % GPU during the run)
+# redo r0 c1   1831.6 MC/s  others cpu  215% gpu   5%  identical
+# r0 c1: redo 1 of 3 (the others at 215 % CPU, 5 % GPU during the run)
+# redo r0 c1   1845.1 MC/s  others cpu  176% gpu   5%  identical
+# r0 c1: redo 2 of 3 (the others at 176 % CPU, 5 % GPU during the run)
+# redo r0 c1   1643.9 MC/s  others cpu  267% gpu   5%  identical
+# r0 c1: redo 3 of 3 (the others at 267 % CPU, 5 % GPU during the run)
+# redo r0 c2   2661.6 MC/s  others cpu  167% gpu   3%  probes rel 2.0e-07
+# r0 c2: redo 1 of 3 (the others at 167 % CPU, 3 % GPU during the run)
+# redo r0 c2   2804.9 MC/s  others cpu  200% gpu   4%  probes rel 2.0e-07
+# r0 c2: redo 2 of 3 (the others at 200 % CPU, 4 % GPU during the run)
+# redo r0 c2   2611.6 MC/s  others cpu  572% gpu   3%  probes rel 2.0e-07
+# r0 c2: redo 3 of 3 (the others at 572 % CPU, 3 % GPU during the run)
+# redo r0 c3   2749.4 MC/s  others cpu  222% gpu  67%  probes rel 2.0e-07
+# r0 c3: redo 1 of 3 (the others at 222 % CPU, 67 % GPU during the run)
+# redo r0 c3   2786.1 MC/s  others cpu  400% gpu   3%  probes rel 2.0e-07
+# r0 c3: redo 2 of 3 (the others at 400 % CPU, 3 % GPU during the run)
+r0 c0   2258.1 MC/s  others cpu  146% gpu   5%  reference
+r0 c1   1159.4 MC/s  others cpu  366% gpu   5%  identical
+r0 c2   2696.1 MC/s  others cpu  666% gpu   4%  probes rel 2.0e-07
+r0 c3   2830.3 MC/s  others cpu  134% gpu   3%  probes rel 2.0e-07
+# r0: kept after 3 redos although a run saw the others above the limit
+# redo r1 c0   2050.8 MC/s  others cpu  165% gpu   5%  identical
+# r1 c0: redo 1 of 3 (the others at 165 % CPU, 5 % GPU during the run)
+# redo r1 c0   1985.7 MC/s  others cpu  213% gpu   5%  identical
+# r1 c0: redo 2 of 3 (the others at 213 % CPU, 5 % GPU during the run)
+# redo r1 c1   1618.3 MC/s  others cpu  226% gpu  46%  identical
+# r1 c1: redo 1 of 3 (the others at 226 % CPU, 46 % GPU during the run)
+# redo r1 c2   2737.4 MC/s  others cpu  798% gpu   4%  probes rel 2.0e-07
+# r1 c2: redo 1 of 3 (the others at 798 % CPU, 4 % GPU during the run)
+# redo r1 c2   2731.4 MC/s  others cpu  522% gpu   4%  probes rel 2.0e-07
+# r1 c2: redo 2 of 3 (the others at 522 % CPU, 4 % GPU during the run)
+# redo r1 c2   2553.0 MC/s  others cpu  718% gpu   4%  probes rel 2.0e-07
+# r1 c2: redo 3 of 3 (the others at 718 % CPU, 4 % GPU during the run)
+# redo r1 c3   2804.9 MC/s  others cpu  155% gpu   3%  probes rel 2.0e-07
+# r1 c3: redo 1 of 3 (the others at 155 % CPU, 3 % GPU during the run)
+# redo r1 c3   2678.7 MC/s  others cpu  253% gpu  28%  probes rel 2.0e-07
+# r1 c3: redo 2 of 3 (the others at 253 % CPU, 28 % GPU during the run)
+# redo r1 c3   2553.0 MC/s  others cpu  729% gpu   4%  probes rel 2.0e-07
+# r1 c3: redo 3 of 3 (the others at 729 % CPU, 4 % GPU during the run)
+r1 c0   2085.0 MC/s  others cpu  139% gpu   5%  identical
+r1 c1   1782.0 MC/s  others cpu  129% gpu   5%  identical
+r1 c2   2804.9 MC/s  others cpu  157% gpu   3%  probes rel 2.0e-07
+r1 c3   2719.5 MC/s  others cpu  598% gpu   3%  probes rel 2.0e-07
+# r1: kept after 3 redos although a run saw the others above the limit
+# redo r2 c1   1789.7 MC/s  others cpu  158% gpu   5%  identical
+# r2 c1: redo 1 of 3 (the others at 158 % CPU, 5 % GPU during the run)
+r2 c0   2160.6 MC/s  others cpu  131% gpu   5%  identical
+r2 c1   1787.1 MC/s  others cpu  115% gpu   5%  identical
+r2 c2   2817.5 MC/s  others cpu  119% gpu   3%  probes rel 2.0e-07
+r2 c3   2823.9 MC/s  others cpu  116% gpu   3%  probes rel 2.0e-07
+# redo r3 c2   2563.5 MC/s  others cpu  418% gpu  13%  probes rel 2.0e-07
+# r3 c2: redo 1 of 3 (the others at 418 % CPU, 13 % GPU during the run)
+# redo r3 c2   2639.2 MC/s  others cpu  307% gpu  19%  probes rel 2.0e-07
+# r3 c2: redo 2 of 3 (the others at 307 % CPU, 19 % GPU during the run)
+# redo r3 c2   2767.6 MC/s  others cpu  545% gpu   3%  probes rel 2.0e-07
+# r3 c2: redo 3 of 3 (the others at 545 % CPU, 3 % GPU during the run)
+r3 c0   2171.8 MC/s  others cpu  116% gpu   5%  identical
+r3 c1   1792.2 MC/s  others cpu  140% gpu   5%  identical
+r3 c2   2817.5 MC/s  others cpu  132% gpu   4%  probes rel 2.0e-07
+r3 c3   2823.9 MC/s  others cpu  137% gpu   3%  probes rel 2.0e-07
+# summary patch_s4_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2166.2 [2085-2258]  x1.000 [1.000-1.000]  others 135%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1784.6 [1159-1792]  x0.826 [0.513-0.855]  others 134%/5%  identical
+c2 cg29@metal-diamond                                             2811.2 [2696-2818]  x1.301 [1.194-1.345]  others 144%/3%  probes rel 2.0e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2823.9 [2720-2830]  x1.302 [1.253-1.307]  others 136%/3%  probes rel 2.0e-07
+# ---- out/patch_s5_n3000.txt
+# patch_s5_n3000  2026-11-05 15:26  load avg 4.48  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1   1466.0 MC/s  others cpu  254% gpu   5%  identical
+# r0 c1: redo 1 of 3 (the others at 254 % CPU, 5 % GPU during the run)
+# redo r0 c1   1390.0 MC/s  others cpu  360% gpu   5%  identical
+# r0 c1: redo 2 of 3 (the others at 360 % CPU, 5 % GPU during the run)
+# redo r0 c1   1162.5 MC/s  others cpu  489% gpu   5%  identical
+# r0 c1: redo 3 of 3 (the others at 489 % CPU, 5 % GPU during the run)
+# redo r0 c2   2730.1 MC/s  others cpu  189% gpu  63%  probes rel 2.6e-07
+# r0 c2: redo 1 of 3 (the others at 189 % CPU, 63 % GPU during the run)
+r0 c0   1931.8 MC/s  others cpu  126% gpu   5%  reference
+r0 c1   1573.6 MC/s  others cpu  169% gpu   5%  identical
+r0 c2   2908.5 MC/s  others cpu  129% gpu   5%  probes rel 2.6e-07
+r0 c3   2897.8 MC/s  others cpu  126% gpu   3%  probes rel 2.6e-07
+# r0: kept after 3 redos although a run saw the others above the limit
+# redo r1 c0   1450.7 MC/s  others cpu  332% gpu   9%  identical
+# r1 c0: redo 1 of 3 (the others at 332 % CPU, 9 % GPU during the run)
+# redo r1 c1   1547.8 MC/s  others cpu  220% gpu   5%  identical
+# r1 c1: redo 1 of 3 (the others at 220 % CPU, 5 % GPU during the run)
+r1 c0   1928.7 MC/s  others cpu  134% gpu   5%  identical
+r1 c1   1752.4 MC/s  others cpu  126% gpu   5%  identical
+r1 c2   2890.7 MC/s  others cpu  130% gpu   3%  probes rel 2.6e-07
+r1 c3   2915.7 MC/s  others cpu  120% gpu   4%  probes rel 2.6e-07
+r2 c0   1919.3 MC/s  others cpu  122% gpu   5%  identical
+r2 c1   1642.6 MC/s  others cpu  128% gpu   5%  identical
+r2 c2   2912.1 MC/s  others cpu  122% gpu   4%  probes rel 2.6e-07
+r2 c3   2915.7 MC/s  others cpu  132% gpu   4%  probes rel 2.6e-07
+r3 c0   1909.9 MC/s  others cpu  119% gpu   5%  identical
+r3 c1   1617.8 MC/s  others cpu  124% gpu   5%  identical
+r3 c2   2908.5 MC/s  others cpu  133% gpu   4%  probes rel 2.6e-07
+r3 c3   2912.1 MC/s  others cpu  125% gpu   4%  probes rel 2.6e-07
+# summary patch_s5_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1924.0 [1910-1932]  x1.000 [1.000-1.000]  others 124%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1630.2 [1574-1752]  x0.851 [0.815-0.909]  others 127%/5%  identical
+c2 cg29@metal-diamond                                             2908.5 [2891-2912]  x1.511 [1.499-1.523]  others 130%/4%  probes rel 2.6e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2913.9 [2898-2916]  x1.515 [1.500-1.525]  others 125%/4%  probes rel 2.6e-07
+# ---- out/kgcpw_s2_n36000.txt
+# kgcpw_s2_n36000  2026-11-05 15:37  load avg 5.22  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c2   1676.0 MC/s  others cpu  174% gpu   2%  probes rel 1.7e-06
+# r0 c2: redo 1 of 3 (the others at 174 % CPU, 2 % GPU during the run)
+# redo r0 c3   1929.2 MC/s  others cpu  165% gpu   2%  probes rel 1.7e-06
+# r0 c3: redo 1 of 3 (the others at 165 % CPU, 2 % GPU during the run)
+r0 c0   1516.4 MC/s  others cpu  128% gpu   5%  reference
+r0 c1   1460.0 MC/s  others cpu  143% gpu   5%  identical
+r0 c2   1921.4 MC/s  others cpu  142% gpu   2%  probes rel 1.7e-06
+r0 c3   1931.5 MC/s  others cpu  123% gpu   2%  probes rel 1.7e-06
+r1 c0   1579.2 MC/s  others cpu  123% gpu   5%  identical
+r1 c1   1539.2 MC/s  others cpu  138% gpu   5%  identical
+r1 c2   1931.8 MC/s  others cpu  123% gpu   2%  probes rel 1.7e-06
+r1 c3   1922.4 MC/s  others cpu  136% gpu   2%  probes rel 1.7e-06
+r2 c0   1578.8 MC/s  others cpu  120% gpu   5%  identical
+r2 c1   1566.4 MC/s  others cpu  144% gpu   5%  identical
+r2 c2   1932.2 MC/s  others cpu   96% gpu   2%  probes rel 1.7e-06
+r2 c3   1927.7 MC/s  others cpu  132% gpu   2%  probes rel 1.7e-06
+# redo r3 c0   1315.5 MC/s  others cpu  246% gpu   5%  identical
+# r3 c0: redo 1 of 3 (the others at 246 % CPU, 5 % GPU during the run)
+r3 c0   1567.6 MC/s  others cpu   46% gpu   5%  identical
+r3 c1   1539.8 MC/s  others cpu   41% gpu   5%  identical
+r3 c2   1928.2 MC/s  others cpu   48% gpu   2%  probes rel 1.7e-06
+r3 c3   1927.7 MC/s  others cpu   90% gpu   2%  probes rel 1.7e-06
+# summary kgcpw_s2_n36000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1573.2 [1516-1579]  x1.000 [1.000-1.000]  others 122%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1539.5 [1460-1566]  x0.978 [0.963-0.992]  others 140%/5%  identical
+c2 cg29@metal-diamond                                             1930.0 [1921-1932]  x1.227 [1.223-1.267]  others 109%/2%  probes rel 1.7e-06
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1927.7 [1922-1931]  x1.225 [1.217-1.274]  others 128%/2%  probes rel 1.7e-06
+# ---- out/kgcpw_s1.3_n24500.txt
+# kgcpw_s1.3_n24500  2026-11-05 15:41  load avg 3.35  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1    908.5 MC/s  others cpu  270% gpu   5%  identical
+# r0 c1: redo 1 of 3 (the others at 270 % CPU, 5 % GPU during the run)
+r0 c0   1357.8 MC/s  others cpu  143% gpu   5%  reference
+r0 c1   1661.8 MC/s  others cpu   49% gpu   5%  identical
+r0 c2   1694.9 MC/s  others cpu   49% gpu   2%  probes rel 1.3e-06
+r0 c3   1777.7 MC/s  others cpu   99% gpu   2%  probes rel 1.3e-06
+r1 c0   1822.3 MC/s  others cpu   30% gpu   5%  identical
+r1 c1   1739.2 MC/s  others cpu   41% gpu   5%  identical
+r1 c2   1778.9 MC/s  others cpu  106% gpu   2%  probes rel 1.3e-06
+r1 c3   1777.2 MC/s  others cpu   64% gpu   2%  probes rel 1.3e-06
+# redo r2 c2   1768.3 MC/s  others cpu  162% gpu   2%  probes rel 1.3e-06
+# r2 c2: redo 1 of 3 (the others at 162 % CPU, 2 % GPU during the run)
+# redo r2 c3   1783.9 MC/s  others cpu  200% gpu   2%  probes rel 1.3e-06
+# r2 c3: redo 1 of 3 (the others at 200 % CPU, 2 % GPU during the run)
+# redo r2 c3   1668.0 MC/s  others cpu  291% gpu   4%  probes rel 1.3e-06
+# r2 c3: redo 2 of 3 (the others at 291 % CPU, 4 % GPU during the run)
+# redo r2 c3   1697.1 MC/s  others cpu  836% gpu   2%  probes rel 1.3e-06
+# r2 c3: redo 3 of 3 (the others at 836 % CPU, 2 % GPU during the run)
+r2 c0   1807.5 MC/s  others cpu   32% gpu   5%  identical
+r2 c1   1708.4 MC/s  others cpu   44% gpu   5%  identical
+r2 c2   1780.0 MC/s  others cpu  147% gpu   2%  probes rel 1.3e-06
+r2 c3   1771.4 MC/s  others cpu  158% gpu   2%  probes rel 1.3e-06
+# r2: kept after 3 redos although a run saw the others above the limit
+r3 c0   1729.1 MC/s  others cpu   38% gpu   5%  identical
+r3 c1   1640.3 MC/s  others cpu   44% gpu   5%  identical
+r3 c2   1777.5 MC/s  others cpu   59% gpu   2%  probes rel 1.3e-06
+r3 c3   1709.9 MC/s  others cpu  149% gpu   5%  probes rel 1.3e-06
+# summary kgcpw_s1.3_n24500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1768.3 [1358-1822]  x1.000 [1.000-1.000]  others 35%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1685.1 [1640-1739]  x0.952 [0.945-1.224]  others 44%/5%  identical
+c2 cg29@metal-diamond                                             1778.2 [1695-1780]  x1.006 [0.976-1.248]  others 82%/2%  probes rel 1.3e-06
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1774.3 [1710-1778]  x0.984 [0.975-1.309]  others 124%/2%  probes rel 1.3e-06
+# ---- out/kgcpw_s1_n15500.txt
+# kgcpw_s1_n15500  2026-11-05 15:51  load avg 4.95  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c0    953.8 MC/s  others cpu  323% gpu   6%  reference
+# r0 c0: redo 1 of 3 (the others at 323 % CPU, 6 % GPU during the run)
+# redo r0 c0   1160.8 MC/s  others cpu  332% gpu   8%  reference
+# r0 c0: redo 2 of 3 (the others at 332 % CPU, 8 % GPU during the run)
+r0 c0   1926.9 MC/s  others cpu   49% gpu   5%  reference
+r0 c1   1741.7 MC/s  others cpu   47% gpu   5%  identical
+r0 c2   2098.9 MC/s  others cpu   48% gpu   2%  probes rel 4.5e-07
+r0 c3   2098.5 MC/s  others cpu   54% gpu   2%  probes rel 4.5e-07
+r1 c0   2008.8 MC/s  others cpu   27% gpu   5%  identical
+r1 c1   1716.9 MC/s  others cpu   43% gpu   5%  identical
+r1 c2   2098.2 MC/s  others cpu   52% gpu   2%  probes rel 4.5e-07
+r1 c3   2099.8 MC/s  others cpu   52% gpu   2%  probes rel 4.5e-07
+# redo r2 c1   1659.0 MC/s  others cpu  363% gpu   5%  identical
+# r2 c1: redo 1 of 3 (the others at 363 % CPU, 5 % GPU during the run)
+r2 c0   1973.2 MC/s  others cpu   40% gpu   5%  identical
+r2 c1   1614.2 MC/s  others cpu  105% gpu   5%  identical
+r2 c2   2098.6 MC/s  others cpu   45% gpu   2%  probes rel 4.5e-07
+r2 c3   2097.2 MC/s  others cpu  143% gpu   2%  probes rel 4.5e-07
+# redo r3 c0   1482.8 MC/s  others cpu  289% gpu   5%  identical
+# r3 c0: redo 1 of 3 (the others at 289 % CPU, 5 % GPU during the run)
+r3 c0   1960.5 MC/s  others cpu   41% gpu   5%  identical
+r3 c1   1776.3 MC/s  others cpu   38% gpu   5%  identical
+r3 c2   2101.9 MC/s  others cpu   39% gpu   2%  probes rel 4.5e-07
+r3 c3   2101.8 MC/s  others cpu   59% gpu   2%  probes rel 4.5e-07
+# summary kgcpw_s1_n15500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1966.9 [1927-2009]  x1.000 [1.000-1.000]  others 41%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1729.3 [1614-1776]  x0.879 [0.818-0.906]  others 45%/5%  identical
+c2 cg29@metal-diamond                                             2098.8 [2098-2102]  x1.068 [1.045-1.089]  others 46%/2%  probes rel 4.5e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2099.1 [2097-2102]  x1.067 [1.045-1.089]  others 56%/2%  probes rel 4.5e-07
+# ---- out/kgcpw_s0.8_n9000.txt
+# kgcpw_s0.8_n9000  2026-11-05 16:04  load avg 6.53  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2448.3 MC/s  others cpu   40% gpu   5%  reference
+r0 c1   2158.8 MC/s  others cpu   46% gpu   5%  identical
+r0 c2   2480.6 MC/s  others cpu   55% gpu   3%  probes rel 3.7e-07
+r0 c3   2670.8 MC/s  others cpu   53% gpu   2%  probes rel 3.7e-07
+r1 c0   2527.8 MC/s  others cpu   25% gpu   5%  identical
+r1 c1   2023.0 MC/s  others cpu   41% gpu   5%  identical
+r1 c2   2667.1 MC/s  others cpu   90% gpu   2%  probes rel 3.7e-07
+r1 c3   2675.5 MC/s  others cpu   52% gpu   2%  probes rel 3.7e-07
+r2 c0   2489.0 MC/s  others cpu   35% gpu   5%  identical
+r2 c1   2154.5 MC/s  others cpu   49% gpu   5%  identical
+r2 c2   2668.8 MC/s  others cpu   55% gpu   2%  probes rel 3.7e-07
+r2 c3   2673.6 MC/s  others cpu   66% gpu   2%  probes rel 3.7e-07
+# redo r3 c1   2146.0 MC/s  others cpu  184% gpu   5%  identical
+# r3 c1: redo 1 of 3 (the others at 184 % CPU, 5 % GPU during the run)
+r3 c0   2392.4 MC/s  others cpu   54% gpu   5%  identical
+r3 c1   2089.3 MC/s  others cpu   46% gpu   5%  identical
+r3 c2   2664.4 MC/s  others cpu   56% gpu   2%  probes rel 3.7e-07
+r3 c3   2664.2 MC/s  others cpu   47% gpu   2%  probes rel 3.7e-07
+# summary kgcpw_s0.8_n9000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2468.6 [2392-2528]  x1.000 [1.000-1.000]  others 38%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2121.9 [2023-2159]  x0.869 [0.800-0.882]  others 46%/5%  identical
+c2 cg29@metal-diamond                                             2665.8 [2481-2669]  x1.064 [1.013-1.114]  others 56%/2%  probes rel 3.7e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2672.2 [2664-2676]  x1.083 [1.058-1.114]  others 52%/2%  probes rel 3.7e-07
+# ---- out/kgcpw_s0.65_n6000.txt
+# kgcpw_s0.65_n6000  2026-11-05 16:06  load avg 2.81  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2536.6 MC/s  others cpu   40% gpu   5%  reference
+r0 c1   2149.3 MC/s  others cpu  119% gpu   5%  identical
+r0 c2   2461.7 MC/s  others cpu   61% gpu   3%  probes rel 3.2e-07
+r0 c3   2630.7 MC/s  others cpu   47% gpu   3%  probes rel 3.2e-07
+# redo r1 c1   2124.0 MC/s  others cpu  211% gpu   5%  identical
+# r1 c1: redo 1 of 3 (the others at 211 % CPU, 5 % GPU during the run)
+# redo r1 c3   2579.5 MC/s  others cpu  176% gpu   2%  probes rel 3.2e-07
+# r1 c3: redo 1 of 3 (the others at 176 % CPU, 2 % GPU during the run)
+r1 c0   2582.3 MC/s  others cpu   38% gpu   5%  identical
+r1 c1   2089.1 MC/s  others cpu   51% gpu   5%  identical
+r1 c2   2628.2 MC/s  others cpu   52% gpu   2%  probes rel 3.2e-07
+r1 c3   2601.3 MC/s  others cpu  139% gpu   2%  probes rel 3.2e-07
+# redo r2 c0   2218.9 MC/s  others cpu  180% gpu   5%  identical
+# r2 c0: redo 1 of 3 (the others at 180 % CPU, 5 % GPU during the run)
+# redo r2 c1   1944.9 MC/s  others cpu  155% gpu   5%  identical
+# r2 c1: redo 1 of 3 (the others at 155 % CPU, 5 % GPU during the run)
+# redo r2 c1   1893.7 MC/s  others cpu  180% gpu   5%  identical
+# r2 c1: redo 2 of 3 (the others at 180 % CPU, 5 % GPU during the run)
+r2 c0   2557.5 MC/s  others cpu   39% gpu   5%  identical
+r2 c1   2135.7 MC/s  others cpu   48% gpu   5%  identical
+r2 c2   2618.6 MC/s  others cpu   50% gpu   2%  probes rel 3.2e-07
+r2 c3   2619.3 MC/s  others cpu  111% gpu   2%  probes rel 3.2e-07
+# redo r3 c1   2024.7 MC/s  others cpu  179% gpu   4%  identical
+# r3 c1: redo 1 of 3 (the others at 179 % CPU, 4 % GPU during the run)
+r3 c0   2624.7 MC/s  others cpu   31% gpu   5%  identical
+r3 c1   2101.1 MC/s  others cpu   58% gpu   5%  identical
+r3 c2   2585.6 MC/s  others cpu   53% gpu   3%  probes rel 3.2e-07
+r3 c3   2629.8 MC/s  others cpu   61% gpu   2%  probes rel 3.2e-07
+# summary kgcpw_s0.65_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2569.9 [2537-2625]  x1.000 [1.000-1.000]  others 38%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2118.4 [2089-2149]  x0.822 [0.801-0.847]  others 55%/5%  identical
+c2 cg29@metal-diamond                                             2602.1 [2462-2628]  x1.001 [0.970-1.024]  others 52%/3%  probes rel 3.2e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2624.6 [2601-2631]  x1.016 [1.002-1.037]  others 86%/2%  probes rel 3.2e-07
+# ---- out/kgcpw_s0.5_n3000.txt
+# kgcpw_s0.5_n3000  2026-11-05 16:12  load avg 3.08  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2773.5 MC/s  others cpu   45% gpu   5%  reference
+r0 c1   2089.1 MC/s  others cpu   48% gpu   5%  identical
+r0 c2   2744.2 MC/s  others cpu   52% gpu   3%  probes rel 3.2e-07
+r0 c3   2747.6 MC/s  others cpu   52% gpu   3%  probes rel 3.2e-07
+r1 c0   2726.1 MC/s  others cpu   47% gpu   5%  identical
+r1 c1   2081.7 MC/s  others cpu   47% gpu   5%  identical
+r1 c2   2749.9 MC/s  others cpu   58% gpu   3%  probes rel 3.2e-07
+r1 c3   2749.4 MC/s  others cpu   66% gpu   3%  probes rel 3.2e-07
+# redo r2 c2   2742.5 MC/s  others cpu  150% gpu   3%  probes rel 3.2e-07
+# r2 c2: redo 1 of 3 (the others at 150 % CPU, 3 % GPU during the run)
+# redo r2 c3   2699.0 MC/s  others cpu  365% gpu   3%  probes rel 3.2e-07
+# r2 c3: redo 1 of 3 (the others at 365 % CPU, 3 % GPU during the run)
+r2 c0   2760.6 MC/s  others cpu   43% gpu   5%  identical
+r2 c1   1933.7 MC/s  others cpu   82% gpu   5%  identical
+r2 c2   2708.1 MC/s  others cpu  108% gpu   3%  probes rel 3.2e-07
+r2 c3   2749.8 MC/s  others cpu   59% gpu   3%  probes rel 3.2e-07
+r3 c0   2766.1 MC/s  others cpu   42% gpu   5%  identical
+r3 c1   2057.2 MC/s  others cpu  136% gpu   5%  identical
+r3 c2   2755.3 MC/s  others cpu   51% gpu   3%  probes rel 3.2e-07
+r3 c3   2760.7 MC/s  others cpu   49% gpu   3%  probes rel 3.2e-07
+# summary kgcpw_s0.5_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2763.3 [2726-2774]  x1.000 [1.000-1.000]  others 44%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2069.5 [1934-2089]  x0.748 [0.700-0.764]  others 65%/5%  identical
+c2 cg29@metal-diamond                                             2747.0 [2708-2755]  x0.993 [0.981-1.009]  others 55%/3%  probes rel 3.2e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2749.6 [2748-2761]  x0.997 [0.991-1.009]  others 56%/3%  probes rel 3.2e-07
+# ---- out/kgcpw_s0.35_n3000.txt
+# kgcpw_s0.35_n3000  2026-11-05 16:17  load avg 4.98  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2411.5 MC/s  others cpu   59% gpu   5%  reference
+r0 c1   1910.3 MC/s  others cpu   52% gpu   5%  identical
+r0 c2   2932.8 MC/s  others cpu   59% gpu   3%  probes rel 2.9e-07
+r0 c3   2927.2 MC/s  others cpu   59% gpu   3%  probes rel 2.9e-07
+# redo r1 c2   2909.9 MC/s  others cpu  164% gpu   3%  probes rel 2.9e-07
+# r1 c2: redo 1 of 3 (the others at 164 % CPU, 3 % GPU during the run)
+# redo r1 c2   2909.0 MC/s  others cpu  252% gpu   3%  probes rel 2.9e-07
+# r1 c2: redo 2 of 3 (the others at 252 % CPU, 3 % GPU during the run)
+# redo r1 c2   2937.7 MC/s  others cpu  695% gpu   3%  probes rel 2.9e-07
+# r1 c2: redo 3 of 3 (the others at 695 % CPU, 3 % GPU during the run)
+# redo r1 c3   2934.2 MC/s  others cpu  183% gpu   3%  probes rel 2.9e-07
+# r1 c3: redo 1 of 3 (the others at 183 % CPU, 3 % GPU during the run)
+r1 c0   2370.4 MC/s  others cpu   62% gpu   5%  identical
+r1 c1   1761.7 MC/s  others cpu   88% gpu   5%  identical
+r1 c2   2931.7 MC/s  others cpu  318% gpu   4%  probes rel 2.9e-07
+r1 c3   2898.5 MC/s  others cpu  141% gpu   6%  probes rel 2.9e-07
+# r1: kept after 3 redos although a run saw the others above the limit
+r2 c0   2122.5 MC/s  others cpu  145% gpu   5%  identical
+r2 c1   1534.2 MC/s  others cpu  146% gpu   7%  identical
+r2 c2   2932.4 MC/s  others cpu   79% gpu   7%  probes rel 2.9e-07
+r2 c3   2931.6 MC/s  others cpu   62% gpu   3%  probes rel 2.9e-07
+r3 c0   2347.5 MC/s  others cpu   51% gpu   5%  identical
+r3 c1   1848.6 MC/s  others cpu   53% gpu   5%  identical
+r3 c2   2934.1 MC/s  others cpu   53% gpu   3%  probes rel 2.9e-07
+r3 c3   2939.6 MC/s  others cpu   54% gpu   4%  probes rel 2.9e-07
+# summary kgcpw_s0.35_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2359.0 [2123-2411]  x1.000 [1.000-1.000]  others 61%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1805.2 [1534-1910]  x0.765 [0.723-0.792]  others 70%/5%  identical
+c2 cg29@metal-diamond                                             2932.6 [2932-2934]  x1.243 [1.216-1.382]  others 69%/3%  probes rel 2.9e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2929.4 [2898-2940]  x1.237 [1.214-1.381]  others 61%/3%  probes rel 2.9e-07
+# ---- out/kgcpw_s0.3_n3000.txt
+# kgcpw_s0.3_n3000  2026-11-05 16:26  load avg 3.86  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2281.4 MC/s  others cpu   54% gpu   5%  reference
+r0 c1   1830.0 MC/s  others cpu   53% gpu   5%  identical
+r0 c2   3028.2 MC/s  others cpu   52% gpu   3%  probes rel 1.8e-07
+r0 c3   3028.2 MC/s  others cpu   55% gpu   3%  probes rel 1.8e-07
+r1 c0   2257.6 MC/s  others cpu   56% gpu   5%  identical
+r1 c1   1834.5 MC/s  others cpu   50% gpu   5%  identical
+r1 c2   3022.1 MC/s  others cpu   69% gpu   3%  probes rel 1.8e-07
+r1 c3   3022.1 MC/s  others cpu   55% gpu   3%  probes rel 1.8e-07
+r2 c0   2267.7 MC/s  others cpu   49% gpu   5%  identical
+r2 c1   1847.9 MC/s  others cpu   48% gpu   5%  identical
+r2 c2   3028.2 MC/s  others cpu   52% gpu   3%  probes rel 1.8e-07
+r2 c3   3028.2 MC/s  others cpu   52% gpu   3%  probes rel 1.8e-07
+r3 c0   2257.6 MC/s  others cpu   53% gpu   5%  identical
+r3 c1   1832.3 MC/s  others cpu   54% gpu   5%  identical
+r3 c2   3028.2 MC/s  others cpu   54% gpu   4%  probes rel 1.8e-07
+r3 c3   3034.2 MC/s  others cpu   52% gpu   3%  probes rel 1.8e-07
+# summary kgcpw_s0.3_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2262.7 [2258-2281]  x1.000 [1.000-1.000]  others 53%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1833.4 [1830-1848]  x0.812 [0.802-0.815]  others 51%/5%  identical
+c2 cg29@metal-diamond                                             3028.2 [3022-3028]  x1.337 [1.327-1.341]  others 53%/3%  probes rel 1.8e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    3028.2 [3022-3034]  x1.337 [1.327-1.344]  others 53%/3%  probes rel 1.8e-07
+# ---- out/patch_s2.5_n3500.txt
+# patch_s2.5_n3500  2026-11-05 16:29  load avg 4.67  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2990.1 MC/s  others cpu   41% gpu   5%  reference
+r0 c1   2388.5 MC/s  others cpu   42% gpu   5%  identical
+r0 c2   2811.1 MC/s  others cpu   73% gpu   4%  probes rel 3.3e-07
+r0 c3   2818.5 MC/s  others cpu   44% gpu   3%  probes rel 3.3e-07
+r1 c0   3016.7 MC/s  others cpu   42% gpu   5%  identical
+r1 c1   2389.6 MC/s  others cpu   46% gpu   5%  identical
+r1 c2   2812.0 MC/s  others cpu   51% gpu   3%  probes rel 3.3e-07
+r1 c3   2817.7 MC/s  others cpu   56% gpu   3%  probes rel 3.3e-07
+r2 c0   3049.3 MC/s  others cpu   43% gpu   5%  identical
+r2 c1   2386.3 MC/s  others cpu   47% gpu   5%  identical
+r2 c2   2808.3 MC/s  others cpu  132% gpu   3%  probes rel 3.3e-07
+r2 c3   2812.5 MC/s  others cpu   51% gpu   3%  probes rel 3.3e-07
+r3 c0   2951.5 MC/s  others cpu   49% gpu   5%  identical
+r3 c1   2398.0 MC/s  others cpu   54% gpu   5%  identical
+r3 c2   2815.1 MC/s  others cpu   44% gpu   3%  probes rel 3.3e-07
+r3 c3   2815.5 MC/s  others cpu   57% gpu   3%  probes rel 3.3e-07
+# summary patch_s2.5_n3500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           3003.4 [2951-3049]  x1.000 [1.000-1.000]  others 42%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2389.0 [2386-2398]  x0.795 [0.783-0.812]  others 46%/5%  identical
+c2 cg29@metal-diamond                                             2811.5 [2808-2815]  x0.936 [0.921-0.954]  others 62%/3%  probes rel 3.3e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2816.6 [2813-2819]  x0.938 [0.922-0.954]  others 54%/3%  probes rel 3.3e-07
+# ---- out/patch_s3_n3000.txt
+# patch_s3_n3000  2026-11-05 16:31  load avg 3.62  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2899.1 MC/s  others cpu   47% gpu   5%  reference
+r0 c1   2197.2 MC/s  others cpu   50% gpu   5%  identical
+r0 c2   2860.0 MC/s  others cpu   61% gpu   3%  probes rel 3.5e-07
+r0 c3   2863.3 MC/s  others cpu   48% gpu   3%  probes rel 3.5e-07
+r1 c0   2855.1 MC/s  others cpu   54% gpu   5%  identical
+r1 c1   2194.8 MC/s  others cpu   40% gpu   5%  identical
+r1 c2   2872.0 MC/s  others cpu   58% gpu   3%  probes rel 3.5e-07
+r1 c3   2860.1 MC/s  others cpu   56% gpu   3%  probes rel 3.5e-07
+r2 c0   2863.5 MC/s  others cpu   62% gpu   5%  identical
+r2 c1   2153.2 MC/s  others cpu   52% gpu   5%  identical
+r2 c2   2859.2 MC/s  others cpu   53% gpu   3%  probes rel 3.5e-07
+r2 c3   2870.0 MC/s  others cpu   49% gpu   3%  probes rel 3.5e-07
+r3 c0   2902.9 MC/s  others cpu   44% gpu   5%  identical
+r3 c1   2170.4 MC/s  others cpu   61% gpu   5%  identical
+r3 c2   2853.1 MC/s  others cpu   64% gpu   3%  probes rel 3.5e-07
+r3 c3   2866.3 MC/s  others cpu   55% gpu   3%  probes rel 3.5e-07
+# summary patch_s3_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2881.3 [2855-2903]  x1.000 [1.000-1.000]  others 50%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2182.6 [2153-2197]  x0.755 [0.748-0.769]  others 51%/5%  identical
+c2 cg29@metal-diamond                                             2859.6 [2853-2872]  x0.993 [0.983-1.006]  others 59%/3%  probes rel 3.5e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2864.8 [2860-2870]  x0.995 [0.987-1.002]  others 52%/3%  probes rel 3.5e-07
+# ---- out/patch_s3.5_n3000.txt
+# patch_s3.5_n3000  2026-11-05 16:37  load avg 2.19  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2486.0 MC/s  others cpu   62% gpu   5%  reference
+r0 c1   1952.7 MC/s  others cpu   55% gpu   5%  identical
+r0 c2   2573.1 MC/s  others cpu   70% gpu   3%  probes rel 1.9e-07
+r0 c3   2740.3 MC/s  others cpu   66% gpu   3%  probes rel 1.9e-07
+r1 c0   2509.0 MC/s  others cpu   59% gpu   5%  identical
+r1 c1   1917.8 MC/s  others cpu   52% gpu   5%  identical
+r1 c2   2739.4 MC/s  others cpu   81% gpu   3%  probes rel 1.9e-07
+r1 c3   2735.0 MC/s  others cpu   62% gpu   3%  probes rel 1.9e-07
+r2 c0   2470.2 MC/s  others cpu   56% gpu   5%  identical
+r2 c1   1851.7 MC/s  others cpu   51% gpu   5%  identical
+r2 c2   2737.3 MC/s  others cpu   63% gpu   3%  probes rel 1.9e-07
+r2 c3   2744.3 MC/s  others cpu   51% gpu   3%  probes rel 1.9e-07
+r3 c0   2458.3 MC/s  others cpu   60% gpu   5%  identical
+r3 c1   1859.7 MC/s  others cpu   57% gpu   5%  identical
+r3 c2   2728.9 MC/s  others cpu   63% gpu   3%  probes rel 1.9e-07
+r3 c3   2739.6 MC/s  others cpu   50% gpu   3%  probes rel 1.9e-07
+# summary patch_s3.5_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2478.1 [2458-2509]  x1.000 [1.000-1.000]  others 60%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1888.8 [1852-1953]  x0.760 [0.750-0.785]  others 53%/5%  identical
+c2 cg29@metal-diamond                                             2733.1 [2573-2739]  x1.100 [1.035-1.110]  others 67%/3%  probes rel 1.9e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2740.0 [2735-2744]  x1.107 [1.090-1.114]  others 56%/3%  probes rel 1.9e-07
+# ---- out/kgcpw_s0.4_n3000.txt
+# kgcpw_s0.4_n3000  2026-11-05 16:39  load avg 3.64  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   2421.3 MC/s  others cpu   51% gpu   5%  reference
+r0 c1   1909.4 MC/s  others cpu   44% gpu   5%  identical
+r0 c2   2721.6 MC/s  others cpu   70% gpu   3%  probes rel 3.1e-07
+r0 c3   2819.0 MC/s  others cpu   89% gpu   3%  probes rel 3.1e-07
+# redo r1 c0   2069.8 MC/s  others cpu  153% gpu   5%  identical
+# r1 c0: redo 1 of 3 (the others at 153 % CPU, 5 % GPU during the run)
+# redo r1 c1   1496.3 MC/s  others cpu  162% gpu   5%  identical
+# r1 c1: redo 1 of 3 (the others at 162 % CPU, 5 % GPU during the run)
+r1 c0   1989.1 MC/s  others cpu  142% gpu   5%  identical
+r1 c1   1719.8 MC/s  others cpu   80% gpu   5%  identical
+r1 c2   2833.3 MC/s  others cpu   55% gpu   3%  probes rel 3.1e-07
+r1 c3   2824.0 MC/s  others cpu   55% gpu   3%  probes rel 3.1e-07
+r2 c0   2397.6 MC/s  others cpu   48% gpu   5%  identical
+r2 c1   1575.6 MC/s  others cpu  140% gpu   5%  identical
+r2 c2   2822.7 MC/s  others cpu  134% gpu   3%  probes rel 3.1e-07
+r2 c3   2825.5 MC/s  others cpu   54% gpu   3%  probes rel 3.1e-07
+# redo r3 c3   2793.3 MC/s  others cpu  214% gpu   3%  probes rel 3.1e-07
+# r3 c3: redo 1 of 3 (the others at 214 % CPU, 3 % GPU during the run)
+# redo r3 c3   2758.0 MC/s  others cpu  435% gpu   4%  probes rel 3.1e-07
+# r3 c3: redo 2 of 3 (the others at 435 % CPU, 4 % GPU during the run)
+r3 c0   2393.1 MC/s  others cpu   55% gpu   5%  identical
+r3 c1   1876.0 MC/s  others cpu   49% gpu   5%  identical
+r3 c2   2767.1 MC/s  others cpu  133% gpu   3%  probes rel 3.1e-07
+r3 c3   2826.4 MC/s  others cpu  143% gpu   3%  probes rel 3.1e-07
+# summary kgcpw_s0.4_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2395.4 [1989-2421]  x1.000 [1.000-1.000]  others 53%/5%  identical,reference
+c1 cg29@multithreaded:4                                           1797.9 [1576-1909]  x0.786 [0.657-0.865]  others 64%/5%  identical
+c2 cg29@metal-diamond                                             2794.9 [2722-2833]  x1.167 [1.124-1.424]  others 101%/3%  probes rel 3.1e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2824.7 [2819-2826]  x1.180 [1.164-1.420]  others 72%/3%  probes rel 3.1e-07
+# ---- out_pass1/patch_s2.5_n3500.txt (first pass, replaced)
+# patch_s2.5_n3500  2026-11-05 13:24  load avg 17.50  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1   1531.4 MC/s  others cpu  201% gpu   5%  identical
+# r0 c1: redo 1 of 3 (the others at 201 % CPU, 5 % GPU during the run)
+# redo r0 c2   2492.3 MC/s  others cpu  536% gpu   3%  probes rel 3.3e-07
+# r0 c2: redo 1 of 3 (the others at 536 % CPU, 3 % GPU during the run)
+# redo r0 c2   2828.0 MC/s  others cpu  157% gpu   3%  probes rel 3.3e-07
+# r0 c2: redo 2 of 3 (the others at 157 % CPU, 3 % GPU during the run)
+# redo r0 c2   2764.4 MC/s  others cpu  250% gpu   3%  probes rel 3.3e-07
+# r0 c2: redo 3 of 3 (the others at 250 % CPU, 3 % GPU during the run)
+# redo r0 c3   2596.1 MC/s  others cpu  531% gpu   5%  probes rel 3.3e-07
+# r0 c3: redo 1 of 3 (the others at 531 % CPU, 5 % GPU during the run)
+# redo r0 c3   2674.0 MC/s  others cpu  355% gpu   9%  probes rel 3.3e-07
+# r0 c3: redo 2 of 3 (the others at 355 % CPU, 9 % GPU during the run)
+# redo r0 c3   2545.7 MC/s  others cpu  596% gpu   4%  probes rel 3.3e-07
+# r0 c3: redo 3 of 3 (the others at 596 % CPU, 4 % GPU during the run)
+r0 c0   2897.8 MC/s  others cpu   68% gpu   5%  reference
+r0 c1   2269.1 MC/s  others cpu  120% gpu   5%  identical
+r0 c2   2800.2 MC/s  others cpu  262% gpu   3%  probes rel 3.3e-07
+r0 c3   2517.3 MC/s  others cpu  786% gpu   3%  probes rel 3.3e-07
+# r0: kept after 3 redos although a run saw the others above the limit
+# redo r1 c0    947.3 MC/s  others cpu  624% gpu   5%  identical
+# r1 c0: redo 1 of 3 (the others at 624 % CPU, 5 % GPU during the run)
+# redo r1 c0   1269.5 MC/s  others cpu  491% gpu   5%  identical
+# r1 c0: redo 2 of 3 (the others at 491 % CPU, 5 % GPU during the run)
+# redo r1 c0   1012.8 MC/s  others cpu  613% gpu   5%  identical
+# r1 c0: redo 3 of 3 (the others at 613 % CPU, 5 % GPU during the run)
+r1 c0    993.2 MC/s  others cpu  620% gpu   5%  identical
+r1 c1   2396.4 MC/s  others cpu   55% gpu   5%  identical
+r1 c2   2808.9 MC/s  others cpu  107% gpu   3%  probes rel 3.3e-07
+r1 c3   2821.5 MC/s  others cpu   50% gpu   3%  probes rel 3.3e-07
+# r1: kept after 3 redos although a run saw the others above the limit
+# redo r2 c0   2158.4 MC/s  others cpu  308% gpu   6%  identical
+# r2 c0: redo 1 of 3 (the others at 308 % CPU, 6 % GPU during the run)
+# redo r2 c0   1841.8 MC/s  others cpu  309% gpu   5%  identical
+# r2 c0: redo 2 of 3 (the others at 309 % CPU, 5 % GPU during the run)
+# redo r2 c0   2794.5 MC/s  others cpu   80% gpu  79%  identical
+# r2 c0: redo 3 of 3 (the others at 80 % CPU, 79 % GPU during the run)
+# redo r2 c2   2766.6 MC/s  others cpu  202% gpu   3%  probes rel 3.3e-07
+# r2 c2: redo 1 of 3 (the others at 202 % CPU, 3 % GPU during the run)
+# redo r2 c2   2807.3 MC/s  others cpu  191% gpu   3%  probes rel 3.3e-07
+# r2 c2: redo 2 of 3 (the others at 191 % CPU, 3 % GPU during the run)
+# redo r2 c2   2705.8 MC/s  others cpu  497% gpu   3%  probes rel 3.3e-07
+# r2 c2: redo 3 of 3 (the others at 497 % CPU, 3 % GPU during the run)
+# redo r2 c3   2781.6 MC/s  others cpu  255% gpu   3%  probes rel 3.3e-07
+# r2 c3: redo 1 of 3 (the others at 255 % CPU, 3 % GPU during the run)
+# redo r2 c3   2803.8 MC/s  others cpu  267% gpu   3%  probes rel 3.3e-07
+# r2 c3: redo 2 of 3 (the others at 267 % CPU, 3 % GPU during the run)
+# redo r2 c3   2806.0 MC/s  others cpu  169% gpu   3%  probes rel 3.3e-07
+# r2 c3: redo 3 of 3 (the others at 169 % CPU, 3 % GPU during the run)
+r2 c0   2790.7 MC/s  others cpu  101% gpu   5%  identical
+r2 c1   2101.0 MC/s  others cpu  102% gpu   5%  identical
+r2 c2   2814.4 MC/s  others cpu  148% gpu   3%  probes rel 3.3e-07
+r2 c3   2806.5 MC/s  others cpu  165% gpu   3%  probes rel 3.3e-07
+# r2: kept after 3 redos although a run saw the others above the limit
+# redo r3 c0   2867.4 MC/s  others cpu  163% gpu   5%  identical
+# r3 c0: redo 1 of 3 (the others at 163 % CPU, 5 % GPU during the run)
+# redo r3 c0   2687.7 MC/s  others cpu  202% gpu   5%  identical
+# r3 c0: redo 2 of 3 (the others at 202 % CPU, 5 % GPU during the run)
+# redo r3 c0   2747.8 MC/s  others cpu  169% gpu   5%  identical
+# r3 c0: redo 3 of 3 (the others at 169 % CPU, 5 % GPU during the run)
+# redo r3 c2   2812.2 MC/s  others cpu  210% gpu   3%  probes rel 3.3e-07
+# r3 c2: redo 1 of 3 (the others at 210 % CPU, 3 % GPU during the run)
+# redo r3 c3   2824.6 MC/s  others cpu  160% gpu   3%  probes rel 3.3e-07
+# r3 c3: redo 1 of 3 (the others at 160 % CPU, 3 % GPU during the run)
+r3 c0   2947.7 MC/s  others cpu  140% gpu   5%  identical
+r3 c1   2407.0 MC/s  others cpu  148% gpu   5%  identical
+r3 c2   2816.7 MC/s  others cpu  145% gpu   3%  probes rel 3.3e-07
+r3 c3   2815.4 MC/s  others cpu  147% gpu   3%  probes rel 3.3e-07
+# summary patch_s2.5_n3500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2844.2 [993-2948]  x1.000 [1.000-1.000]  others 121%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2332.8 [2101-2407]  x0.800 [0.753-2.413]  others 111%/5%  identical
+c2 cg29@metal-diamond                                             2811.6 [2800-2817]  x0.987 [0.956-2.828]  others 146%/3%  probes rel 3.3e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2810.9 [2517-2822]  x0.980 [0.869-2.841]  others 156%/3%  probes rel 3.3e-07
+# ---- out_pass1/patch_s3_n3000.txt (first pass, replaced)
+# patch_s3_n3000  2026-11-05 13:49  load avg 3.92  4 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c1   2188.9 MC/s  others cpu  159% gpu   5%  identical
+# r0 c1: redo 1 of 3 (the others at 159 % CPU, 5 % GPU during the run)
+# redo r0 c1   1688.9 MC/s  others cpu  331% gpu   5%  identical
+# r0 c1: redo 2 of 3 (the others at 331 % CPU, 5 % GPU during the run)
+# redo r0 c2   2864.7 MC/s  others cpu  154% gpu   4%  probes rel 3.5e-07
+# r0 c2: redo 1 of 3 (the others at 154 % CPU, 4 % GPU during the run)
+# redo r0 c2   2854.8 MC/s  others cpu  171% gpu   3%  probes rel 3.5e-07
+# r0 c2: redo 2 of 3 (the others at 171 % CPU, 3 % GPU during the run)
+# redo r0 c2   2862.9 MC/s  others cpu  151% gpu   3%  probes rel 3.5e-07
+# r0 c2: redo 3 of 3 (the others at 151 % CPU, 3 % GPU during the run)
+# redo r0 c3   2857.2 MC/s  others cpu  156% gpu   3%  probes rel 3.5e-07
+# r0 c3: redo 1 of 3 (the others at 156 % CPU, 3 % GPU during the run)
+# redo r0 c3   2865.0 MC/s  others cpu  171% gpu   4%  probes rel 3.5e-07
+# r0 c3: redo 2 of 3 (the others at 171 % CPU, 4 % GPU during the run)
+# redo r0 c3   2848.0 MC/s  others cpu  170% gpu   3%  probes rel 3.5e-07
+# r0 c3: redo 3 of 3 (the others at 170 % CPU, 3 % GPU during the run)
+r0 c0   2873.7 MC/s  others cpu  134% gpu   5%  reference
+r0 c1   2203.5 MC/s  others cpu  148% gpu   5%  identical
+r0 c2   2851.8 MC/s  others cpu  267% gpu   4%  probes rel 3.5e-07
+r0 c3   2836.0 MC/s  others cpu  300% gpu   3%  probes rel 3.5e-07
+# r0: kept after 3 redos although a run saw the others above the limit
+# redo r1 c0   2787.4 MC/s  others cpu  152% gpu   5%  identical
+# r1 c0: redo 1 of 3 (the others at 152 % CPU, 5 % GPU during the run)
+# redo r1 c0   2263.5 MC/s  others cpu  244% gpu   5%  identical
+# r1 c0: redo 2 of 3 (the others at 244 % CPU, 5 % GPU during the run)
+# redo r1 c0   2636.7 MC/s  others cpu  182% gpu   5%  identical
+# r1 c0: redo 3 of 3 (the others at 182 % CPU, 5 % GPU during the run)
+# redo r1 c2   2866.8 MC/s  others cpu  150% gpu   3%  probes rel 3.5e-07
+# r1 c2: redo 1 of 3 (the others at 150 % CPU, 3 % GPU during the run)
+# redo r1 c2   2851.4 MC/s  others cpu  166% gpu   3%  probes rel 3.5e-07
+# r1 c2: redo 2 of 3 (the others at 166 % CPU, 3 % GPU during the run)
+# redo r1 c2   2867.1 MC/s  others cpu  157% gpu   3%  probes rel 3.5e-07
+# r1 c2: redo 3 of 3 (the others at 157 % CPU, 3 % GPU during the run)
+# redo r1 c3   2852.9 MC/s  others cpu  198% gpu   4%  probes rel 3.5e-07
+# r1 c3: redo 1 of 3 (the others at 198 % CPU, 4 % GPU during the run)
+# redo r1 c3   2865.9 MC/s  others cpu  161% gpu   3%  probes rel 3.5e-07
+# r1 c3: redo 2 of 3 (the others at 161 % CPU, 3 % GPU during the run)
+# redo r1 c3   2853.8 MC/s  others cpu  185% gpu   3%  probes rel 3.5e-07
+# r1 c3: redo 3 of 3 (the others at 185 % CPU, 3 % GPU during the run)
+r1 c0   2867.3 MC/s  others cpu  142% gpu   5%  identical
+r1 c1   2184.2 MC/s  others cpu  148% gpu   5%  identical
+r1 c2   2857.6 MC/s  others cpu  213% gpu   4%  probes rel 3.5e-07
+r1 c3   2866.3 MC/s  others cpu  188% gpu   4%  probes rel 3.5e-07
+# r1: kept after 3 redos although a run saw the others above the limit
+# redo r2 c0   2360.6 MC/s  others cpu  191% gpu   5%  identical
+# r2 c0: redo 1 of 3 (the others at 191 % CPU, 5 % GPU during the run)
+# redo r2 c0   2290.6 MC/s  others cpu  184% gpu   5%  identical
+# r2 c0: redo 2 of 3 (the others at 184 % CPU, 5 % GPU during the run)
+# redo r2 c0   2080.1 MC/s  others cpu  226% gpu   5%  identical
+# r2 c0: redo 3 of 3 (the others at 226 % CPU, 5 % GPU during the run)
+# redo r2 c1   1456.8 MC/s  others cpu  229% gpu   5%  identical
+# r2 c1: redo 1 of 3 (the others at 229 % CPU, 5 % GPU during the run)
+# redo r2 c1   1452.1 MC/s  others cpu  272% gpu   5%  identical
+# r2 c1: redo 2 of 3 (the others at 272 % CPU, 5 % GPU during the run)
+# redo r2 c1   1483.8 MC/s  others cpu  254% gpu   5%  identical
+# r2 c1: redo 3 of 3 (the others at 254 % CPU, 5 % GPU during the run)
+# redo r2 c2   2829.9 MC/s  others cpu  222% gpu   3%  probes rel 3.5e-07
+# r2 c2: redo 1 of 3 (the others at 222 % CPU, 3 % GPU during the run)
+# redo r2 c2   2812.3 MC/s  others cpu  211% gpu   5%  probes rel 3.5e-07
+# r2 c2: redo 2 of 3 (the others at 211 % CPU, 5 % GPU during the run)
+# redo r2 c2   2782.4 MC/s  others cpu  201% gpu   4%  probes rel 3.5e-07
+# r2 c2: redo 3 of 3 (the others at 201 % CPU, 4 % GPU during the run)
+# redo r2 c3   2840.8 MC/s  others cpu  173% gpu   3%  probes rel 3.5e-07
+# r2 c3: redo 1 of 3 (the others at 173 % CPU, 3 % GPU during the run)
+# redo r2 c3   2862.8 MC/s  others cpu  174% gpu   4%  probes rel 3.5e-07
+# r2 c3: redo 2 of 3 (the others at 174 % CPU, 4 % GPU during the run)
+# redo r2 c3   2872.7 MC/s  others cpu  165% gpu   3%  probes rel 3.5e-07
+# r2 c3: redo 3 of 3 (the others at 165 % CPU, 3 % GPU during the run)
+r2 c0   1980.2 MC/s  others cpu  232% gpu   5%  identical
+r2 c1   1579.3 MC/s  others cpu  279% gpu   5%  identical
+r2 c2   2803.0 MC/s  others cpu  189% gpu   4%  probes rel 3.5e-07
+r2 c3   2862.2 MC/s  others cpu  186% gpu   4%  probes rel 3.5e-07
+# r2: kept after 3 redos although a run saw the others above the limit
+# redo r3 c0   2875.5 MC/s  others cpu  165% gpu   6%  identical
+# r3 c0: redo 1 of 3 (the others at 165 % CPU, 6 % GPU during the run)
+# redo r3 c0   2777.2 MC/s  others cpu  159% gpu   5%  identical
+# r3 c0: redo 2 of 3 (the others at 159 % CPU, 5 % GPU during the run)
+# redo r3 c0   2794.0 MC/s  others cpu  157% gpu   5%  identical
+# r3 c0: redo 3 of 3 (the others at 157 % CPU, 5 % GPU during the run)
+# redo r3 c1   2184.7 MC/s  others cpu  153% gpu   5%  identical
+# r3 c1: redo 1 of 3 (the others at 153 % CPU, 5 % GPU during the run)
+# redo r3 c1   2162.5 MC/s  others cpu  160% gpu   5%  identical
+# r3 c1: redo 2 of 3 (the others at 160 % CPU, 5 % GPU during the run)
+# redo r3 c3   2858.9 MC/s  others cpu  158% gpu   3%  probes rel 3.5e-07
+# r3 c3: redo 1 of 3 (the others at 158 % CPU, 3 % GPU during the run)
+# redo r3 c3   2859.4 MC/s  others cpu  157% gpu   3%  probes rel 3.5e-07
+# r3 c3: redo 2 of 3 (the others at 157 % CPU, 3 % GPU during the run)
+r3 c0   2828.8 MC/s  others cpu  138% gpu   5%  identical
+r3 c1   2187.7 MC/s  others cpu  148% gpu   5%  identical
+r3 c2   2865.9 MC/s  others cpu  140% gpu   3%  probes rel 3.5e-07
+r3 c3   2871.5 MC/s  others cpu  148% gpu   3%  probes rel 3.5e-07
+# summary patch_s3_n3000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           2848.1 [1980-2874]  x1.000 [1.000-1.000]  others 140%/5%  identical,reference
+c1 cg29@multithreaded:4                                           2185.9 [1579-2203]  x0.770 [0.762-0.798]  others 148%/5%  identical
+c2 cg29@metal-diamond                                             2854.7 [2803-2866]  x1.005 [0.992-1.415]  others 201%/4%  probes rel 3.5e-07
+c3 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    2864.3 [2836-2872]  x1.007 [0.987-1.445]  others 187%/3%  probes rel 3.5e-07
+# ---- out_len/patch_s1_n10500_163253.txt (run-length check)
+# patch_s1_n10500  2026-11-05 16:32  load avg 2.97  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   1806.9 MC/s  others cpu   65% gpu   5%  reference
+r0 c1   1728.1 MC/s  others cpu   95% gpu   3%  probes rel 3.8e-07
+r0 c2   1772.0 MC/s  others cpu   55% gpu   2%  probes rel 3.8e-07
+r1 c0   1915.5 MC/s  others cpu   31% gpu   5%  identical
+r1 c1   1787.7 MC/s  others cpu   66% gpu   3%  probes rel 3.8e-07
+r1 c2   1780.1 MC/s  others cpu   51% gpu   2%  probes rel 3.8e-07
+r2 c0   1877.7 MC/s  others cpu   44% gpu   5%  identical
+r2 c1   1713.3 MC/s  others cpu   66% gpu   2%  probes rel 3.8e-07
+r2 c2   1706.2 MC/s  others cpu   75% gpu   3%  probes rel 3.8e-07
+r3 c0   1895.6 MC/s  others cpu   33% gpu   5%  identical
+r3 c1   1751.4 MC/s  others cpu   70% gpu   2%  probes rel 3.8e-07
+r3 c2   1749.3 MC/s  others cpu   48% gpu   2%  probes rel 3.8e-07
+# summary patch_s1_n10500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1886.7 [1807-1916]  x1.000 [1.000-1.000]  others 38%/5%  identical,reference
+c1 cg29@metal-diamond                                             1739.7 [1713-1788]  x0.929 [0.912-0.956]  others 68%/2%  probes rel 3.8e-07
+c2 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1760.7 [1706-1780]  x0.926 [0.909-0.981]  others 53%/2%  probes rel 3.8e-07
+# ---- out_len/patch_s1_n36500_163346.txt (run-length check)
+# patch_s1_n36500  2026-11-05 16:33  load avg 2.04  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   1900.0 MC/s  others cpu   32% gpu   5%  reference
+r0 c1   1846.6 MC/s  others cpu   55% gpu   2%  probes rel 3.8e-07
+r0 c2   1796.5 MC/s  others cpu   58% gpu   2%  probes rel 3.8e-07
+r1 c0   1907.7 MC/s  others cpu   31% gpu   5%  identical
+r1 c1   1856.7 MC/s  others cpu   53% gpu   2%  probes rel 3.8e-07
+r1 c2   1818.8 MC/s  others cpu   52% gpu   2%  probes rel 3.8e-07
+r2 c0   1912.0 MC/s  others cpu   32% gpu   5%  identical
+r2 c1   1776.4 MC/s  others cpu   61% gpu   2%  probes rel 3.8e-07
+r2 c2   1839.2 MC/s  others cpu   60% gpu   2%  probes rel 3.8e-07
+r3 c0   1913.5 MC/s  others cpu   35% gpu   5%  identical
+r3 c1   1859.1 MC/s  others cpu   47% gpu   2%  probes rel 3.8e-07
+r3 c2   1777.9 MC/s  others cpu   43% gpu   2%  probes rel 3.8e-07
+# summary patch_s1_n36500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1909.8 [1900-1913]  x1.000 [1.000-1.000]  others 32%/5%  identical,reference
+c1 cg29@metal-diamond                                             1851.7 [1776-1859]  x0.972 [0.929-0.973]  others 54%/2%  probes rel 3.8e-07
+c2 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1807.6 [1778-1839]  x0.949 [0.929-0.962]  others 55%/2%  probes rel 3.8e-07
+# ---- out_len/patch_s1_n10500_163455.txt (run-length check)
+# patch_s1_n10500  2026-11-05 16:34  load avg 2.31  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   1826.9 MC/s  others cpu   95% gpu   5%  reference
+r0 c1   1731.3 MC/s  others cpu  115% gpu   2%  probes rel 3.8e-07
+r0 c2   1614.6 MC/s  others cpu   46% gpu   2%  probes rel 3.8e-07
+r1 c0   1937.3 MC/s  others cpu   34% gpu   5%  identical
+r1 c1   1738.9 MC/s  others cpu   45% gpu   2%  probes rel 3.8e-07
+r1 c2   1707.3 MC/s  others cpu   41% gpu   2%  probes rel 3.8e-07
+r2 c0   1938.1 MC/s  others cpu   24% gpu   5%  identical
+r2 c1   1728.4 MC/s  others cpu   41% gpu   2%  probes rel 3.8e-07
+r2 c2   1729.0 MC/s  others cpu   42% gpu   2%  probes rel 3.8e-07
+r3 c0   1914.6 MC/s  others cpu   46% gpu   5%  identical
+r3 c1   1754.5 MC/s  others cpu   73% gpu   2%  probes rel 3.8e-07
+r3 c2   1711.7 MC/s  others cpu   44% gpu   2%  probes rel 3.8e-07
+# summary patch_s1_n10500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1925.9 [1827-1938]  x1.000 [1.000-1.000]  others 40%/5%  identical,reference
+c1 cg29@metal-diamond                                             1735.1 [1728-1754]  x0.907 [0.892-0.948]  others 59%/2%  probes rel 3.8e-07
+c2 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1709.5 [1615-1729]  x0.888 [0.881-0.894]  others 43%/2%  probes rel 3.8e-07
+# ---- out_len/patch_s1_n36500_163548.txt (run-length check)
+# patch_s1_n36500  2026-11-05 16:35  load avg 1.92  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0   1926.8 MC/s  others cpu   30% gpu   5%  reference
+r0 c1   1817.5 MC/s  others cpu   51% gpu   2%  probes rel 3.8e-07
+r0 c2   1800.8 MC/s  others cpu   51% gpu   2%  probes rel 3.8e-07
+r1 c0   1891.3 MC/s  others cpu   45% gpu   5%  identical
+r1 c1   1821.2 MC/s  others cpu   48% gpu   2%  probes rel 3.8e-07
+r1 c2   1831.0 MC/s  others cpu   50% gpu   2%  probes rel 3.8e-07
+r2 c0   1912.6 MC/s  others cpu   29% gpu   5%  identical
+r2 c1   1871.5 MC/s  others cpu   51% gpu   2%  probes rel 3.8e-07
+r2 c2   1782.0 MC/s  others cpu   44% gpu   2%  probes rel 3.8e-07
+r3 c0   1896.0 MC/s  others cpu   31% gpu   5%  identical
+r3 c1   1776.6 MC/s  others cpu   43% gpu   2%  probes rel 3.8e-07
+r3 c2   1806.4 MC/s  others cpu   55% gpu   2%  probes rel 3.8e-07
+# summary patch_s1_n36500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 cg29@multithreaded:8                                           1904.3 [1891-1927]  x1.000 [1.000-1.000]  others 30%/5%  identical,reference
+c1 cg29@metal-diamond                                             1819.4 [1777-1871]  x0.953 [0.937-0.978]  others 50%/2%  probes rel 3.8e-07
+c2 cg29@metal-diamond#OPENEMS_DIAMOND_TIMING=1                    1803.6 [1782-1831]  x0.944 [0.932-0.968]  others 51%/2%  probes rel 3.8e-07

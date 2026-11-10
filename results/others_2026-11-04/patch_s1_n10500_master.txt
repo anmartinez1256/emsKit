@@ -1,0 +1,4 @@
+# patch_s1_n10500  2026-11-04 05:04
+multithreaded:4                 247.3 MC/s      4.40 s  10500 TS x 0.104 MC  others  77%  runs 247/242  busy mediaanalysisd:42  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                             782.5 MC/s      1.39 s  10500 TS x 0.104 MC  others  95%  runs 782/775  busy spotlightknowled:37,corespotlightd:24  probes rel=3.8e-07  S11: max|dS|=2.5e-07 max dB=2.3e-05  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)

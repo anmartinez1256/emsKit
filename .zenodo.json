@@ -1,0 +1,42 @@
+{
+  "title": "fdtdKit: taking openEMS towards the memory ceiling of an Apple M5",
+  "upload_type": "software",
+  "description": "<p>fdtdKit makes the open-source EC-FDTD field solver openEMS faster on Apple Silicon. The repository holds the changes as patches (27 for openEMS, 1 for CSXCAD), the benchmark harness, every measured table, the paper with its sources, and the command line <code>emskit fdtd</code> that runs the checks and benchmarks.</p><p>On an Apple M5 the multithreaded CPU engine runs 1.95 to 6.89 times as fast as openEMS v0.37.0 on six models of 0.1 to 7.9 million cells, with bit-identical port signals, S-parameters and far-field dumps. A GPU engine with diamond-shaped temporal blocks (Metal) is up to 1.47 times as fast again on large models.</p><p>The code, the measurements and most of the text were produced with AI assistants (Claude, Anthropic), directed by the author; the paper's Disclosure section gives the details.</p>",
+  "creators": [
+    {
+      "name": "Martinez, Angel",
+      "affiliation": "University of Texas at Austin"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "access_right": "open",
+  "keywords": [
+    "FDTD",
+    "openEMS",
+    "computational electromagnetics",
+    "Apple Silicon",
+    "Metal",
+    "GPU",
+    "temporal blocking",
+    "performance",
+    "benchmark"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://github.com/anmartinez1256/CSXCAD/tree/speed-m5",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://github.com/thliebig/openEMS",
+      "relation": "isDerivedFrom",
+      "resource_type": "software"
+    }
+  ],
+  "notes": "The harness, scripts, results and the Swift package are under GPL-3.0-or-later; the paper (paper/) is under CC BY 4.0; the CSXCAD patch is under LGPL-3.0-or-later like CSXCAD itself."
+}

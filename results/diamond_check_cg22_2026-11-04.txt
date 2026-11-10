@@ -1,0 +1,57 @@
+== pec, 41,37,30 lines, 400 timesteps 
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== mur, 41,37,30 lines, 400 timesteps 
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== mixed, 43,38,29 lines, 700 timesteps --hexc --delay --murexc
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== mixed, 43,38,29 lines, 1500 timesteps --hexc --delay --rlc
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== pml, 41,37,30 lines, 400 timesteps --hexc --delay
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== pmlmix, 43,38,29 lines, 700 timesteps --hexc --delay --rlc
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== mur, 41,37,30 lines, 500 timesteps --sheet
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+== pmlmix, 43,38,29 lines, 700 timesteps --hexc --delay --rlc --drude --sheet
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+PASS: every comparison is identical

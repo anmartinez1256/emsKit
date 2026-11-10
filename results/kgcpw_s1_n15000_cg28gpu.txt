@@ -1,0 +1,7 @@
+# 2026-11-04 21:42-21:44, OPENEMS_FTZ=1 for both configs; dev28b = snapshot cg28 (the metal-diamond engine tunes its
+# tiling at run time; byte-identical library). The version string printed (v0.37.0-26-gcd80d8c) is the one cmake wrote
+# when the build directory was configured (cg20).
+# kgcpw_s1_n15000  load avg 4.05
+dev28b@multithreaded:4         1584.0 MC/s      2.29 s  15000 TS x 0.242 MC  others  59%  during 2.6 s: self cpu 319% gpu>=0.00 s, others cpu 38% gpu 5%, gpu dev 5%  [ref]  openEMS v0.37.0-26-gcd80d8c
+dev28b@metal-diamond:0         2095.4 MC/s      1.73 s  15000 TS x 0.242 MC  others  48%  during 2.1 s: self cpu 37% gpu>=1.30 s, others cpu 65% gpu 2%, gpu dev 98%  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+NOTHING REQUIRED TO MATCH: every compared config is tolerant (dev28b@metal-diamond:0)

@@ -1,0 +1,81 @@
+# fresh_build_pub29_2026-11-07.txt: a build of the published patches from a fresh clone and its full check,
+# 2026-11-07, Apple M5 (4 P + 6 E cores, 10 GPU cores), macOS 27.0.1. pub29 is the snapshot name of that build's three
+# libraries. Tables: results/*_pub29.txt (check.sh), results/*_pub29gpu.txt (the Metal diamond engine),
+# results/validation_pub29_* (the validation suite). Other programs used up to 8.9 cores during the check.sh runs
+# (section 4), so the speeds in these files are not results: this is a correctness check, and only the verdicts count.
+# $PUBCHECK in the validation files stands for the scratch folder of this build (prefix/, snaps/pub29/); the path was
+# replaced there after the runs, nothing else.
+## 1. Build, 07:55:12-07:58:25: BUILD.md sections 1, 4 and 5 (not section 2: Homebrew's cmake, boost, hdf5, cgal
+##    and vtk were installed, and the build did without its Python formulas, see below; not section 3: the stock
+##    snapshot saved on 2026-10-29 was the reference)
+- Sources, 07:55:12: git clone --recursive --branch v0.37.0 https://github.com/thliebig/openEMS-Project.git
+  (superproject 974294b) into an empty folder.
+- Patches, 07:56:05: git -C CSXCAD am patches/csxcad/0001 on v0.7.0 -> tree 902b9d6e93d22bd08f165259594d0289f1370dc4
+  (that of the fork's bc854b7), `git describe --tags` v0.7.0-1-gb271ec7; git -C openEMS fetch origin 7bb294f, then am
+  patches/openems/0001-0027 -> 27 commits, tree 90f8c01f2724cee04437d1da064a37cadb36132e (that of the fork's head
+  78fe656), v0.37.0-45-g1d091c7 (git am makes new commits, so the hash is its own). All 27 commits carry the public
+  identity of the patches' From: lines and a Generated-by: line. The patch files were those of the first pass of the
+  rewrite (07:14); they differ from the files now in patches/ only in the first line (From <hash>) of 0006-0027 and in
+  the message of 0006 (the second pass; CHANGELOG.md, the entry of 2026-11-07 on the fork's rewrite), so the code
+  built is the same.
+- Build, 07:56:25-07:58:25, exit 0: ./update_openEMS.sh PREFIX --disable-GUI --python into an empty prefix (Apple
+  clang 21, CMake 4.4; TinyXML built from source by the script). Its dependency check named five Homebrew Python
+  formulas as missing (python3, python-setuptools, cython, numpy, python-matplotlib) and said that it did not pass;
+  the build went on, and the two Python modules went into the script's virtual environment PREFIX/venv (Python
+  3.14.6), whose packages pip installed (numpy 2.5.4, matplotlib 3.11.2, h5py 3.16.0; the modules openEMS
+  0.37.0.post1.dev45+g1d091c700 and CSXCAD 0.7.0.post1.dev1+gb271ec708). The validation suite also needs scipy
+  (bench/validation/README.md): its first two starts (09:20:40, 09:20:43) stopped at the import, and scipy 1.18.1 was
+  added to that environment with pip at 09:22:55, before the validation runs of section 3.
+- Snapshot pub29: the three libraries of PREFIX/lib, copied with cp -L as BUILD.md section 9 shows (sha256, first 16
+  hex digits: libopenEMS.0.dylib b90fc1e2c1f9fde3, libCSXCAD.0.dylib 7d27263eb4d40643, libnf2ff.0.dylib
+  829d73d54c84d9fc). Every check ran with that environment's Python modules, the stock reference too (bench.py and the
+  scripts select the libraries with DYLD_LIBRARY_PATH; BUILD.md section 6: the ABI difference affects SAR only).
+## 2. Full check, 08:23:57-09:12:27, from a scratch clone of this repository (bench/ and scripts/ as committed here)
+- QUIET_MAX=20 bench/check.sh pub29 pub29 with RFSIM_PATH set (so the two boards ran) and OPENEMS_BENCH_SNAPS (SNAPS
+  below) a folder with pub29 and a link to the stock snapshot: per model the stock reference row and pub29 at 1, 4, 8
+  and 10 threads and with the automatic count, the faster of two runs each. Every row: probes rel=0.0e+00 and
+  max|dS|=0.0e+00 (an S-parameter that stays below -40 dB is compared exactly: equal). Last line: check.sh pub29: ALL
+  IDENTICAL (6 models); exit 0. The 20 s limit of the wait for a quiet Mac ran out before most runs (the lines say so).
+  table                        cells     stock reference         verdict     other processes (CPU)   GPU device
+  patch_s5_n1200_pub29.txt     7.863 M   multithreaded, 8 thr    IDENTICAL   513-892 %              <= 24 %
+  notch_s3_n2000_pub29.txt     5.247 M   multithreaded, 8 thr    IDENTICAL   157-655 %              <= 30 %
+  patch_s1_n10500_pub29.txt    0.104 M   multithreaded, 2 thr    IDENTICAL   412-885 %              <= 28 %
+  notch_s1_n16000_pub29.txt    0.270 M   multithreaded, 4 thr    IDENTICAL   154-712 %              <= 24 %
+  kgcpw_s1_n15000_pub29.txt    0.242 M   multithreaded, 4 thr    IDENTICAL    47-657 %              <= 19 %
+  ksma_s1_n6000_pub29.txt      0.871 M   multithreaded, 4 thr    IDENTICAL    28-135 %              <= 49 %
+  (100 % = one core; the SMA launch on the toolkit's default mesh since 2026-11-04, as in results/*_cg29.txt)
+- scripts/checks/debye_check.sh SNAPS/pub29 ~/opt/openEMS-dev/snap/cg29 (4 threads; snapshot cg29 from the default
+  snapshot folder of BUILD.md section 9, not from SNAPS), 09:11:59: the exported final fields of a 60 x 60 x 20 box
+  with a two-pole Debye block after 600 steps (216000 values per array): pub29 basic = sse-compressed = multithreaded
+  (4), and pub29 sse-compressed = cg29 sse-compressed, 0 differing values in volt and curr each. PASS, exit 0.
+- scripts/checks/diamond_check.sh SNAPS/pub29, 09:12:00: nine boxes (pec; mur; mixed --hexc --delay --murexc; mixed
+  --hexc --delay --rlc; pml --hexc --delay; pmlmix --hexc --delay --rlc; mur --sheet; mur --debye; pmlmix --hexc
+  --delay --rlc --drude --sheet --debye) at eight settings (K = 1, 2, 3, 4 and 8; K = 4 with tile 7,0, 96 threads and
+  batch 3; the tuner at batch 8; the tuner at the default batch), every exported field value against the
+  multithreaded engine with OPENEMS_FTZ=1: 72 of 72 IDENTICAL. PASS, exit 0.
+## 3. The other checks of cg29's full check (results/cpu_items_cg29_2026-11-05.txt, section 3), 09:20:46-09:24:14,
+##    other processes at 0.4 to 1.0 cores (1.9 just before the cylinder runs)
+- Cylindrical multigrid: scripts/cylinder_multigrid/run_cyl.py (CylindricalWave_CC, 1500 steps, 4 threads) with the
+  stock libraries (the run printed v0.37.0) and with pub29's (v0.37.0-45-g1d091c7), then scripts/checks/h5cmp.py:
+  2 files, 34 datasets, 0 differences; exit 0.
+- The six models on the Metal diamond engine: OPENEMS_FTZ=1 bench/bench.py MODEL --nrts N --scale S (check.sh's step
+  counts) --configs pub29@multithreaded:4 pub29@metal-diamond:0 --tag pub29gpu, 09:21-09:22. On all six the
+  metal-diamond line has probes rel=0.0e+00 and max|dS|=0.0e+00 (S21 of notch x3 and S11 of the GCPW line below
+  -40 dB, compared exactly: equal). The files end with NOTHING REQUIRED TO MATCH because every config of such a call
+  is tolerant (BUILD.md section 9), so the identity is in those figures. Other processes 0.4-1.0 cores and 0 % of
+  the GPU; the GPU device figure of the metal-diamond lines (76-98 %) is the engine itself.
+- Validation suite (bench/validation/run_validation.py, the libraries of SNAPS/pub29): 15 of 15 with the multithreaded
+  engine at 4 threads (VALIDATION_ENGINE=multithreaded VALIDATION_THREADS=4, --tag pub29_mt4, 09:23:01) and 15 of 15
+  with the default engine and thread count (--tag pub29_fastest, 09:23:52); exit 0 each.
+- Not repeated on this build: check.sh's three extra configurations of cg29 (the geometry coefficient tables forced at
+  4 threads, the packed ones at 8 and the barriers instead of the neighbour flags at 8), the box checks against the
+  template hooks and the run-mode matrix of 45 small models (their scripts are not in this repository).
+## 4. Load
+During the check.sh runs the other processes were mostly another program's DFT runs (four to eight pw.x processes)
+and Swift test runners (swiftpm-testing), at times Python and swift-frontend processes: 0.3 to 8.9 cores, up to 49 %
+of the GPU device. Each line of the tables gives its own figures (the `during` column, bench/usage.py).
+## 5. Files written
+results/*_pub29.txt (6), results/*_pub29gpu.txt (6), results/validation_pub29_mt4.{md,json},
+results/validation_pub29_fastest.{md,json}, this file; results/summary.json regenerated by
+paper/figures/parse_results.py (every model table in results/ itself up to these, not those in
+results/others_2026-11-04/; the entries of 2026-11-03 unchanged).

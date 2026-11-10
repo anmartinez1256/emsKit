@@ -1,0 +1,5 @@
+# patch_s5_n1200  2026-11-04 08:00
+cg20@multithreaded:8#OPENEMS_FTZ=1   1342.1 MC/s      7.03 s  1200 TS x 7.863 MC  others 371%  runs 1260/1342  busy Python:244,palace-arm64.bin:80  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-25-g315acee
+cg20@metal-diamond:0#OPENEMS_FTZ=1   2719.4 MC/s      3.47 s  1200 TS x 7.863 MC  others 284%  runs 2719/2624  busy Python:173,palace-arm64.bin:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-25-g315acee
+cg20@gpu                       1338.3 MC/s      7.05 s  1200 TS x 7.863 MC  others 249%  runs 1314/1338  busy Python:138,palace-arm64.bin:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-25-g315acee
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg20@multithreaded:8#OPENEMS_FTZ=1, cg20@metal-diamond:0#OPENEMS_FTZ=1, cg20@gpu)

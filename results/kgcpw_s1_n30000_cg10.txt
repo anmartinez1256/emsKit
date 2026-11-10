@@ -1,0 +1,6 @@
+# kgcpw_s1_n30000  2026-10-29 04:15
+stock@multithreaded:4           300.2 MC/s     24.18 s  30000 TS x 0.242 MC  others  39%  runs 300/299  [ref]
+cg10@multithreaded:1            454.0 MC/s     15.99 s  30000 TS x 0.242 MC  others 126%  runs 453/454  busy WindowServer:37,Claude Helper:34  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@multithreaded:4            868.4 MC/s      8.36 s  30000 TS x 0.242 MC  others 108%  runs 755/868  busy Python:46,kernel_task:28  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@multithreaded:8            558.0 MC/s     13.01 s  30000 TS x 0.242 MC  others  28%  runs 558/541  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@fastest                    812.1 MC/s      8.94 s  30000 TS x 0.242 MC  others 102%  runs 812/768  busy Claude Helper:31,WindowServer:26  (auto-picked 4 threads)  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

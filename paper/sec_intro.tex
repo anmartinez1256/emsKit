@@ -1,0 +1,162 @@
+\section{Introduction}
+
+openEMS~\cite{liebig2013} is a widely used free finite-difference time-domain (FDTD)~\cite{yee1966,taflove} solver.
+The author runs it from a Python toolkit for printed-circuit-board RF work: 50\,$\Omega$ grounded-coplanar waveguide
+(GCPW) lines with lossy conducting sheets, vertical and edge-mount SMA (SubMiniature version A) connector launches with
+a coaxial port and a perfectly matched layer (PML), coupled lines and cavities. The machine is an Apple M5 laptop (4
+performance and 6 efficiency cores, 16\,GB of unified memory on a single bus of about 150\,GB/s~\cite{m5}, shared with
+the GPU). A survey of the toolkit's runs on it found 0.1--2.4 million cells, 41\,000--165\,000 time steps and 10--50
+minutes per run at 117--460 million cell updates per second (\MC; from the project log, not in \code{results/}). The
+two boards benchmarked here take 76.5\,s and 562.7\,s per full run with stock openEMS (measured,
+Table~\ref{tab:e2e}). A parameter study of a launch footprint is a day.
+
+The question this work set out to answer was simply ``how fast can openEMS go on this machine, without changing its
+answers?'' The constraint matters: the solver is used as a design gate, its results are compared to measurements and
+to earlier runs, and a fast engine that moves the answer by a tenth of a decibel is a liability, not an asset. Every
+change to the solver reported here therefore had to reproduce the stock engine's port voltages and currents,
+S-parameters and field dumps to the bit for the same number of time steps (the two exceptions, the GPU engines, as
+Apple's GPU flushes subnormal numbers to zero, and a float accumulation order in the far-field transform, are called
+out where they appear; the fork's own Metal engine is held to the bit against the CPU engine run with the same flush).
+These changes make up a fork of openEMS, which together with the benchmark harness and the verification method used
+to build it is called fdtdKit (emsKit until 2026-11-05, the name its repository keeps; Section~\ref{sec:repro}).
+fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple silicon; the family's other kits
+(femKit, momKit and sbrKit) are not part of this report.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item A benchmark harness that runs the stock and the modified engines in-process on the same models with a fixed
+  number of time steps, waits for a quiet machine, and compares port probes and S-parameters bit for bit; HDF5 field
+  dumps are compared dataset by dataset with \code{scripts/checks/h5cmp.py} (Section~\ref{sec:method}).
+\item A sequence of engine changes, each measured and verified on six models (Section~\ref{sec:engine}): thread
+  barriers and a per-extension hook plan, a rewritten inner loop, work stealing and an automatic thread count, vector
+  paths for the Mur and uniaxial-PML (UPML) boundaries, a fused E/H sweep that lowers the modelled DRAM traffic from
+  74 to 49 bytes per cell, the SSE engines' use of upstream's precomputed dump gather, staggered allocations that
+  avoid an allocation-placement valley, a scalar-SSE path and compressed tables for PML slabs, line hooks for the
+  dispersive-material extension, packed coefficient tables, and thread quality-of-service on macOS. Together
+  (snapshot cg14, against stock v0.37.0 built with Apple clang): 3.2--6.9$\times$ on the four models of up to about a
+  million cells, 1.7--2.5$\times$ on the two of 5--8 million cells, where stock already ran at up to half the bus
+  (Section~\ref{sec:background}). On the patch tutorial about 1.13$\times$ of the 6.9$\times$ comes from the fork's
+  base, upstream's \code{gpu-engine} branch, whose HDF5 writer writes that model's time-domain dumps in the
+  background; on the notch tutorial, the GCPW line and patch x5 the base runs within 0.98--1.03$\times$ of stock
+  (Section~\ref{sec:results}). Snapshot cg18 (patches 0001--0006, the build installed on the author's Mac from
+  2026-11-04 to 2026-11-06) gives 3.1--6.8$\times$ on the same four models against the stock rows of its check
+  tables. Snapshot cg29 (patches 0001--0027, the installed build since 2026-11-06) adds the CPU items of a second
+  review and ideas from other contributors' work (Section~\ref{sec:cg29}): an operator index per z-vector, neighbour
+  flags in place of the two barriers per time step, a y-row path for UPML boxes, merged ADE updates for conducting
+  sheets, geometry coefficient tables and line hooks for the steady-state detection and Debye materials. Paired with
+  stock in the same rounds (cg29 at 8 threads, its best setting; stock at its best of 2, 4 and 8 threads), it runs
+  the four models 4.73--6.89$\times$ and the two large ones 1.95$\times$ and 2.72$\times$ as fast as stock
+  (Table~\ref{tab:current}); paired with cg18 in rounds of its own (5 rounds, other processes on 0.3--0.6 cores; the
+  SMA launch on its 0.871\,M-cell mesh), 1.03--1.23$\times$ as fast at 4 threads and 1.13--1.44$\times$ at 8 over the
+  six models.
+\item Setup and post-processing: a threaded operator construction (4.1\,s to 0.9\,s on the 7.9-million-cell patch
+  model), a far-field transform written as complex matrix products, one per plane and block of directions (17.9\,s to
+  1.0\,s on the same model; this path needs Apple's Accelerate, other builds keep the original loop), and two small
+  CSXCAD changes (times from the project log, not in \code{results/}).
+\item An analysis of the ceiling (Section~\ref{sec:beyond}). On a $201^3$ box the CPU engine (snapshot cg9, 8 threads),
+  upstream's Metal engine from its pre-merge \code{gpu-engine} branch, and a standalone Swift/Metal kernel that runs
+  the exported openEMS operator bit-identically reached 1\,562, 1\,638 and 1\,670\,\MC\ (from the project log, not in
+  \code{results/}). By the traffic model the two Metal kernels move 74\,B per cell (separate E and H passes) and the
+  fused CPU sweep 49\,B, so the GPU drew more of the bus for about the same cell rate; no byte count was measured with
+  hardware counters. On all six test models the CPU engine of cg14 and of cg18 is faster than that Metal engine
+  (Section~\ref{sec:ceiling}). Upstream master's merged Metal engine and luikore's diamond-blocked one were built and
+  run here on 2026-11-04 (Section~\ref{sec:positioning}).
+\item A diamond-blocked Metal engine (\code{--engine=metal-diamond}, opt-in, Apple only; patches 0007--0016,
+  Section~\ref{sec:gpu}) that advances tiles of the grid several time steps at a time, with the tile schedule of
+  luikore's openEMS pull request \#228~\cite{luikore228} (none of its code is used). All six models run on the GPU,
+  identical bit for bit to the multithreaded CPU engine run with \code{OPENEMS\_FTZ=1}; against stock, which keeps
+  subnormal numbers, its port probes differ by $1.7\times10^{-7}$ to $9.4\times10^{-7}$ relative. Paired with the CPU
+  engine of cg29 at its best (Table~\ref{tab:current}) it runs patch x5 and notch x3 1.47$\times$ and 1.46$\times$ as
+  fast and the GCPW line 1.17$\times$, is level on the SMA launch (1.00$\times$, 1.071\,M cells) and slower on the
+  notch and patch tutorials (0.97$\times$ and 0.93$\times$). Across grid sizes (Figure~\ref{fig:crossover}) it leads
+  in every round from 1.7--2.9 million cells on, depending on the model, and by 1.25--1.52$\times$ above 3 million; on
+  smaller grids it waits for the CPU between short calls (the patch tutorial) or runs at a lower rate of its own (the
+  notch tutorial), and the CPU engine is at its fastest between 0.6 and 1.9 million cells. Unblocked, as a fused sweep ($K=1$), the Metal engine runs the two large
+  models at 1\,730--1\,840\,\MC, only 67--75\,\% of that sweep's traffic bound (cg27, medians of paired rounds with
+  2.5--4 cores of other load; \code{results/fused\_sweep\_k1\_2026-11-04.txt}): the blocking carries the gain.
+\item Two modelling-side levers (Section~\ref{sec:modelling}): a run-end criterion on the port probes
+  (Table~\ref{tab:probeend}; the energy criterion stalls on the static charge left behind by openEMS's Gaussian pulse,
+  which has a DC component, so the runs always went to their maximum time; upstream has since added an opt-in DC-free
+  pulse, commit d686f1d, which is not in this work's base), and a mesh-line merging rule with a minimum cell size whose
+  sweep on the SMA launch gives another 2.0$\times$ for 0.12\,dB of $S_{11}$ at $-23$\,dB (Section~\ref{sec:meshfloor}).
+  Since 2026-11-04 the toolkit's defaults use the shorter settings of both (a hold of 0.5 instead of 1; on the SMA
+  launch a 0.05\,mm floor instead of 0.02\,mm); together with
+  the CPU engine of cg18 they cut a complete simulation of the SMA launch from 562.7\,s with stock to 37.4\,s and one
+  of the GCPW line from 76.5\,s to 5.2\,s (Table~\ref{tab:e2e}), and with cg29 the Metal engine ran these runs
+  1.22$\times$ and 1.37$\times$ as fast as the CPU engine (Table~\ref{tab:e2ecg29}, paired per round, on a loaded
+  machine).
+\item A list of things that did not work, with numbers (Section~\ref{sec:rejected}), and the artefact set
+  (Section~\ref{sec:repro}).
+\end{itemize}
+
+\paragraph{Scope.} All numbers are from one machine, an Apple M5 MacBook with 16\,GB, macOS~27.0.1, Apple clang~21,
+except two validation-suite runs made on a Linux virtual machine (Section~\ref{sec:repro}).
+They were measured while the machine was also used for other work (the harness reports the load of other processes
+with every number: sampled in the second before each run and, since the cg27 tables of 2026-11-04, their CPU and GPU
+use during it,
+Section~\ref{sec:method}). Stock openEMS and the fork were both built with Apple
+clang, the default on macOS; upstream's FAQ~\cite{biergaizi29} advises building openEMS with GCC on macOS because
+clang generates inefficient code for the SSE engine. That was measured for the inner loop only, in the standalone
+kernel, which holds a copy of the stock loop and of its rewrite (one thread, three grids outside the valley;
+\code{results/kernel\_gcc\_vs\_clang\_2026-11-03.txt}): GCC~16 runs the stock loop 1.16--1.39$\times$ faster than
+Apple clang, and the rewrite of snapshot AB (Section~\ref{sec:engine}) at about the same speed with both, so against
+a GCC-built stock the rewrite's one-thread gain in the kernel is 1.26--1.47$\times$ instead of 1.74--1.80$\times$. In
+the same kernel the rewrite gives the stock loop's results bit for bit under clang but not under GCC, which contracts
+it differently (Section~\ref{sec:contract}). A GCC build of openEMS itself was not made, so the factors of this paper
+are against stock built with Apple clang, the default compiler on macOS, and the bit-identity checks used clang builds.
+The synchronisation and hook changes do not depend on the compiler. Five details are platform-specific and guarded:
+thread QoS (macOS), the starting point of the automatic thread search (the performance-core count on macOS, half the
+available hardware threads elsewhere; since cg29 the flag waits on macOS spin only while the thread count is at most
+that count, and other CPUs keep the barrier spin time), the separable far-field path (built only with Apple's
+Accelerate; other builds keep the original loop), the opt-in flush-to-zero of subnormals (any arm64 CPU) and the
+Metal diamond engine (Apple only, opt-in, built with \code{ENABLE\_METAL}). The fused sweep's mechanism, fewer
+passes over the fields, is not specific to this CPU, but it was measured only here. The allocation-placement valley
+depends on where the allocator puts the two field arrays and was seen only with the allocator of macOS~27.0.1 on the
+M5 (Section~\ref{sec:valley}); the stagger that avoids it is applied on every platform and costs nothing measurable
+outside the valley.
+
+\section{Background}\label{sec:background}
+
+\subsection{The EC-FDTD update and its memory traffic}
+openEMS stores voltages $v$ (the E-field integrated along a cell edge) and currents $i$ (the H-field integrated along
+a dual edge), three components each, as 32-bit floats, and advances them with the usual leap-frog:
+\begin{align}
+v_n &\leftarrow vv_n\, v_n + vi_n\,(\text{curl of } i \text{ around the edge}), \\
+i_n &\leftarrow ii_n\, i_n + iv_n\,(\text{curl of } v \text{ around the dual edge}),
+\end{align}
+with four coefficients per component and cell. Stock openEMS already keeps the coefficients in a \emph{compressed}
+operator (\code{Operator\_SSE\_Compressed} in v0.37.0): \code{f4vector}s of four cells (Section~\ref{sec:engines})
+whose coefficients agree lane by lane share one entry of a table, and each \code{f4vector} carries a 32-bit index
+into it, 1\,B per cell. The index array itself is allocated with one 32-bit entry per cell, of which one per vector
+is used; on meshes with few z lines the unused entries share cache lines with the used ones, so the engine streams up
+to the full 4\,B per cell (in stock and in the fork up to cg28; cg29 allocates one entry per z-vector,
+Section~\ref{sec:cg29}). The table is small (2\,500--69\,500 entries for the models here, under 14\,MB: 1.5\,MB for
+the tutorials, 13\,MB for the SMA launch; from the project log) and largely cache-resident; the per-cell traffic that
+remains is the fields themselves. With separate E and H passes, each pass reads and writes its own field (12\,B each
+way) and reads the other field (12\,B) from DRAM; with the index that is 37\,B per update and roughly 74 bytes per
+cell and time step. This is a traffic model, not a counter measurement, as are all bytes-per-cell figures in this
+paper; it counts the compact 1\,B of index, and Section~\ref{sec:engine} also gives the figures with the index as
+allocated. At 150\,GB/s, a sweep that moves these 74 bytes per cell from DRAM in every time step runs at
+2\,000\,\MC\ at best~\cite{roofline} (an engine that keeps a tile's fields on chip over several time steps moves fewer,
+Section~\ref{sec:gpu}); the stock engine's 1\,041\,\MC\ on a 7.9-million-cell model is 77\,GB/s, half the bus.
+Smaller models fit in part in a last-level cache
+of a few tens of MB and could in principle run faster; stock ran them \emph{slower} (277--318\,\MC), which is the
+first hint that something other than bandwidth dominated there.
+
+\subsection{Engines, operators, extensions}\label{sec:engines}
+openEMS separates the operator (coefficients and mesh, built once) from the engine (the time loop). The SSE engines
+work on \code{f4vector}s, four floats in one 16-byte vector. With $n_v=\lceil N_z/4\rceil$ z-vectors per z-line, one
+vector holds the cells $z$, $z+n_v$, $z+2n_v$ and $z+3n_v$; the arrays are stored component-fastest (C order
+\code{[x][y][z\_v][component]}, the I-J-K-N layout of Section~\ref{sec:engine}), and the z extent is padded to $4n_v$.
+Boundary conditions, excitations, lumped elements, dispersive materials and the cylindrical multigrid are
+\emph{extensions}, each with up to six hooks per time step (pre-/apply-/post- for voltages and for currents). The
+multithreaded engine splits the x range into one slab per thread and runs each hook of each extension between
+barriers.
+
+\subsection{The machine}
+Apple M5 (2025): 4 performance (P) and 6 efficiency (E) cores, 16\,GB LPDDR5X unified memory, 153\,GB/s
+nominal~\cite{m5}. The GPU has no memory of its own; it competes with the cores for the same bus. We measured the
+ceiling with two standalone kernels (a $200^3$ box with perfect-electric-conductor (PEC) walls, no PML; from the
+project log, not in \code{results/}): a material-table CPU loop reaches 1\,491\,\MC\ at 72 bytes per cell (107\,GB/s)
+and the same kernel in Metal 1\,763\,\MC\ (127\,GB/s). The GPU gets 15--20\,\% more of the bus than the cores, but no
+bandwidth of its own. Everything that follows is therefore about moving fewer bytes, fewer times, with fewer stalls.

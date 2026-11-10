@@ -1,0 +1,10 @@
+# patch_s1_n10500  2026-10-28 10:41
+multithreaded:2                 278.0 MC/s      3.91 s  10500 TS x 0.104 MC  others  58%  runs 278/277  [ref]
+A@multithreaded:1               255.4 MC/s      4.26 s  10500 TS x 0.104 MC  others  48%  runs 254/255  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:4               502.0 MC/s      2.17 s  10500 TS x 0.104 MC  others  51%  runs 502/502  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:8               441.7 MC/s      2.46 s  10500 TS x 0.104 MC  others  53%  runs 442/442  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:10              454.6 MC/s      2.39 s  10500 TS x 0.104 MC  others  45%  runs 452/455  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:1              341.1 MC/s      3.19 s  10500 TS x 0.104 MC  others  52%  runs 341/340  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:4              578.8 MC/s      1.88 s  10500 TS x 0.104 MC  others  54%  runs 576/579  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:8              527.2 MC/s      2.06 s  10500 TS x 0.104 MC  others  49%  runs 527/527  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:10             528.4 MC/s      2.06 s  10500 TS x 0.104 MC  others  50%  runs 526/528  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

@@ -1,0 +1,125 @@
+{
+  "exit" : 0,
+  "invocations" : [
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-u",
+        "-B",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-debye-check-4242\/fdtdkit_run.py",
+        "--repo",
+        "\/work\/emsKit",
+        "--control-fd",
+        "3",
+        "--report",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-debye-check-4242\/launcher-debye.json",
+        "--load",
+        "exec",
+        "--",
+        "\/bin\/zsh",
+        "-f",
+        "\/work\/emsKit\/scripts\/checks\/debye_check.sh",
+        "\/Users\/tester\/opt\/openEMS-dev\/snap\/cg29",
+        "\/Users\/tester\/opt\/openEMS-dev\/snap\/cg18"
+      ],
+      "cwd" : "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-debye-check-4242",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1",
+        "THREADS" : "4",
+        "TMPDIR" : "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-debye-check-4242\/tmp"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : "debye-1",
+      "ran" : false,
+      "role" : "debye",
+      "seconds" : null
+    }
+  ],
+  "jobs" : [
+    {
+      "configs" : [
+        {
+          "cfg" : "cg29",
+          "engine" : "multithreaded",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "87a1d5a960dd353ca97c0ef8704d15e9767eb2c8fbb990eefb4bd162c956a694",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "34e1115017d50f5e0c0aa00320c2946e9956ee551208a51b995e363cdcb4e6e7",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "90a25d09f860f722dac73e998a82aa6d5898e54fa4201a1f86c9ea80ad8b0495",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "cg29"
+          },
+          "nodumps" : false,
+          "threads" : 4
+        },
+        {
+          "cfg" : "cg18",
+          "engine" : "sse-compressed",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "44b6115b20e6ff9654db335257f4fcc1e5a5a2d0e3f3924609dbf965655c701b",
+                "uuid" : "24C8A7F2-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "8d7941283f3e68325fd939106eb3da7379d38be9bf0b918d73dc4c9063202790",
+                "uuid" : "24C8A7F2-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "af0882a89425e24b8dc0422090b5a958720c84317aa470b535a2eb632fab664a",
+                "uuid" : "24C8A7F2-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "cg18"
+          },
+          "nodumps" : false
+        }
+      ],
+      "id" : "debye-1",
+      "inputs" : [
+
+      ],
+      "knobs" : {
+
+      },
+      "options" : {
+        "threads" : "4"
+      },
+      "outputs" : [
+
+      ],
+      "role" : "debye",
+      "tool" : "debye"
+    }
+  ],
+  "status" : "ok"
+}

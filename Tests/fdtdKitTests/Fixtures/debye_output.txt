@@ -1,0 +1,13 @@
+== /Users/tester/opt/openEMS-dev/snap/cg29: basic / sse-compressed / multithreaded(4)
+Speed: 98.3716 MCells/s 
+Speed: 352.915 MCells/s 
+Speed: 1013.62 MCells/s 
+basic vs sse-compressed:
+  volt.f32: max|x| 3.112e-01  max|diff| 0.000e+00  differing values 0/150000
+  curr.f32: max|x| 8.270e-04  max|diff| 0.000e+00  differing values 0/150000
+  IDENTICAL
+sse-compressed vs multithreaded:
+  volt.f32: max|x| 3.112e-01  max|diff| 0.000e+00  differing values 0/150000
+  curr.f32: max|x| 8.270e-04  max|diff| 0.000e+00  differing values 0/150000
+  IDENTICAL
+PASS: every comparison is identical

@@ -1,0 +1,5 @@
+# notch_s1_n16000  2026-11-04 09:06
+cg22@multithreaded:4#OPENEMS_FTZ=1    948.7 MC/s      4.55 s  16000 TS x 0.270 MC  others 124%  busy emskit-phase1:86  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg22@metal-diamond:0#OPENEMS_FTZ=1   1816.3 MC/s      2.38 s  16000 TS x 0.270 MC  others 114%  busy emskit-phase1:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+cg22@gpu                       1622.3 MC/s      2.66 s  16000 TS x 0.270 MC  others 120%  busy emskit-phase1:87  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg22@metal-diamond:0#OPENEMS_FTZ=1, cg22@gpu)

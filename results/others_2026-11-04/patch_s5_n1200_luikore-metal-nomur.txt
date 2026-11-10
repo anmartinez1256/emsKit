@@ -1,0 +1,4 @@
+# patch_s5_n1200  2026-11-04 05:48
+multithreaded:4                 632.4 MC/s     14.92 s  1200 TS x 7.863 MC  others  37%  runs 632/622  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                        3127.8 MC/s      3.02 s  1200 TS x 7.863 MC  others  66%  runs 3094/3128  busy Python:31  probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)

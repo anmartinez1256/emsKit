@@ -1,0 +1,4 @@
+# kgcpw_s1_n15000  2026-11-04 05:32
+multithreaded:4                 224.9 MC/s     16.14 s  15000 TS x 0.242 MC  others  87%  runs 225/215  [ref]  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    222.7 MC/s     16.30 s  15000 TS x 0.242 MC  others  47%  runs 196/223  probes rel=1.3e-06  S11: below -40 dB, compared exactly: max|dS|=6.5e-07  S21: max|dS|=1.0e-06 max dB=6.9e-06  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)

@@ -1,0 +1,4 @@
+# patch_s1_n10500  2026-11-04 06:06
+multithreaded:4                 417.1 MC/s      2.61 s  10500 TS x 0.104 MC  others  81%  runs 417/409  busy mediaanalysisd:33  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                         747.2 MC/s      1.46 s  10500 TS x 0.104 MC  others  55%  runs 747/741  probes rel=3.6e-07  S11: max|dS|=2.7e-07 max dB=3.1e-06  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)

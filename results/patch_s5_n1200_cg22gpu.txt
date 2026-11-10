@@ -1,0 +1,5 @@
+# patch_s5_n1200  2026-11-04 09:08
+cg22@multithreaded:4#OPENEMS_FTZ=1   1310.4 MC/s      7.20 s  1200 TS x 7.863 MC  others 225%  busy emskit-phase1:85,swiftpm-testing-:85,mediaanalysisd:24  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg22@metal-diamond:0#OPENEMS_FTZ=1   2883.6 MC/s      3.27 s  1200 TS x 7.863 MC  others 115%  busy emskit-phase1:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+cg22@gpu                       1490.5 MC/s      6.33 s  1200 TS x 7.863 MC  others 132%  busy emskit-phase1:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg22@metal-diamond:0#OPENEMS_FTZ=1, cg22@gpu)

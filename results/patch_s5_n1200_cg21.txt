@@ -1,0 +1,7 @@
+# patch_s5_n1200  2026-11-04 08:44
+stock@multithreaded:8          1028.9 MC/s      9.17 s  1200 TS x 7.863 MC  others  51%  [ref]  openEMS v0.37.0
+cg21@multithreaded:4           1572.5 MC/s      6.00 s  1200 TS x 7.863 MC  others  68%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@multithreaded:8           1690.9 MC/s      5.58 s  1200 TS x 7.863 MC  others  53%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@fastest                   1629.6 MC/s      5.79 s  1200 TS x 7.863 MC  others  67%  (auto-picked 7 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0           2873.4 MC/s      3.28 s  1200 TS x 7.863 MC  others 121%  busy swift-frontend:85  probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg21@metal-diamond:0)

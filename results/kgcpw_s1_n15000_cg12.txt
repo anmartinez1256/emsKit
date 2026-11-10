@@ -1,0 +1,7 @@
+# kgcpw_s1_n15000  2026-10-29 05:31
+stock@multithreaded:4           303.5 MC/s     11.96 s  15000 TS x 0.242 MC  others   9%  runs 302/304  [ref]
+cg12@multithreaded:1            507.0 MC/s      7.16 s  15000 TS x 0.242 MC  others  23%  runs 504/507  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:4           1621.3 MC/s      2.24 s  15000 TS x 0.242 MC  others  16%  runs 1621/1613  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:8           1315.1 MC/s      2.76 s  15000 TS x 0.242 MC  others  19%  runs 1309/1315  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:10          1071.0 MC/s      3.39 s  15000 TS x 0.242 MC  others  15%  runs 1071/1007  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@fastest                   1383.5 MC/s      2.62 s  15000 TS x 0.242 MC  others   8%  runs 1384/1383  (auto-picked 4 threads)  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

@@ -1,0 +1,16 @@
+# patch_s5_n1200  2026-10-28 08:29
+# note (2026-11-03, final review): this table compares S11 only ([S-ref] = the basic engine); the other three step-1
+# tables also compare the port probes ("probes rel").
+basic                           156.7 MC/s     60.23 s  1200 TS x 7.863 MC  others  50%  runs 140/157  [S-ref]
+sse                             265.0 MC/s     35.60 s  1200 TS x 7.863 MC  others  43%  runs 265/233  S11: max|dS|=0.0e+00 max dB=0.0e+00
+sse-compressed                  394.3 MC/s     23.93 s  1200 TS x 7.863 MC  others  59%  runs 371/394  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:1                 398.3 MC/s     23.69 s  1200 TS x 7.863 MC  others  43%  runs 348/398  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:2                 726.3 MC/s     12.99 s  1200 TS x 7.863 MC  others  50%  runs 695/726  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:3                 964.7 MC/s      9.78 s  1200 TS x 7.863 MC  others  42%  runs 827/965  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4                1005.9 MC/s      9.38 s  1200 TS x 7.863 MC  others  35%  runs 1006/765  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:5                 887.6 MC/s     10.63 s  1200 TS x 7.863 MC  others  48%  runs 886/888  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:6                1002.7 MC/s      9.41 s  1200 TS x 7.863 MC  others  39%  runs 941/1003  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:8                1041.4 MC/s      9.06 s  1200 TS x 7.863 MC  others  53%  runs 1041/959  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:10                954.0 MC/s      9.89 s  1200 TS x 7.863 MC  others  51%  runs 895/954  S11: max|dS|=0.0e+00 max dB=0.0e+00
+fastest                         615.5 MC/s     15.33 s  1200 TS x 7.863 MC  others  32%  runs 606/615  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4+nodumps        1013.4 MC/s      9.31 s  1200 TS x 7.863 MC  others  55%  runs 1013/973  S11: max|dS|=0.0e+00 max dB=0.0e+00

@@ -1,0 +1,191 @@
+=== patch_s5_n1200: OPENEMS_BENCH_BC=PEC;PEC;PEC;PEC;PEC;PEC
+=== emskit: python3 emskit --configs stock@multithreaded:8 cg18@multithreaded:4 cg18@fastest
+# patch_s5_n1200  load avg 8.41
+stock@multithreaded:8          1119.2 MC/s      8.43 s  1200 TS x 7.863 MC  others  88%  runs 1060/1119  busy Python:30  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4           1564.7 MC/s      6.03 s  1200 TS x 7.863 MC  others  32%  runs 1412/1565  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1519.3 MC/s      6.21 s  1200 TS x 7.863 MC  others  27%  runs 1519/962  (auto-picked 6 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+IDENTICAL: every run of 3 configs equals the reference
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s5_n1200_emskit-nomur.txt
+=== emskit: exit 0
+=== master: /Users/anmar/opt/openEMS-master/venv/bin/python3 master --configs multithreaded:4 gpu
+# patch_s5_n1200  load avg 12.80
+multithreaded:4                 866.4 MC/s     10.89 s  1200 TS x 7.863 MC  others  21%  runs 866/682  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            1635.2 MC/s      5.77 s  1200 TS x 7.863 MC  others  55%  runs 1578/1635  probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s5_n1200_master-nomur.txt
+=== master: exit 0
+=== luikore-metal: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-metal --configs multithreaded:4 metal:4
+# patch_s5_n1200  load avg 16.37
+multithreaded:4                 632.4 MC/s     14.92 s  1200 TS x 7.863 MC  others  37%  runs 632/622  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                        3127.8 MC/s      3.02 s  1200 TS x 7.863 MC  others  66%  runs 3094/3128  busy Python:31  probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s5_n1200_luikore-metal-nomur.txt
+=== luikore-metal: exit 0
+=== luikore-legacy: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-legacy --configs multithreaded:4 metal:4#OPENEMS_METAL_FUSED_PIPELINE=0
+# patch_s5_n1200  load avg 11.54
+multithreaded:4                 867.2 MC/s     10.88 s  1200 TS x 7.863 MC  others  81%  runs 867/811  busy mediaanalysisd:38  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0   1471.9 MC/s      6.41 s  1200 TS x 7.863 MC  others  46%  runs 1472/1449  probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s5_n1200_luikore-legacy-nomur.txt
+=== luikore-legacy: exit 0
+# patch_s5_n1200  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/patch_s5_n1200/stock_multithreaded_t8/rep0
+emskit/patch_s5_n1200/cg18_multithreaded_t4/rep0             probes rel=0.0e+00  S11: identical
+emskit/patch_s5_n1200/cg18_fastest/rep0                      probes rel=0.0e+00  S11: identical
+master/patch_s5_n1200/multithreaded_t4/rep0                  probes rel=0.0e+00  S11: identical
+master/patch_s5_n1200/gpu/rep0                               probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07
+luikore-metal/patch_s5_n1200/multithreaded_t4/rep0           probes rel=0.0e+00  S11: identical
+luikore-metal/patch_s5_n1200/metal_t4/rep0                   probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07
+luikore-legacy/patch_s5_n1200/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07
+=== notch_s3_n2000: OPENEMS_BENCH_BC=PML_8;PML_8;PEC;PEC;PEC;PEC
+=== emskit: python3 emskit --configs stock@multithreaded:8 cg18@multithreaded:4 cg18@fastest
+# notch_s3_n2000  load avg 10.00
+stock@multithreaded:8           726.3 MC/s     14.45 s  2000 TS x 5.247 MC  others  62%  runs 726/547  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0
+cg18@multithreaded:4           1655.3 MC/s      6.34 s  2000 TS x 5.247 MC  others  53%  runs 1555/1655  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   2002.8 MC/s      5.24 s  2000 TS x 5.247 MC  others  38%  runs 2003/2003  (auto-picked 8 threads)  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+IDENTICAL: every run of 3 configs equals the reference
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s3_n2000_emskit-nomur.txt
+=== emskit: exit 0
+=== master: /Users/anmar/opt/openEMS-master/venv/bin/python3 master --configs multithreaded:4 gpu
+# notch_s3_n2000  load avg 7.77
+multithreaded:4                 812.3 MC/s     12.92 s  2000 TS x 5.247 MC  others  97%  runs 812/750  busy Python:43  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-40-g5fecbb5
+gpu                            1660.6 MC/s      6.32 s  2000 TS x 5.247 MC  others  36%  runs 1661/1627  probes rel=3.0e-07 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=2.3e-08 max dB=5.4e-06  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s3_n2000_master-nomur.txt
+=== master: exit 0
+=== luikore-metal: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-metal --configs multithreaded:4 metal:4
+# notch_s3_n2000  load avg 9.40
+multithreaded:4                 552.9 MC/s     18.98 s  2000 TS x 5.247 MC  others  31%  runs 532/553  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                        3734.3 MC/s      2.81 s  2000 TS x 5.247 MC  others  43%  runs 3734/3643  probes rel=2.4e-07 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=9.9e-09 max dB=2.3e-06  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s3_n2000_luikore-metal-nomur.txt
+=== luikore-metal: exit 0
+=== luikore-legacy: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-legacy --configs multithreaded:4 metal:4#OPENEMS_METAL_FUSED_PIPELINE=0
+# notch_s3_n2000  load avg 13.54
+multithreaded:4                 722.3 MC/s     14.53 s  2000 TS x 5.247 MC  others  90%  runs 527/722  busy Python:67  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0   1380.9 MC/s      7.60 s  2000 TS x 5.247 MC  others  51%  runs 1356/1381  probes rel=2.4e-07 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=9.9e-09 max dB=2.3e-06  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s3_n2000_luikore-legacy-nomur.txt
+=== luikore-legacy: exit 0
+# notch_s3_n2000  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/notch_s3_n2000/stock_multithreaded_t8/rep0
+emskit/notch_s3_n2000/cg18_multithreaded_t4/rep0             probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+emskit/notch_s3_n2000/cg18_fastest/rep0                      probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+master/notch_s3_n2000/multithreaded_t4/rep0                  probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+master/notch_s3_n2000/gpu/rep0                               probes rel=3.0e-07 (5 files all zero in the reference)  S11: max|dS|=2.3e-08 max dB=5.4e-06  S21: identical
+luikore-metal/notch_s3_n2000/multithreaded_t4/rep0           probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+luikore-metal/notch_s3_n2000/metal_t4/rep0                   probes rel=2.4e-07 (5 files all zero in the reference)  S11: max|dS|=9.9e-09 max dB=2.3e-06  S21: identical
+luikore-legacy/notch_s3_n2000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=2.4e-07 (5 files all zero in the reference)  S11: max|dS|=9.9e-09 max dB=2.3e-06  S21: identical
+=== patch_s1_n10500: OPENEMS_BENCH_BC=PEC;PEC;PEC;PEC;PEC;PEC
+=== emskit: python3 emskit --configs stock@multithreaded:2 cg18@multithreaded:4 cg18@fastest
+# patch_s1_n10500  load avg 11.47
+stock@multithreaded:2           380.8 MC/s      2.86 s  10500 TS x 0.104 MC  others  72%  runs 335/381  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4           1920.7 MC/s      0.57 s  10500 TS x 0.104 MC  others  48%  runs 1921/1886  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1724.7 MC/s      0.63 s  10500 TS x 0.104 MC  others  69%  runs 1714/1725  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+IDENTICAL: every run of 3 configs equals the reference
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s1_n10500_emskit-nomur.txt
+=== emskit: exit 0
+=== master: /Users/anmar/opt/openEMS-master/venv/bin/python3 master --configs multithreaded:4 gpu
+# patch_s1_n10500  load avg 3.58
+multithreaded:4                 568.1 MC/s      1.92 s  10500 TS x 0.104 MC  others  56%  runs 565/568  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            1157.6 MC/s      0.94 s  10500 TS x 0.104 MC  others  54%  runs 1149/1158  probes rel=2.7e-07  S11: max|dS|=2.2e-07 max dB=1.7e-06  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s1_n10500_master-nomur.txt
+=== master: exit 0
+=== luikore-metal: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-metal --configs multithreaded:4 metal:4
+# patch_s1_n10500  load avg 3.07
+multithreaded:4                 417.1 MC/s      2.61 s  10500 TS x 0.104 MC  others  81%  runs 417/409  busy mediaanalysisd:33  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                         747.2 MC/s      1.46 s  10500 TS x 0.104 MC  others  55%  runs 747/741  probes rel=3.6e-07  S11: max|dS|=2.7e-07 max dB=3.1e-06  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s1_n10500_luikore-metal-nomur.txt
+=== luikore-metal: exit 0
+=== luikore-legacy: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-legacy --configs multithreaded:4 metal:4#OPENEMS_METAL_FUSED_PIPELINE=0
+# patch_s1_n10500  load avg 2.92
+multithreaded:4                 319.4 MC/s      3.41 s  10500 TS x 0.104 MC  others  50%  runs 319/247  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    181.1 MC/s      6.01 s  10500 TS x 0.104 MC  others  33%  runs 150/181  probes rel=3.6e-07  S11: max|dS|=2.7e-07 max dB=3.1e-06  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/patch_s1_n10500_luikore-legacy-nomur.txt
+=== luikore-legacy: exit 0
+# patch_s1_n10500  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/patch_s1_n10500/stock_multithreaded_t2/rep0
+emskit/patch_s1_n10500/cg18_multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical
+emskit/patch_s1_n10500/cg18_fastest/rep0                     probes rel=0.0e+00  S11: identical
+master/patch_s1_n10500/multithreaded_t4/rep0                 probes rel=0.0e+00  S11: identical
+master/patch_s1_n10500/gpu/rep0                              probes rel=2.7e-07  S11: max|dS|=2.2e-07 max dB=1.7e-06
+luikore-metal/patch_s1_n10500/multithreaded_t4/rep0          probes rel=0.0e+00  S11: identical
+luikore-metal/patch_s1_n10500/metal_t4/rep0                  probes rel=3.6e-07  S11: max|dS|=2.7e-07 max dB=3.1e-06
+luikore-legacy/patch_s1_n10500/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=3.6e-07  S11: max|dS|=2.7e-07 max dB=3.1e-06
+=== notch_s1_n16000: OPENEMS_BENCH_BC=PML_8;PML_8;PEC;PEC;PEC;PEC
+=== emskit: python3 emskit --configs stock@multithreaded:4 cg18@multithreaded:4 cg18@fastest
+# notch_s1_n16000  load avg 3.22
+stock@multithreaded:4           395.3 MC/s     10.92 s  16000 TS x 0.270 MC  others  62%  runs 395/392  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4           2053.1 MC/s      2.10 s  16000 TS x 0.270 MC  others  52%  runs 1964/2053  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1810.5 MC/s      2.38 s  16000 TS x 0.270 MC  others  58%  runs 1810/1810  (auto-picked 4 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+IDENTICAL: every run of 3 configs equals the reference
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s1_n16000_emskit-nomur.txt
+=== emskit: exit 0
+=== master: /Users/anmar/opt/openEMS-master/venv/bin/python3 master --configs multithreaded:4 gpu
+# notch_s1_n16000  load avg 3.48
+multithreaded:4                 398.6 MC/s     10.83 s  16000 TS x 0.270 MC  others  93%  runs 399/289  busy mediaanalysisd:40  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            2374.3 MC/s      1.82 s  16000 TS x 0.270 MC  others  43%  runs 1452/2374  probes rel=1.0e-06  S11: max|dS|=1.7e-06 max dB=2.6e-04  S21: max|dS|=2.4e-06 max dB=3.4e-05  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s1_n16000_master-nomur.txt
+=== master: exit 0
+=== luikore-metal: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-metal --configs multithreaded:4 metal:4
+# notch_s1_n16000  load avg 3.85
+multithreaded:4                 292.6 MC/s     14.75 s  16000 TS x 0.270 MC  others  24%  runs 267/293  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                        3010.9 MC/s      1.43 s  16000 TS x 0.270 MC  others  61%  runs 2847/3011  probes rel=9.5e-07  S11: max|dS|=2.6e-06 max dB=2.0e-04  S21: max|dS|=3.0e-06 max dB=2.4e-05  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s1_n16000_luikore-metal-nomur.txt
+=== luikore-metal: exit 0
+=== luikore-legacy: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-legacy --configs multithreaded:4 metal:4#OPENEMS_METAL_FUSED_PIPELINE=0
+# notch_s1_n16000  load avg 3.52
+multithreaded:4                 316.2 MC/s     13.65 s  16000 TS x 0.270 MC  others  71%  runs 316/280  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    468.7 MC/s      9.21 s  16000 TS x 0.270 MC  others  99%  runs 465/469  busy Python:88  probes rel=9.5e-07  S11: max|dS|=2.6e-06 max dB=2.0e-04  S21: max|dS|=3.0e-06 max dB=2.4e-05  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/notch_s1_n16000_luikore-legacy-nomur.txt
+=== luikore-legacy: exit 0
+# notch_s1_n16000  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/notch_s1_n16000/stock_multithreaded_t4/rep0
+emskit/notch_s1_n16000/cg18_multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical  S21: identical
+emskit/notch_s1_n16000/cg18_fastest/rep0                     probes rel=0.0e+00  S11: identical  S21: identical
+master/notch_s1_n16000/multithreaded_t4/rep0                 probes rel=0.0e+00  S11: identical  S21: identical
+master/notch_s1_n16000/gpu/rep0                              probes rel=1.0e-06  S11: max|dS|=1.7e-06 max dB=2.6e-04  S21: max|dS|=2.4e-06 max dB=3.4e-05
+luikore-metal/notch_s1_n16000/multithreaded_t4/rep0          probes rel=0.0e+00  S11: identical  S21: identical
+luikore-metal/notch_s1_n16000/metal_t4/rep0                  probes rel=9.5e-07  S11: max|dS|=2.6e-06 max dB=2.0e-04  S21: max|dS|=3.0e-06 max dB=2.4e-05
+luikore-legacy/notch_s1_n16000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=9.5e-07  S11: max|dS|=2.6e-06 max dB=2.0e-04  S21: max|dS|=3.0e-06 max dB=2.4e-05
+=== kgcpw_s1_n15000: skipped (NOMUR: no MUR-free variant)
+=== ksma_s1_n6000: OPENEMS_BENCH_BC=PEC;PEC;PEC;PEC;PEC;PML_8
+=== emskit: python3 emskit --configs stock@multithreaded:4 cg18@multithreaded:4 cg18@fastest
+# ksma_s1_n6000  load avg 5.27
+stock@multithreaded:4           292.2 MC/s     17.89 s  6000 TS x 0.871 MC  others  86%  runs 292/288  busy WindowServer:21  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4            767.6 MC/s      6.81 s  6000 TS x 0.871 MC  others  47%  runs 768/762  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1207.2 MC/s      4.33 s  6000 TS x 0.871 MC  others  50%  runs 1196/1207  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+IDENTICAL: every run of 3 configs equals the reference
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/ksma_s1_n6000_emskit-nomur.txt
+=== emskit: exit 0
+=== master: /Users/anmar/opt/openEMS-master/venv/bin/python3 master --configs multithreaded:4 gpu
+# ksma_s1_n6000  load avg 7.02
+multithreaded:4                 390.7 MC/s     13.38 s  6000 TS x 0.871 MC  others  92%  runs 391/389  busy mediaanalysisd:39  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            1204.4 MC/s      4.34 s  6000 TS x 0.871 MC  others  63%  runs 1180/1204  probes rel=3.6e-07  S11: max|dS|=1.1e-07 max dB=8.5e-06  S21: max|dS|=5.0e-08 max dB=7.6e-07  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/ksma_s1_n6000_master-nomur.txt
+=== master: exit 0
+=== luikore-metal: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-metal --configs multithreaded:4 metal:4
+# ksma_s1_n6000  load avg 5.27
+multithreaded:4                 385.2 MC/s     13.57 s  6000 TS x 0.871 MC  others  43%  runs 385/385  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                        1265.7 MC/s      4.13 s  6000 TS x 0.871 MC  others  47%  runs 1266/1266  probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/ksma_s1_n6000_luikore-metal-nomur.txt
+=== luikore-metal: exit 0
+=== luikore-legacy: /Users/anmar/opt/openEMS-luikore/venv/bin/python3 luikore-legacy --configs multithreaded:4 metal:4#OPENEMS_METAL_FUSED_PIPELINE=0
+# ksma_s1_n6000  load avg 4.55
+multithreaded:4                 393.0 MC/s     13.30 s  6000 TS x 0.871 MC  others  56%  runs 393/113  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    484.0 MC/s     10.80 s  6000 TS x 0.871 MC  others  38%  runs 444/484  probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)
+wrote /Users/anmar/Developer/emsKit/results/others_2026-11-04/ksma_s1_n6000_luikore-legacy-nomur.txt
+=== luikore-legacy: exit 0
+# ksma_s1_n6000  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/ksma_s1_n6000/stock_multithreaded_t4/rep0
+emskit/ksma_s1_n6000/cg18_multithreaded_t4/rep0              probes rel=0.0e+00  S11: identical  S21: identical
+emskit/ksma_s1_n6000/cg18_fastest/rep0                       probes rel=0.0e+00  S11: identical  S21: identical
+master/ksma_s1_n6000/multithreaded_t4/rep0                   probes rel=1.5e-04  S11: max|dS|=3.4e-05 max dB=3.4e-03  S21: max|dS|=2.3e-05 max dB=4.8e-04
+master/ksma_s1_n6000/gpu/rep0                                probes rel=1.5e-04  S11: max|dS|=3.4e-05 max dB=3.4e-03  S21: max|dS|=2.3e-05 max dB=4.8e-04
+luikore-metal/ksma_s1_n6000/multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical  S21: identical
+luikore-metal/ksma_s1_n6000/metal_t4/rep0                    probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07
+luikore-legacy/ksma_s1_n6000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07

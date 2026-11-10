@@ -1,0 +1,13 @@
+# notch_s1_n16000  2026-10-28 09:28
+basic                            50.7 MC/s     85.21 s  16000 TS x 0.270 MC  others  51%  runs 50/51  [ref]
+sse                             117.3 MC/s     36.79 s  16000 TS x 0.270 MC  others  56%  runs 117/114  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+sse-compressed                  133.1 MC/s     32.43 s  16000 TS x 0.270 MC  others  37%  runs 133/133  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:1                 133.3 MC/s     32.39 s  16000 TS x 0.270 MC  others  53%  runs 133/132  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:2                 228.1 MC/s     18.92 s  16000 TS x 0.270 MC  others  33%  runs 228/228  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:3                 301.0 MC/s     14.34 s  16000 TS x 0.270 MC  others  28%  runs 298/301  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4                 317.9 MC/s     13.58 s  16000 TS x 0.270 MC  others  34%  runs 301/318  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:5                 268.4 MC/s     16.08 s  16000 TS x 0.270 MC  others  41%  runs 268/268  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:6                 236.4 MC/s     18.26 s  16000 TS x 0.270 MC  others  27%  runs 234/236  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:8                 215.9 MC/s     19.99 s  16000 TS x 0.270 MC  others  28%  runs 211/216  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:10                178.2 MC/s     24.22 s  16000 TS x 0.270 MC  others  50%  runs 178/173  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+fastest                         246.5 MC/s     17.51 s  16000 TS x 0.270 MC  others  24%  runs 244/247  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

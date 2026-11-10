@@ -1,0 +1,5 @@
+# notch_s1_n3000  2026-11-03 10:12
+cg17@gpu                       1257.5 MC/s      0.64 s  3000 TS x 0.270 MC  others 221%  busy Python:74,Python:72,Python:24  [ref]
+cg17@multithreaded:2#OPENEMS_FTZ=1    467.2 MC/s      1.73 s  3000 TS x 0.270 MC  others 186%  busy Python:64,Python:62  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg17@multithreaded:2            484.9 MC/s      1.67 s  3000 TS x 0.270 MC  others 232%  busy Python:85,Python:84,Python:23  probes rel=3.2e-07  S11: max|dS|=2.4e-08 max dB=9.3e-06
+cg17@sse-compressed#OPENEMS_FTZ=1    186.1 MC/s      4.35 s  3000 TS x 0.270 MC  others 237%  busy Python:85,Python:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

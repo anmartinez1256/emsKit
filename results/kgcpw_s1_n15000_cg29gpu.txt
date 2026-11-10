@@ -1,0 +1,4 @@
+# kgcpw_s1_n15000  2026-11-05 02:40
+cg29@multithreaded:4           1861.0 MC/s      1.95 s  15000 TS x 0.242 MC  others  51%  during 2.3 s: self cpu 367% gpu>=0.00 s, others cpu 42% gpu 5%, gpu dev 4%  [ref]  openEMS v0.37.0-44-g074a687
+cg29@metal-diamond:0           2100.5 MC/s      1.73 s  15000 TS x 0.242 MC  others  51%  during 2.0 s: self cpu 32% gpu>=1.33 s, others cpu 43% gpu 2%, gpu dev 98%  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-44-g074a687
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg29@metal-diamond:0)

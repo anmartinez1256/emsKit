@@ -1,0 +1,9 @@
+# notch_s1_n8000  2026-10-29 05:13
+# note (2026-11-03, final review): on this mesh (235 x 82 x 14 lines) openEMS resets the z PML to PEC
+# ("Operator_Ext_UPML::Create_UPML: Warning: Not enough lines in direction: 2, resetting to PEC"), so these runs had
+# PML_8 on the four x and y faces and PEC at both z ends, not PML on six faces. Checked on 2026-11-03 with a 20-step
+# stock run at 1 thread: four PML boxes, each spanning all 14 z lines.
+stock@multithreaded:4#OPENEMS_BENCH_BC=PML_8;PML_8;PML_8;PML_8;PML_8;PML_8    172.9 MC/s     12.48 s  8000 TS x 0.270 MC  others 123%  busy swift-frontend:87  [ref]
+cg12@multithreaded:4#OPENEMS_BENCH_BC=PML_8;PML_8;PML_8;PML_8;PML_8;PML_8    816.3 MC/s      2.64 s  8000 TS x 0.270 MC  others 107%  busy swift-frontend:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:8#OPENEMS_BENCH_BC=PML_8;PML_8;PML_8;PML_8;PML_8;PML_8   1155.2 MC/s      1.87 s  8000 TS x 0.270 MC  others 105%  busy swift-frontend:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:1#OPENEMS_BENCH_BC=PML_8;PML_8;PML_8;PML_8;PML_8;PML_8    409.5 MC/s      5.27 s  8000 TS x 0.270 MC  others 105%  busy swift-frontend:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

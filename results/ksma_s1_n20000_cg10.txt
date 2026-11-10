@@ -1,0 +1,5 @@
+# ksma_s1_n20000  2026-10-29 04:22
+stock@multithreaded:4           320.3 MC/s     66.87 s  20000 TS x 1.071 MC  others  92%  runs 320/294  busy WindowServer:28,Claude Helper:22  [ref]
+cg10@multithreaded:4            435.8 MC/s     49.15 s  20000 TS x 1.071 MC  others 122%  runs 436/357  busy WindowServer:47,com.apple.WebKit:33  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@multithreaded:8            436.0 MC/s     49.13 s  20000 TS x 1.071 MC  others 188%  runs 421/436  busy swift-frontend:82,WindowServer:35,com.apple.WebKit:25,com.apple.WebKit:21  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@fastest                    473.5 MC/s     45.24 s  20000 TS x 1.071 MC  others  34%  runs 473/412  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

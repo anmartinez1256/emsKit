@@ -1,0 +1,221 @@
+\section{Positioning: fdtdKit and other electromagnetic solvers}\label{sec:positioning}
+fdtdKit makes one open-source solver faster on one class of machine; it does not widen what openEMS can model. This
+section places it against the tools an RF engineer would otherwise use, so that the speed-ups of
+Section~\ref{sec:results} are not read as a claim they do not make. No commercial solver was run for this report;
+the comparisons with them below are qualitative or, where a number appears, a roofline bound~\cite{roofline} computed
+from published hardware figures, not a measurement.
+
+\paragraph{Commercial solvers.} Industrial RF design runs mostly on commercial packages. Ansys HFSS solves
+Maxwell's equations in the frequency domain with the finite-element method on an automatically and adaptively
+refined tetrahedral mesh~\cite{hfssmesh}; this suits high-$Q$ resonators, curved geometry and fine features that a
+Cartesian staircase mesh resolves poorly. CST Studio Suite offers, among several solvers, a time-domain
+finite-integration solver closely related to FDTD, with GPU acceleration~\cite{cstgpu}; Remcom XFdtd is an FDTD
+solver with GPU acceleration as well~\cite{xfdtd}. Beyond the solvers, these packages bring CAD import, automatic
+meshing with convergence control, parameter optimisation, a graphical front end, vendor validation and support.
+fdtdKit touches none of this: model setup, meshing and post-processing are openEMS's and the author's scripts.
+
+\paragraph{Raw speed.} Section~\ref{sec:ceiling} shows that the CPU engine runs close to what the cores can draw from
+memory. A commercial FDTD/FIT solver on a data-centre GPU is therefore bounded far higher: an NVIDIA H100 SXM has
+3.35\,TB/s of memory bandwidth~\cite{h100}, which at the 74 bytes per cell of an unfused update is a roofline bound of
+about 45\,000\,\MC, some 20 times the M5's bound for the same traffic (Section~\ref{sec:ceiling}). Real codes reach a
+fraction of their roofline, and we have no measurement of any commercial code, but on large models fdtdKit should not
+be expected to match such a system. Its comparison class is a laptop or desktop without a licence.
+
+\paragraph{Open-source solvers.} Among free tools, MEEP~\cite{meep} is the reference FDTD code for photonics and
+gprMax~\cite{gprmax} for ground-penetrating radar; openEMS is the usual choice for PCB-scale RF and antenna work,
+largely for its Matlab/Octave and Python interfaces. fdtdKit keeps openEMS's interfaces unchanged and its results bit
+for bit identical to stock for the same number of time steps (Section~\ref{sec:method}), so existing scripts gain the
+speed-up without modification (for SAR the two Python modules must be rebuilt against the new libraries,
+\code{BUILD.md} section 6). That holds for the CPU engines, which stay the default. The opt-in Metal engine
+(\code{--engine=metal-diamond}, Section~\ref{sec:gpu}) is bit-identical to the multithreaded CPU engine run with
+\code{OPENEMS\_FTZ=1}, not to stock, because Apple's GPU flushes subnormal floats to zero; against stock its port
+probes differ by $1.7\times10^{-7}$ to
+$9.4\times10^{-7}$ relative (Section~\ref{sec:policy}). A script that ends on the energy end criterion can stop at a
+different step than stock v0.37.0, because the fork's base checks that criterion on a different schedule (upstream
+commit eb1c5ee, Section~\ref{sec:policy}); for the same number of steps the records are identical.
+
+\paragraph{Prior work on FDTD and openEMS performance.} That low-order FDTD is bound by memory bandwidth on
+multicore CPUs, and that the remedy is to reuse data in cache, is well established: Cessenat reports a more than
+twofold reduction from cache-aware restructuring of the Sophie code~\cite{sophie}, and temporal (time-space) tiling
+of FDTD and of stencils in general has been studied extensively~\cite{fukaya2018,malas2015}. For openEMS itself, an
+openEMS contributor (GitHub user \code{biergaizi}) has documented the engine's synchronisation and memory-traffic
+bottlenecks and developed an experimental tiling engine, reported bit-identical to the multithreaded engine, with
+speed-ups of about 2--6$\times$ reported in the project's discussion forum~\cite{biergaizi154,biergaizi29}; at the
+time of writing that work is not merged. fdtdKit's CPU engine reaches a comparable range by a different route (fewer
+barriers, a leaner inner loop, a fused single-pass sweep, the allocation stagger and the dispersive-material hooks)
+without temporal tiling. Two time steps per sweep gained 10--14\,\% in our first standalone kernel, which ran the stock
+arithmetic (invariants hoisted, the 12 coefficient tables) as a fused sweep on one independent sub-grid per thread
+(project log; Section~\ref{sec:rejected}); with the current engine's loops in the same set-up, trapezoidal blocking of
+two to four steps per sweep (after MrHighVoltage's fork, next paragraph) gained at most 6\,\% as an upper bound, measured
+without halo lines or extension hooks (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2), so the CPU engine
+stays unblocked, and wavefront or diamond blocking was not tried on the CPU. The Metal engine of
+Section~\ref{sec:gpu} does block over time steps, in diamond tiles on the schedule of another contributor's Metal
+engine (next paragraph). Both fdtdKit's CPU factors and the 2--6$\times$ above are measured against stock openEMS, whose
+sweep is unfused, and the two approaches are not exclusive. The FAQ~\cite{biergaizi29} also advises macOS users to
+build openEMS with GCC rather than clang. The stock baseline of this report is the default clang build, and openEMS
+was not built with GCC; in the standalone kernel at one thread GCC~16 runs the stock inner loop 1.16--1.39$\times$
+faster than Apple clang and the rewritten one at about the same speed (the inner-loop item of
+Section~\ref{sec:engine}). fdtdKit was also built on upstream's GPU work: the pre-merge \code{gpu-engine} branch at
+commit 7bb294f (2026-10-12), whose GPU engine Sean Mollet added (commit bf30fa4, 2026-10-08) with follow-up work by
+Thorsten Liebig, and whose gather and asynchronous dumps the fork uses (Section~\ref{sec:dumps}). The branch at
+7bb294f alone runs the patch tutorial 1.13$\times$ faster than stock (both at their best), through its asynchronous
+dump writer, so fdtdKit's 6.9$\times$ there (cg14, Table~\ref{tab:final}) includes about 1.13$\times$ from upstream; on
+the notch tutorial, the GCPW line and patch x5 it runs at 0.98--1.03$\times$ stock (Section~\ref{sec:results}).
+Upstream has since merged a reworked GPU engine, with a region-based gather, into master (c3a956b) and deleted the
+branch; the merged engine was measured here on 2026-11-04 (below).
+
+\paragraph{Concurrent work on openEMS speed.} In the weeks before and during this work, other contributors posted
+speed work on openEMS, much of it, like this one, written with AI assistants. The list gives what their authors
+posted, as of 2026-11-04: the numbers in it are their own, from other machines and models, and do not compare directly
+with Table~\ref{tab:final}. When the list was written none of this work had been built or run here; later that day
+two of the GPU engines were, on the six benchmark models (the paragraph after the list). The CPU pull requests, the
+fork of Discussion \#492 and the SYCL backend were not built or run, but cg29 builds on three of them, credited in
+Section~\ref{sec:cg29}: it takes the UPML part of \#244 by Noriaki Takashima (nori-proto), and it follows the
+strict-order check of \#245 by Roel Bud\'e (unsettledroell404) and the lumped-RLC state slots indexed by the time step
+that MrHighVoltage proposed in Discussion \#492.
+\begin{itemize}
+\item \textbf{A Metal engine with diamond blocking} (luikore, openEMS pull request \#228, opened
+  2026-09-29~\cite{luikore228}), not merged. It advances a space-time diamond of four time steps per block; fdtdKit's
+  Metal engine (Section~\ref{sec:gpu}) follows its tile schedule, without using any of its code. On a uniform grid
+  with one dielectric box and PEC walls it reports 5\,752 and 4\,042\,\MC\ on an Apple M4 Pro (3.0 and 17.0 million
+  cells) and 14\,734 and 11\,532\,\MC\ on an M5 Max, 1.9--6.3$\times$ the best multithreaded CPU run on the same
+  machine. Its own unfused path ran at 2\,216\,\MC\ against 2\,455 for the CPU at 3.0 million cells on the M4 Pro, in
+  line with Section~\ref{sec:ceiling}: on these machines the blocking, not the GPU as such, carries the gain. Its
+  author calls the uniform grid Metal's best case and expects real PCB geometry to lose much of the speed-up. The
+  engine is Cartesian only, a model with ADE materials (which include openEMS's conducting sheets,
+  Section~\ref{sec:engine}) aborts on its default path, and its fields are checked against the SSE engine within
+  relative-L2 limits, not bit for bit.
+\item \textbf{Upstream's GPU engine} (Sean Mollet~\cite{mollet235}): the Metal and HIP engine that this work measured
+  on the pre-merge branch (Section~\ref{sec:ceiling}) went into master as c3a956b on 2026-10-17. The merged version
+  was measured here on 2026-11-04 (below).
+\item \textbf{CPU engine changes with identical results.} Pull request \#231 (ismailakdag, opened
+  2026-10-05~\cite{akdag231}) lets the multithreaded engine skip the barriers of extension hooks that have nothing to
+  do, the idea behind this work's hook plan, and walks the SSE UPML loops along z; its outputs are bitwise identical
+  on 24 setups, and it reports 1.2$\times$ (Mur) to 5$\times$ (PML-heavy) at one thread on a Ryzen~9 7900X and
+  1.30--1.67$\times$ on an M5 Pro on an earlier base. A fork by MrHighVoltage (Discussion \#492,
+  2026-10-26~\cite{mrhv492}) adds an AVX2 engine (x86 only), trapezoidal temporal blocking on the CPU and the GPU,
+  barrier elision (552 to 189 barriers per time step), a thread tuner that scores real time steps, an asynchronous
+  dump writer and a Vulkan GPU engine; it reports 1.7--4.45$\times$ multithreaded against upstream's SSE engine on
+  x86 machines, with results bit-identical or differing by float32 rounding. Smaller pull requests multithread the
+  Lorentz and Debye updates (\#245~\cite{pr245}) and the UPML and Debye coefficient setup (\#244~\cite{pr244}), both
+  near items of Section~\ref{sec:engine}, and shorten the mesh-delta lookup (\#230~\cite{pr230}). A SYCL backend for
+  Intel GPUs (\#243~\cite{sycl243}) fuses the voltage and current steps where the extensions allow.
+\item \textbf{Upstream's plan} (Thorsten Liebig, Discussion \#495, 2026-10-31~\cite{thliebig495}): first a
+  refactoring that separates the mesh geometry from the coefficient storage, with the speed pull requests on hold
+  until it is done; then GPU kernels written once and shared by all backends. Fused voltage and current steps,
+  asynchronous dump writing and temporal blocking are to go into that shared code once, temporal blocking last. Speed
+  claims are to be measured with the \code{benchmark} tool of master against the existing engine on the same machine.
+\end{itemize}
+
+\paragraph{Two of these engines on the M5.} On 2026-11-04 upstream master at 5fecbb5 (2026-11-02), with its CPU engine
+and \code{--engine=gpu} (the Metal backend of c3a956b), and luikore's pull request at 55ce11b, with its diamond path
+and its legacy two-dispatch path (\code{OPENEMS\_METAL\_FUSED\_PIPELINE=0}), were built and run on the six benchmark
+models next to stock and cg18 (\code{results/others\_2026-11-04/README.md}). The runs used this report's
+\code{bench.py} (fixed step counts, the faster of two runs, port probes and $S$-parameters compared with stock), not
+master's \code{benchmark} tool that Discussion \#495 asks for. Other work shared the Mac (a KiCad render loop from
+another session at about 950\,\% CPU in bursts, Spotlight indexing), the other processes' GPU use was not measured,
+and from about 06:00 another session was developing fdtdKit's Metal engine and may have used the GPU in the later runs,
+so the numbers are rough. The SMA launch there has the 0.871\,M-cell mesh of the toolkit's current default, not the
+1.071\,M cells of Table~\ref{tab:final}. luikore's diamond path refused all six models before the first step, with the
+message that the Mur extension (on the GCPW line the conducting-sheet extension) ``has not migrated to the diamond
+wavefront''; its legacy path, which that message reserves for diagnostic runs, ran them at 172--884\,\MC, below cg18
+on every model. With every Mur face replaced by PEC (speed-only test cases, whose $S$-parameters are not those of the
+real models; the GCPW line is left out, its sheets being refused too), the diamond path ran patch x5 and notch x3 at
+3\,128 and 3\,734\,\MC, 2.00 and 1.86 times cg18's CPU engine, the notch tutorial at 1.47, the SMA launch at 1.05 and
+the patch tutorial at 0.39 times, and at 2.1 to 6.4 times its own legacy path: on the M5, too, the blocking carries
+the gain. Master's GPU engine ran the six models as they are at 0.42 to 1.06 times cg18: about level on patch x5
+(1\,529 against 1\,510\,\MC) and on the SMA launch (1\,084 against 1\,019), 0.82 times on the GCPW line, and slowest
+relative to cg18 on the patch tutorial (782 against 1\,856). On the PEC variant of the notch tutorial (0.270\,M cells)
+it ran at 2\,374\,\MC\ against cg18's 2\,053, the faster of its two runs (1.82\,s, other processes at 43\,\% of a core
+in the second before it; the other run at 1\,452\,\MC;
+\code{notch\_s1\_n16000\_master-nomur.txt} in that folder), above the roughly 2\,000\,\MC\ that 74\,B per cell allow
+from the M5's memory (Section~\ref{sec:background}); whether its kernels fuse the two half steps or this small model
+stays in the GPU's caches was not examined. cg18 was identical to stock in every run, and so were
+master's and luikore's CPU engines, except master's on the SMA launch (probes $1.5\times10^{-4}$ relative, $S_{11}$
+$3.4\times10^{-3}$\,dB), a change in master since v0.37.0 that its GPU engine shows too. Apart from that, the GPU
+engines differed from stock by $1.7\times10^{-7}$ to $1.3\times10^{-6}$ in the probes and by at most
+$2.6\times10^{-4}$\,dB in the $S$-parameters (notch tutorial; within $3\times10^{-5}$\,dB elsewhere): master's on five
+models by the same printed figures as fdtdKit's Metal engine (Section~\ref{sec:policy}), and luikore's two paths, on
+the PEC variants, by the same figures as each other. None of them was compared with a CPU run with
+\code{OPENEMS\_FTZ=1}. fdtdKit's Metal engine was not run on the PEC variants, and luikore's diamond path refused the
+models as they are (its legacy path ran them), so the two diamond engines have not been compared head to head.
+
+Against this background the parts of fdtdKit that we have not found elsewhere are narrower than its speed-ups: the
+acceptance rule applied throughout (bit identity on six models, with the closed-form validation suite and its
+negative controls; Sections~\ref{sec:method} and~\ref{sec:repro}), the allocation-placement valley of the macOS
+allocator, which slows stock openEMS too (Section~\ref{sec:valley}), the measured ceiling of one base-M5 memory bus
+for the CPU and for the unfused GPU engine of the fork's base (Section~\ref{sec:ceiling}), with a fused and a
+diamond-blocked Metal sweep
+measured against it, and a diamond-blocked Metal engine that runs all six models on the GPU with every extension they
+use (Mur and UPML boundaries, lumped ports, conducting sheets; Drude/Lorentz and Debye materials as well), bit-identical
+to the CPU engine run with \code{OPENEMS\_FTZ=1} (Section~\ref{sec:gpu}).
+
+\paragraph{Where fdtdKit stands.} For printed-circuit-board RF models on the CPU of Apple silicon, fdtdKit is to our
+knowledge the fastest configuration of openEMS reported that keeps stock's results bit for bit: 3.2--6.9$\times$ stock
+on the four models of up to about a million cells with snapshot cg14 (Table~\ref{tab:final}, the SMA launch on its
+1.071\,M-cell mesh; Table~\ref{tab:current} has the current build), and, with the modelling levers of Section~\ref{sec:modelling}, 15$\times$ end to end on the
+SMA launch with the toolkit's defaults since 2026-11-04 (the 0.05\,mm mesh floor and a hold of 0.5, against stock's
+full run on the 0.02\,mm mesh; cg18, Table~\ref{tab:e2e}), or 5.8$\times$ with the toolkit's defaults until
+2026-11-04 (0.02\,mm and a hold of 1). On the GPU its opt-in Metal engine keeps the CPU engine's results bit for bit
+when the CPU run also flushes subnormals, runs all six models on the GPU with every extension they use
+(Section~\ref{sec:gpu}), and runs notch x3 and patch x5 at 3\,226 and 2\,917\,\MC\ (cg28, medians of five paired
+rounds on a quiet Mac: other processes on 0.5--1.3 cores and 2--4\,\% of the GPU;
+\code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}), where cg18's CPU engine reached 2\,046 and 1\,716 at
+best on 2026-11-03 (\code{results/*\_cg18.txt}). Of the other GPU engines measured on the M5, luikore's diamond path
+refused all six models and master's ran them at 0.42 to 1.06 times cg18's CPU engine. Whether diamond blocking on the
+GPU keeps its gain on a base M5 and on PCB models is answered for fdtdKit's engine: on the M5 the fused, unblocked
+Metal sweep, with its best tile, ran notch x3 and patch x5 at 0.58 and 0.65 times the blocked one (paired runs, other
+processes on 2.5--4 cores) and the SMA launch (0.871\,M cells) and the GCPW line at 0.74 and 0.77 times (the faster
+of two unpaired runs, other processes
+on 3.3--5.6 cores; \code{results/fused\_sweep\_k1\_2026-11-04.txt}).
+
+What is not shown: luikore's reported 4\,042--14\,734\,\MC\ on the M4 Pro and the M5 Max have no like-for-like fdtdKit
+figure, because fdtdKit was not run on luikore's model or machines and its diamond path ran here only on the PEC variants, next to
+cg18's CPU engine and not next to fdtdKit's Metal engine; and master's GPU engine, about level with cg18's CPU engine
+on patch x5 and the SMA launch, was not compared with cg29 or with fdtdKit's Metal engine. fdtdKit closes none of the
+functional gaps listed above; closing some of them (Cartesian sub-gridding, conformal conductors, automatic mesh
+convergence, PCB import) is the natural continuation and would need a different acceptance rule than bit identity,
+since stock openEMS has no reference to be identical to.
+
+\subsection{Outlook: clusters of Apple-silicon machines}\label{sec:cluster}
+This subsection is an outlook: no cluster was built or run. Apart from the memory figures, which were measured for
+this report on small boxes, its numbers are published hardware figures or arithmetic on them. The result of
+Section~\ref{sec:ceiling} (on one machine the CPU engine is limited by one memory bus) points to the natural way to
+scale: add buses. Every Mac mini or Mac Studio brings its own unified memory and its own bus, and since macOS 26.2
+machines connected by Thunderbolt~5 can exchange data by remote direct memory access (RDMA)~\cite{rdmatb5}, over
+links with a nominal rate of 80\,Gb/s (real throughput is lower). Published figures for current machines: a Mac mini
+with M5 Pro has up to 64\,GB at 307\,GB/s~\cite{macmini}; a Mac Studio with M5 Ultra up to 512\,GB at
+1.2\,TB/s~\cite{studiom5}.
+
+\paragraph{Parameter studies.} Two simulations side by side on one machine gain nothing, because they share the bus
+(Section~\ref{sec:rejected}). On separate machines they do not, so a sweep or an optimisation run spread over $n$
+machines should scale close to $n$ with no change to the engine, only a job dispatcher. This is the cheapest use of a
+cluster and the one most RF design work needs.
+
+\paragraph{One large model.} openEMS had an MPI engine for domain decomposition up to v0.0.36, but it had not compiled
+for years (it used the C++ MPI bindings that MPI-3 removed), and upstream removed it before v0.37.0 (commit 5261463,
+2026-09-16). A model split across machines therefore needs a new domain-decomposed engine, which could carry the
+fork's engine changes from the start. One fork has tried an x-slab split of one model across two GPUs with
+host-staged halo exchange (td-krzysiek, described in Discussion \#495~\cite{thliebig495}); upstream's maintainer
+replied there that multi-device engines are not a priority and that optimising the mesh usually pays more.
+The arithmetic is favourable. During the time loop a plain cell holds about 28 bytes (six float field components and a
+4-byte operator index), but the operator setup peaks near 100 bytes per cell, about 124 with a field-dump or nf2ff
+box, and on a Mac the two share the same memory (measured for this report with snapshot cg18 at 2 threads on boxes of
+up to $64^3$ cells; \code{results/memory\_per\_cell\_2026-11-03.txt}). cg29 allocates the operator index once per
+z-vector of four cells instead of once per cell, about 3 bytes per cell less (patch 0017; not measured on these
+boxes). Memory alone would therefore allow about four to five billion cells on one 512\,GB Mac Studio, before the
+operating system's share; but the arrays use 32-bit sizes, and the code refuses meshes above about 4.29 billion nodes,
+or 1.43 billion with field dumps, an nf2ff box, conducting sheets or the basic engine or \code{--engine=gpu};
+\code{--engine=metal-diamond} keeps a model on the GPU only below $2^{32}$ floats per field array (about 1.43 billion
+nodes) and up to 65\,535 lines in x or y, and runs the one-thread CPU loops above that (Section~\ref{sec:gpu}). A setup
+that does not hold the whole mesh at once, and 64-bit sizes, would move the limit towards the run state. At equal
+bytes per cell, 512\,GB is 6.4 times the 80\,GB of an H100. With the domain split into slabs, each half step exchanges
+one plane of tangential fields per neighbour: for a $1000^3$-cell model on four machines that is about 8\,MB per
+interface and half step, 16\,MB per step, about 1.6\,ms at the nominal link rate (more at the real throughput),
+against roughly ten milliseconds of update per step if each machine ran at the bandwidth roofline. With the exchange
+overlapped with the interior update, four M5 Ultra machines would offer an aggregate bus of about 4.8\,TB/s, above the
+3.35\,TB/s of one H100~\cite{h100}. Two caveats: whether the CPU cores of an Ultra-class chip can draw on the whole
+bus, and how far the Metal engine gets there, have to be measured (on the M5 a fused, unblocked Metal sweep stayed
+near the fused CPU sweep, and only the diamond-blocked one ran the large models clearly faster,
+Section~\ref{sec:gpu}); and the bit-identity rule carries over naturally, since a domain decomposition need not change
+any cell's arithmetic, so a distributed run can be checked against a single-machine run to the bit.

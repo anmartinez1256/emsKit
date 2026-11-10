@@ -1,0 +1,10 @@
+# notch_s1_n16000  2026-10-28 10:48
+multithreaded:4                 326.5 MC/s     13.22 s  16000 TS x 0.270 MC  others  49%  runs 327/324  [ref]
+A@multithreaded:1               133.7 MC/s     32.29 s  16000 TS x 0.270 MC  others  51%  runs 134/134  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:4               434.7 MC/s      9.93 s  16000 TS x 0.270 MC  others  53%  runs 435/428  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:8               525.8 MC/s      8.21 s  16000 TS x 0.270 MC  others  49%  runs 521/526  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:10              573.2 MC/s      7.53 s  16000 TS x 0.270 MC  others  45%  runs 564/573  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:1              146.9 MC/s     29.39 s  16000 TS x 0.270 MC  others  51%  runs 146/147  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:4              471.2 MC/s      9.16 s  16000 TS x 0.270 MC  others  50%  runs 467/471  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:8              609.7 MC/s      7.08 s  16000 TS x 0.270 MC  others  57%  runs 605/610  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:10             668.2 MC/s      6.46 s  16000 TS x 0.270 MC  others  52%  runs 656/668  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

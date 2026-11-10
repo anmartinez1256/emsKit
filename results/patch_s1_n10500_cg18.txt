@@ -1,0 +1,12 @@
+# patch_s1_n10500  2026-11-03 12:59
+# note (2026-11-03, final review): the full check of the final build (cg18 = patches 0001-0006,
+# v0.37.0-24-g087ce9e) against stock v0.37.0: bench/check.sh cg18 cg18 (1, 4, 8 and 10 threads and the automatic
+# choice 'fastest', --repeat 2 --quiet 60) on a quiet Mac ('others' = the other processes' CPU during the run,
+# 100 % = one core). 'fastest' names the thread count it picked when its search ended within the run.
+stock@multithreaded:2           275.1 MC/s      3.96 s  10500 TS x 0.104 MC  others  60%  runs 275/275  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:1            682.1 MC/s      1.60 s  10500 TS x 0.104 MC  others  52%  runs 682/681  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:4           1880.4 MC/s      0.58 s  10500 TS x 0.104 MC  others  53%  runs 1880/1863  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:8           1580.3 MC/s      0.69 s  10500 TS x 0.104 MC  others  53%  runs 1580/1570  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:10          1560.8 MC/s      0.70 s  10500 TS x 0.104 MC  others  56%  runs 1461/1561  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1504.4 MC/s      0.72 s  10500 TS x 0.104 MC  others  55%  runs 1493/1504  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 6 configs equals the reference

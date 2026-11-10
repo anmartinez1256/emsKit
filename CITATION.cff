@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use fdtdKit, its measurements or its patches, please cite it as below."
+type: software
+title: "fdtdKit: taking openEMS towards the memory ceiling of an Apple M5"
+abstract: >-
+  A bit-identical speed-up of the EC-FDTD engine of openEMS on Apple Silicon, a GPU engine with diamond-shaped
+  temporal blocks, the benchmark harness, the measured tables, the paper and the command line emskit fdtd.
+authors:
+  - family-names: Martinez
+    given-names: Angel
+    affiliation: University of Texas at Austin
+license: GPL-3.0-or-later
+repository-code: "https://github.com/anmartinez1256/emsKit"
+keywords:
+  - FDTD
+  - openEMS
+  - computational electromagnetics
+  - Apple Silicon
+  - Metal
+  - GPU

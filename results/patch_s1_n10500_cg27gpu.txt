@@ -1,0 +1,6 @@
+# 2026-11-04 20:13-20:19, OPENEMS_FTZ=1 for both configs; dev26f = snapshot cg27 (4127e1e, byte-identical library). The
+# version string printed (v0.37.0-26-gcd80d8c) is the one cmake wrote when the build directory was configured (cg20).
+# patch_s1_n10500  load avg 14.79
+dev26f@multithreaded:4          844.4 MC/s      1.29 s  10500 TS x 0.104 MC  others 213%  busy Python:78,emskit:78  during 1.7 s: self cpu 211% gpu>=0.00 s, others cpu 281% gpu 5%, gpu dev 6% [emskit:99/0,kicad-cli:33/0,Python:99/0]  [ref]  openEMS v0.37.0-26-gcd80d8c
+dev26f@metal-diamond:0         1477.5 MC/s      0.74 s  10500 TS x 0.104 MC  others 652%  busy kicad-cli:463,Python:62,emskit:61,kernel_task:24  during 1.2 s: self cpu 63% gpu>=0.20 s, others cpu 403% gpu 7%, gpu dev 56% [emskit:96/0,WindowServer:39/6,kicad-cli:29/0,replayd:25/0,Messages:27/0,Python:96/0]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+NOTHING REQUIRED TO MATCH: every compared config is tolerant (dev26f@metal-diamond:0)

@@ -1,0 +1,7 @@
+# ksma_s1_n6000  2026-11-04 08:48
+stock@multithreaded:4           234.0 MC/s     22.34 s  6000 TS x 0.871 MC  others 221%  busy swiftpm-testing-:86,emskit-phase1:86  [ref]  openEMS v0.37.0
+cg21@multithreaded:4            640.6 MC/s      8.16 s  6000 TS x 0.871 MC  others 219%  busy emskit-phase1:84,swiftpm-testing-:84  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@multithreaded:8            737.3 MC/s      7.09 s  6000 TS x 0.871 MC  others 297%  busy emskit-phase1:84,swiftpm-testing-:83,emskit-phase1:83  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@fastest                    742.5 MC/s      7.04 s  6000 TS x 0.871 MC  others 280%  busy emskit-phase1:83,emskit-phase1:83,swiftpm-testing-:83  (auto-picked 7 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0           1303.5 MC/s      4.01 s  6000 TS x 0.871 MC  others 284%  busy swiftpm-testing-:83,emskit-phase1:83,emskit-phase1:82  probes rel=2.2e-07  S11: max|dS|=9.3e-08 max dB=1.0e-05  S21: max|dS|=7.3e-08 max dB=1.3e-06  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg21@metal-diamond:0)

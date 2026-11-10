@@ -1,0 +1,3 @@
+# kgcpw_s1_n8000  2026-10-29 04:06
+multithreaded:1                 171.6 MC/s     11.28 s  8000 TS x 0.242 MC  others 174%  busy swift-frontend:87,WindowServer:40,com.apple.WebKit:23  [ref]
+multithreaded:1#OPENEMS_FTZ=1    172.5 MC/s     11.22 s  8000 TS x 0.242 MC  others 171%  busy swift-frontend:87,WindowServer:33,com.apple.WebKit:33  probes rel=4.1e-07  S21: max|dS|=2.1e-08 max dB=1.8e-06

@@ -1,0 +1,6 @@
+# ksma_s1_n20000  2026-10-29 04:51
+stock@multithreaded:4           417.5 MC/s     51.30 s  20000 TS x 1.071 MC  others 140%  runs 418/332  busy duetexpertd:70,WindowServer:23  [ref]
+cg11@multithreaded:1            405.1 MC/s     52.88 s  20000 TS x 1.071 MC  others  32%  runs 360/405  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@multithreaded:4            736.6 MC/s     29.08 s  20000 TS x 1.071 MC  others  98%  runs 737/728  busy swift-frontend:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@multithreaded:8            951.2 MC/s     22.52 s  20000 TS x 1.071 MC  others  94%  runs 951/801  busy swift-frontend:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg11@fastest                   1065.1 MC/s     20.11 s  20000 TS x 1.071 MC  others  32%  runs 1065/964  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

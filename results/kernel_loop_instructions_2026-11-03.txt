@@ -1,0 +1,41 @@
+# kernel_loop_instructions_2026-11-03.txt: instructions per iteration of the inner z-loops of the voltage and current
+# updates (one iteration = the three field components of one z-vector of four cells), counted in the disassembly.
+# scripts/kernel/loop_insns.py with the libraries of stock v0.37.0 (snapshot stock) and of the final build (snapshot
+# cg18 = patches 0001-0006, v0.37.0-24-g087ce9e), 2026-11-03 14:20, macOS 27.0.1, Apple M5.
+# The kernel (scripts/kernel/kb_idx.cpp) holds a copy of v0.37.0's loop ("stock") and the rewrite with the 12 separate
+# coefficient tables ("clean"); the fork's library reads packed tables (patch 0003), hence its fewer load instructions.
+# A compiler emits several copies of a z-loop. Which copy runs was measured on the kernel by sampling the program
+# counter (scripts/kernel/pc_sampler.cpp): the copies with lane operations hold the z-vector-0 code and the y-loop around
+# it (about 10 % of the samples at 40 x 40 x 40, one z-vector in ten), GCC's y = 0 copy of the clean voltage loop gets
+# about 2 %, and GCC's 73- and 75-instruction copies of the stock loop got no sample at all: its stock loop that runs
+# has 82 / 80 instructions. In the libraries (Apple clang) the steady-state loop is the only copy without lane
+# operations, as in the clang kernel. Loads from the stack are reloads of spilled registers.
+# Reading: clang gives every store through the f4vector union the TBAA type 'omnipotent char' (it may alias any
+# object), so the stock loop, which reads strides and table pointers through the array objects, reloads them after
+# the stores: 42-44 loads per iteration, of which 21 are the vector loads. The rewrite keeps them in local variables
+# and __restrict pointers. GCC's stock loop does not reload them: 29 loads, the 21 vector loads, the operator index
+# and 7 reloads of spilled registers.
+# clang: Apple clang version 21.0.0 (clang-2100.3.34.2)
+# gcc:   g++-16 (Homebrew GCC 16.2.0) 16.2.0
+# kernel runs: KB_ONE=1 kb_idx 6000 40 40 40 (steps Nx Ny Nz) under pc_sampler.cpp
+# per function: the steady-state loop's instructions, load instructions (of them vector loads, loads from the
+# stack), store instructions; then every copy: instructions [lane ops] (share of the function's samples; copies
+# can share addresses, so the shares can add up to more than 100 %)
+# function                                    ins  ld vec  sp  st   copies
+kernel, clang: UpdateVoltages_stock            92  42  21   0   6   104 [lane 2] (10.0 %)  92 (89.5 %)
+kernel, clang: UpdateCurrents_stock            94  43  21   0   6   105 [lane 4] (10.5 %)  94 (88.9 %)
+kernel, clang: UpdateVoltages_clean            44  19  18   0   3   74 [lane 2] (10.8 %)  57 [lane 2] (11.8 %)  44 (87.9 %)
+kernel, clang: UpdateCurrents_clean            45  18  17   0   3   45 (89.5 %)  53 [lane 2] (0.0 %)
+kernel, gcc: UpdateVoltages_stock              82  29  21   7   6   73 (0.0 %)  82 (77.8 %)
+kernel, gcc: UpdateCurrents_stock              80  29  21   7   6   75 (0.0 %)  80 (80.8 %)
+kernel, gcc: UpdateVoltages_clean              46  20  19   0   3   44 (1.5 %)  46 (86.9 %)
+kernel, gcc: UpdateCurrents_clean              45  19  18   0   3   45 (90.2 %)
+stock v0.37.0 library: UpdateVoltages          94  44  21   0   6   105 [lane 2]  94
+stock v0.37.0 library: UpdateCurrents          95  44  21   0   6   106 [lane 4]  95
+fork library: UpdateVoltages_IJKN              41  16  15   0   3   67 [lane 2]  53 [lane 2]  41
+fork library: UpdateCurrents_IJKN              42  15  14   0   3   42  50 [lane 2]
+# clang IR (-S -emit-llvm) of the kernel: TBAA type of the vector stores (whole function, z-vector 0 included)
+kernel, clang IR: UpdateVoltages_stock   12 vector stores of type 'omnipotent char'
+kernel, clang IR: UpdateCurrents_stock   12 vector stores of type 'omnipotent char'
+kernel, clang IR: UpdateVoltages_clean   6 vector stores of type 'omnipotent char'
+kernel, clang IR: UpdateCurrents_clean   9 vector stores of type 'omnipotent char'

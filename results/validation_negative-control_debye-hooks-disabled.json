@@ -1,0 +1,52 @@
+{
+ "meta": {
+  "tag": "negative-control_debye-hooks-disabled",
+  "date": "2026-11-03T06:40:51",
+  "host": "vm",
+  "machine": "x86_64",
+  "system": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+  "engine": "fastest",
+  "threads": "0",
+  "openems_module": "/usr/local/lib/python3.13/site-packages/openEMS/__init__.py",
+  "lib_path": "/opt/openEMS-bug/lib:/opt/openEMS/lib",
+  "quick": false
+ },
+ "timings": {
+  "slab": 3.2
+ },
+ "results": [
+  {
+   "case": "slab_debye",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.42503342187285337,
+   "reference": 0.0,
+   "error": 0.42503342187285337,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": false,
+   "note": "mean 0.3459; distance from non-dispersive answer 0.00"
+  },
+  {
+   "case": "slab_drude",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.02009270635051758,
+   "reference": 0.0,
+   "error": 0.02009270635051758,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0156; distance from non-dispersive answer 0.72"
+  },
+  {
+   "case": "slab_lorentz",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.01532048758575074,
+   "reference": 0.0,
+   "error": 0.01532048758575074,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0088; distance from non-dispersive answer 0.77"
+  }
+ ]
+}

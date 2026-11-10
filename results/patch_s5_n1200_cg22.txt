@@ -1,0 +1,7 @@
+# patch_s5_n1200  2026-11-04 09:02
+stock@multithreaded:8           913.4 MC/s     10.33 s  1200 TS x 7.863 MC  others 127%  busy emskit-phase1:88  [ref]  openEMS v0.37.0
+cg22@multithreaded:4           1328.9 MC/s      7.10 s  1200 TS x 7.863 MC  others 141%  busy emskit-phase1:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg22@multithreaded:8           1531.7 MC/s      6.16 s  1200 TS x 7.863 MC  others 138%  busy emskit-phase1:86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg22@fastest                   1483.5 MC/s      6.36 s  1200 TS x 7.863 MC  others 124%  busy emskit-phase1:85  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg22@metal-diamond:0           2874.0 MC/s      3.28 s  1200 TS x 7.863 MC  others 119%  busy emskit-phase1:85  probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg22@metal-diamond:0)

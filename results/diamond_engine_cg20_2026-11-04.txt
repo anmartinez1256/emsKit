@@ -1,0 +1,28 @@
+Diamond-blocked Metal engine, lumped RLC on the GPU (snapshot cg20), 2026-11-04
+===============================================================================
+Build: cg19 (315acee) + the lumped RLC stage in FDTD/metal/engine_metal_diamond.mm (per tile, in the engine's Apply
+order with the Mur faces; one state record per element: Il, Vd[n-1], Vd[n-2], J[n-1], J[n-2]) + friend declarations
+in engine_ext_lumpedRLC.h / operator_ext_lumpedRLC.h. The CPU code is unchanged (the two friend lines generate no
+code), so check.sh was not re-run; cg19's check (all 6 models identical to stock) stands for the CPU paths.
+
+1. Bit identity, box tests (scripts/checks/diamond_check.sh on cg20): PASS, 24 of 24 comparisons, the CPU reference
+   = multithreaded engine, 4 threads, OPENEMS_FTZ=1. New case: MUR/PEC/PMC box, 1500 timesteps, delayed E and soft H
+   excitations, 16 lumped elements of the RLC extension (parallel RLC along z, series RLC along x, series LC along
+   y), K = 1, 2, 3, 4, 8 and tile 7,0 / 96 threads / batch 3.
+
+2. The two patch models now run on the GPU (Mur + lumped port + nf2ff dumps; tables patch_s1_n10500_cg20gpu.txt and
+   patch_s5_n1200_cg20gpu.txt beside this file; reference = cg20 multithreaded with OPENEMS_FTZ=1)
+   | model (cells)            | CPU FTZ ref, same load | metal-diamond | upstream gpu | cg18 CPU best, quiet (*_cg18) |
+   | patch tutorial (0.10 M)  |  851 (4 thr)           | 1244          | 1098         | 1880 (4 thr)                  |
+   | patch x5 (7.86 M)        | 1342 (8 thr)           | 2719          | 1338         | 1716 (8 thr)                  |
+   metal-diamond vs the FTZ reference: port probes rel 0, S11 max|dS| 0 (both models). nf2ff time-domain dumps
+   (scripts/checks/h5cmp.py): patch tutorial 984 datasets, 0 differences; patch x5 120 datasets, 0 differences, when
+   both runs set OPENEMS_FTZ=1. With FTZ on the CPU run only, 27 of the tutorial's 984 dump datasets differed: the
+   dumps are computed on the creating thread, which OPENEMS_FTZ also flushes; the fields themselves were identical.
+   The Mac was loaded during these runs (another Python process at 140-470 % CPU, a palace run at 85 %): the speeds
+   are rough; the cg18 column is from a quiet Mac.
+   Observation, to be followed up: upstream's GPU engine (--engine=gpu) also gave probes rel 0 and S11 max|dS| 0 vs the
+   FTZ CPU reference on both patch models (earlier comparisons were against stock without FTZ).
+
+3. Still on the CPU loops (the message names the extension, 50-step runs): notch tutorial, notch x3, SMA launch:
+   "Uniaxial PML Extension"; GCPW line: "Conducting Sheet Extension".

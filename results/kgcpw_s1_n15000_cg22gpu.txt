@@ -1,0 +1,5 @@
+# kgcpw_s1_n15000  2026-11-04 09:06
+cg22@multithreaded:4#OPENEMS_FTZ=1    761.0 MC/s      4.77 s  15000 TS x 0.242 MC  others 243%  busy swiftpm-testing-:84,emskit-phase1:84,mediaanalysisd:28  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg22@metal-diamond:0#OPENEMS_FTZ=1   1464.5 MC/s      2.48 s  15000 TS x 0.242 MC  others 206%  busy emskit-phase1:84,swiftpm-testing-:84  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+cg22@gpu                       1328.5 MC/s      2.73 s  15000 TS x 0.242 MC  others 123%  busy emskit-phase1:86  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg22@metal-diamond:0#OPENEMS_FTZ=1, cg22@gpu)

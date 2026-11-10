@@ -1,0 +1,130 @@
+From ae21bd18dece1daff3f45fc35ec4d8a223d4b42e Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 01:51:09 -0600
+Subject: [PATCH 24/27] Multithreaded engine: OPENEMS_FUSED_STAT, the time
+ split of the fused sweep per thread
+
+OPENEMS_FUSED_STAT=1 times every thread of the fused sweep: its sweep, the wait at the first barrier, the
+currents of the line before its slab and the wait at the second barrier, summed since the slabs were set up
+and printed when the thread count changes or the engine is reset. A diagnostic only (the timing is one
+branch on a static flag per timestep when it is off); it showed where 8 threads lose time on the Apple M5
+(at 8 threads the threads waited 24-27 % of every timestep at the barriers on the patch x5, notch x3, SMA
+and GCPW models, under about 1.4 cores of other load), which the neighbour flags of a later commit address.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp | 43 +++++++++++++++++++++++++++++++++++--
+ FDTD/engine_multithread.h   |  7 +++++-
+ 2 files changed, 47 insertions(+), 3 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index aa7de62..187715f 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -78,6 +78,7 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_auto_threads = false;
+ 	m_Fused = false;
+ 	m_FusedStat = 0;
++	m_FusedStatThreads = 0;
+ 	m_Balance = false;
+ 	m_stopThreads = true;
+ }
+@@ -184,8 +185,10 @@ void Engine_Multithread::Reset()
+ 		m_VoltRange = 0;
+ 		delete[] m_CurrRange;
+ 		m_CurrRange = 0;
++		PrintFusedStat();
+ 		delete[] m_FusedStat;
+ 		m_FusedStat = 0;
++		m_FusedStatThreads = 0;
+ 		delete m_startBarrier;
+ 		m_startBarrier = 0;
+ 		delete m_stopBarrier;
+@@ -589,10 +592,13 @@ void Engine_Multithread::SetupFused()
+ 		b = std::min(b, nb-(m_numThreads-t));
+ 		m_SlabBlocks[t] = b;
+ 	}
++	PrintFusedStat();
+ 	delete[] m_FusedStat;
+ 	m_FusedStat = new FusedStat[m_numThreads];
++	m_FusedStatThreads = m_numThreads;
+ 	for (unsigned int t=0; t<m_numThreads; ++t)
+-		m_FusedStat[t].busy = m_FusedStat[t].lines = 0;
++		m_FusedStat[t].busy = m_FusedStat[t].lines = m_FusedStat[t].sweep = m_FusedStat[t].wait1 = m_FusedStat[t].bound =
++			m_FusedStat[t].wait2 = m_FusedStat[t].steps = 0;
+ 	m_LineCost.clear();
+ 	const char* bal = getenv("OPENEMS_BALANCE");
+ 	m_Balance = (m_numThreads>1) && !(bal && *bal && (atoi(bal)==0));
+@@ -661,14 +667,47 @@ void Engine_Multithread::FusedTimestep(int threadID)
+ 		FusedCurrents((x0==start) ? x0 : x0-1, x1-1);
+ 	}
+ 	FusedStat& stat = m_FusedStat[threadID];
+-	stat.busy += std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
++	const std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
++	stat.busy += std::chrono::duration<double>(t1-t0).count();
+ 	stat.lines += m_Blocks[b1]-start;
++	static const bool timing = EnvFlag("OPENEMS_FUSED_STAT");
++	if (timing)
++	{
++		stat.sweep += std::chrono::duration<double>(t1-t0).count();
++		m_IterateBarrier->wait();
++		const std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
++		if (start>0)
++			FusedCurrents(start-1, start);
++		const std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
++		m_IterateBarrier->wait(&numTS);
++		stat.wait1 += std::chrono::duration<double>(t2-t1).count();
++		stat.bound += std::chrono::duration<double>(t3-t2).count();
++		stat.wait2 += std::chrono::duration<double>(std::chrono::steady_clock::now()-t3).count();
++		++stat.steps;
++		return;
++	}
+ 	m_IterateBarrier->wait();
+ 	if (start>0)
+ 		FusedCurrents(start-1, start);
+ 	m_IterateBarrier->wait(&numTS);
+ }
+ 
++void Engine_Multithread::PrintFusedStat() const
++{
++	if (!m_FusedStat || (m_FusedStatThreads==0) || (m_FusedStat[0].steps==0))
++		return;
++	cout << "Fused sweep timing (OPENEMS_FUSED_STAT), " << m_FusedStatThreads << " threads, " << m_FusedStat[0].steps << " timesteps, ms per thread"
++		 << " (sweep / wait 1 / line before the slab / wait 2):" << endl;
++	for (unsigned int t=0; t<m_FusedStatThreads; ++t)
++	{
++		const FusedStat& s = m_FusedStat[t];
++		const double total = s.sweep + s.wait1 + s.bound + s.wait2;
++		cout << "  thread " << t << ": " << std::fixed << std::setprecision(1) << 1e3*s.sweep << " / " << 1e3*s.wait1 << " / "
++			 << 1e3*s.bound << " / " << 1e3*s.wait2 << "  (waits " << std::setprecision(1) << 100*(s.wait1+s.wait2)/total << " %)"
++			 << std::defaultfloat << endl;
++	}
++}
++
+ void Engine_Multithread::RunHooks(int group, int threadID)
+ {
+ 	const std::vector<HookStep>& plan = m_HookPlan[group];
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index 079c1d7..4aa7fd7 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -143,9 +143,14 @@ protected:
+ 	{
+ 		double busy;
+ 		double lines;
+-		char pad[64-2*sizeof(double)]; // 64 B each (C++11: new does not align to 64; the Apple M5's cache line is 128 B)
++		// OPENEMS_FUSED_STAT=1: totals since the slabs were set up (the sweep, the waits at the two barriers, the
++		// currents of the line before the slab), printed when the threads change or stop (PrintFusedStat)
++		double sweep, wait1, bound, wait2, steps;
++		char pad[64-7*sizeof(double)]; // 64 B each (C++11: new does not align to 64; the Apple M5's cache line is 128 B)
+ 	};
+ 	FusedStat* m_FusedStat;
++	unsigned int m_FusedStatThreads; //!< entries of m_FusedStat
++	void PrintFusedStat() const;
+ 	bool m_Balance;
+ 	std::vector<double> m_LineCost; //!< smoothed time per x-line (s), from the threads' measurements
+ 	//! Between two IterateTS() calls: move the slab boundaries so that every thread gets the same estimated time
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,42 @@
+diff --git a/src/CSPropMaterial.cpp b/src/CSPropMaterial.cpp
+index 5da9a89..6fee99f 100644
+--- a/src/CSPropMaterial.cpp
++++ b/src/CSPropMaterial.cpp
+@@ -89,6 +89,8 @@ double CSPropMaterial::GetWeight(ParameterScalar *ps, int ny, const double* coor
+ 
+ double CSPropMaterial::GetWeight(ParameterScalar &ps, const double* coords)
+ {
++	if (!ps.GetMode()) // plain number, no weighting function: GetEvaluated() would return it without looking at the coordinates
++		return ps.GetValue();
+ 	double paraVal[7];
+ 	if (coordInputType==1)
+ 	{
+diff --git a/src/ContinuousStructure.cpp b/src/ContinuousStructure.cpp
+index 35f37f4..1fc6ee9 100644
+--- a/src/ContinuousStructure.cpp
++++ b/src/ContinuousStructure.cpp
+@@ -327,6 +327,11 @@ CSProperties** ContinuousStructure::GetPropertiesByCoordsPriority(const double*
+ }
+ 
+ CSProperties* ContinuousStructure::GetPropertyByCoordPriority(const double* coord, std::vector<CSPrimitives*> primList, bool markFoundAsUsed, CSPrimitives** foundPrimitive)
++{
++	return FindPropertyByCoordPriority(coord, primList, markFoundAsUsed, foundPrimitive);
++}
++
++CSProperties* ContinuousStructure::FindPropertyByCoordPriority(const double* coord, const std::vector<CSPrimitives*>& primList, bool markFoundAsUsed, CSPrimitives** foundPrimitive)
+ {
+ 	CSProperties* prop = NULL;
+ 	// search in all given primitives if coordinate given is inside
+diff --git a/src/ContinuousStructure.h b/src/ContinuousStructure.h
+index f457b43..ba26282 100644
+--- a/src/ContinuousStructure.h
++++ b/src/ContinuousStructure.h
+@@ -120,6 +120,8 @@ public:
+ 	CSProperties** GetPropertiesByCoordsPriority(const double* coords, CSProperties::PropertyType type=CSProperties::ANY, bool markFoundAsUsed=false);
+ 
+ 	CSProperties* GetPropertyByCoordPriority(const double* coord, std::vector<CSPrimitives*> primList, bool markFoundAsUsed=false, CSPrimitives** foundPrimitive=NULL);
++	//! Same as GetPropertyByCoordPriority with a primitive list, but without copying the list (the openEMS operator setup calls this per cell)
++	CSProperties* FindPropertyByCoordPriority(const double* coord, const std::vector<CSPrimitives*>& primList, bool markFoundAsUsed=false, CSPrimitives** foundPrimitive=NULL);
+ 
+ 	//! Check and warn for unused primitives in properties of given type
+ 	void WarnUnusedPrimitves(std::ostream& stream, CSProperties::PropertyType type=CSProperties::ANY);

@@ -1,0 +1,2439 @@
+From 9651fff37abd2b2b15508b43b85862badc1db4fd Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 22:24:36 -0500
+Subject: [PATCH 01/27] Speed up the multithreaded engine on Apple M5
+ (bit-identical to stock)
+
+Combined tree: upstream gpu-engine plus the step-2 CPU work and this
+session's items. All verified bit-identical to stock on the four bench
+models (probes, S11/S21, nf2ff HDF5 dumps) and on the cylindrical
+multigrid test; the GPU engine stays within 2.3e-4 dB.
+
+- SpinBarrier (tools/spin_barrier.h) and a hook plan: extensions declare
+  GetUsedHooks(), 44 -> few barriers per timestep (rebuilt when m_Eng_exts
+  changes, so cylindrical multigrid stays correct).
+- UpdateVoltages/Currents_IJKN inner loops, work stealing per x-line,
+  slab balancing between threads.
+- Fused sweep (Engine_Multithread::FusedTimestep): per x-line block V,
+  V-hooks, then I of the line behind; Mur, UPML, excitation and lumped RLC
+  gained *Lines() hooks. OPENEMS_FUSED=0 turns it off.
+- Mur fast path on f4vectors: face cells per x-line in memory order,
+  z-runs of x/y faces as vectors. UPML on f4vectors (full-z PML only).
+- Field_Gather_SSE: dumps of the SSE engines use the precomputed gather
+  with entry indices remapped to f4vector float offsets.
+- numThreads=0: time IterateTS itself in short windows, balance slabs
+  between probes, search P, P+2, .., max, P-2, then +-1 around the best.
+
+MCells/s, stock v0.37.0 -> this tree (best thread count / auto):
+  patch x5        1041 / 615 -> 1728 / 1655
+  notch x3         845 / 534 -> 2007 / 1898
+  patch tutorial   277 / 254 -> 1806 / 1444
+  notch tutorial   318 / 247 -> 1470 / 1298
+
+Generated-by: Claude Opus 5.5, Claude Fable 5.1 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_cylindermultigrid.cpp         |  15 +
+ FDTD/engine_field_gather.cpp              |  38 ++
+ FDTD/engine_field_gather.h                |  20 +
+ FDTD/engine_interface_fdtd.cpp            |   9 +-
+ FDTD/engine_multithread.cpp               | 487 ++++++++++++++++++++--
+ FDTD/engine_multithread.h                 |  80 +++-
+ FDTD/engine_sse_compressed.cpp            | 200 ++++++++-
+ FDTD/engine_sse_compressed.h              |  10 +
+ FDTD/extensions/engine_ext_excitation.cpp |  45 +-
+ FDTD/extensions/engine_ext_excitation.h   |  15 +-
+ FDTD/extensions/engine_ext_lumpedRLC.cpp  | 111 +++--
+ FDTD/extensions/engine_ext_lumpedRLC.h    |  24 +-
+ FDTD/extensions/engine_ext_mur_abc.cpp    | 241 +++++++++++
+ FDTD/extensions/engine_ext_mur_abc.h      |  26 ++
+ FDTD/extensions/engine_ext_upml.cpp       | 277 ++++++++++++
+ FDTD/extensions/engine_ext_upml.h         |  31 ++
+ FDTD/extensions/engine_extension.h        |  35 ++
+ tools/spin_barrier.h                      | 110 +++++
+ 18 files changed, 1690 insertions(+), 84 deletions(-)
+ create mode 100644 tools/spin_barrier.h
+
+diff --git a/FDTD/engine_cylindermultigrid.cpp b/FDTD/engine_cylindermultigrid.cpp
+index 7985e8e..97ed2d6 100644
+--- a/FDTD/engine_cylindermultigrid.cpp
++++ b/FDTD/engine_cylindermultigrid.cpp
+@@ -45,6 +45,13 @@ Engine_CylinderMultiGrid::Engine_CylinderMultiGrid(const Operator_CylinderMultiG
+ 
+ 	Engine* eng = op->GetInnerOperator()->CreateEngine();
+ 	m_InnerEngine = dynamic_cast<Engine_Multithread*>(eng);
++	// the inner engine runs in step with this one: it must not change its thread count on its own
++	// (it stays at one thread, as before the automatic search moved into IterateTS)
++	if (m_InnerEngine->m_auto_threads)
++	{
++		m_InnerEngine->m_auto_threads = false;
++		m_InnerEngine->changeNumThreads(1);
++	}
+ 
+ 	Engine_Ext_CylinderMultiGrid* m_InnerEng_Ext_MG = new Engine_Ext_CylinderMultiGrid(NULL,false);
+ 	m_InnerEng_Ext_MG->SetBarrier(m_WaitOnBase, m_WaitOnChild, m_WaitOnSync);
+@@ -90,6 +97,14 @@ Engine_CylinderMultiGrid::~Engine_CylinderMultiGrid()
+ void Engine_CylinderMultiGrid::Init()
+ {
+ 	Engine_Multithread::Init();
++	// IterateTS() runs in an iterator thread here: keep the old search via NextInterval()
++	if (m_auto_threads)
++	{
++		m_auto_threads = false;
++		m_opt_speed = true;
++		m_numThreads = 1;
++		changeNumThreads(1);
++	}
+ 
+ 	m_Eng_exts.push_back(m_Eng_Ext_MG);
+ 
+diff --git a/FDTD/engine_field_gather.cpp b/FDTD/engine_field_gather.cpp
+index 4ca0bdc..8383e33 100644
+--- a/FDTD/engine_field_gather.cpp
++++ b/FDTD/engine_field_gather.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "engine_field_gather.h"
+ #include "operator.h"
++#include "engine_sse.h"
+ 
+ // The same values as GetEField()/GetHField() of Engine_Interface_FDTD: an engine interface
+ // that changes the field evaluation has to change the nodes it asks for accordingly
+@@ -131,3 +132,40 @@ Field_Gather_FDTD* Field_Gather_FDTD::New(const Operator* op, Engine_Interface_B
+ 			}
+ 	return gather;
+ }
++
++Field_Gather_SSE* Field_Gather_SSE::New(const Operator* op, Engine_Interface_Base::InterpolationType interpol, const Engine_sse* eng,
++                                        bool h_field, const unsigned int numLines[3], unsigned int* const posLines[3])
++{
++	const ArrayLib::ArrayENG<f4vector>* V = eng->f4_volt_ptr;
++	const ArrayLib::ArrayENG<f4vector>* I = eng->f4_curr_ptr;
++	if (((uint64_t)V->size()*4 >= (1ull<<32)) || ((uint64_t)I->size()*4 >= (1ull<<32)))
++		return NULL;
++	for (int d=0; d<4; ++d)
++		if (V->stride(d)!=I->stride(d))
++			return NULL;
++	unsigned int N[3];
++	for (int n=0; n<3; ++n)
++		N[n] = op->GetNumberOfLines(n, true);
++	const unsigned int nvec = V->extent(3);
++
++	// the entries for the basic layout, then their indices moved to the f4vector layout:
++	// component n of (x,y,z) is lane z/nvec of the f4vector (n,x,y,z%nvec)
++	Field_Gather_FDTD* basic = Field_Gather_FDTD::New(op, interpol, NULL, NULL, h_field, numLines, posLines);
++	Field_Gather_SSE* gather = new Field_Gather_SSE((const float*)V->data(), (const float*)I->data(), h_field, numLines[1], numLines[2]);
++	gather->entries.swap(basic->entries);
++	delete basic;
++	for (size_t e=0; e<gather->entries.size(); ++e)
++	{
++		Entry& entry = gather->entries[e];
++		for (int m=0; m<4; ++m)
++		{
++			unsigned int i = entry.idx[m];
++			const unsigned int z = i%N[2]; i/=N[2];
++			const unsigned int y = i%N[1]; i/=N[1];
++			const unsigned int x = i%N[0]; i/=N[0];
++			const unsigned int n = i;
++			entry.idx[m] = 4*V->linearIndex({n, x, y, z%nvec}) + z/nvec;
++		}
++	}
++	return gather;
++}
+diff --git a/FDTD/engine_field_gather.h b/FDTD/engine_field_gather.h
+index 11e2b35..2c33bc8 100644
+--- a/FDTD/engine_field_gather.h
++++ b/FDTD/engine_field_gather.h
+@@ -139,4 +139,24 @@ protected:
+ 	size_t m_Offset;
+ };
+ 
++class Engine_sse;
++
++//! The same evaluation on the f4vector fields of the SSE engines: the entries index the fields as floats.
++class Field_Gather_SSE : public Field_Gather_FDTD
++{
++public:
++	//! As Field_Gather_FDTD::New(), reading the fields of \a eng; NULL if they cannot be indexed with 32 bit
++	static Field_Gather_SSE* New(const Operator* op, Engine_Interface_Base::InterpolationType interpol, const Engine_sse* eng,
++	                             bool h_field, const unsigned int numLines[3], unsigned int* const posLines[3]);
++	virtual void Evaluate(size_t line_start, size_t line_stop, ArrayLib::ArrayNIJK<float> &field, const float* src=NULL) const
++	{
++		Field_Gather_FDTD::Evaluate(line_start, line_stop, field, src ? src : (m_H ? m_C : m_V));
++	}
++protected:
++	Field_Gather_SSE(const float* volt, const float* curr, bool h_field, unsigned int nj, unsigned int nk)
++		: Field_Gather_FDTD(NULL, NULL, h_field, nj, nk), m_V(volt), m_C(curr) {}
++	const float* m_V;
++	const float* m_C;
++};
++
+ #endif // ENGINE_FIELD_GATHER_H
+diff --git a/FDTD/engine_interface_fdtd.cpp b/FDTD/engine_interface_fdtd.cpp
+index 913cc68..7e3342e 100644
+--- a/FDTD/engine_interface_fdtd.cpp
++++ b/FDTD/engine_interface_fdtd.cpp
+@@ -16,6 +16,7 @@
+ */
+ 
+ #include "engine_interface_fdtd.h"
++#include "engine_sse.h"
+ #include "engine_field_gather.h"
+ #include <stdexcept>
+ 
+@@ -307,9 +308,11 @@ Engine_Field_Gather* Engine_Interface_FDTD::CreateFieldGather(bool h_field, cons
+ {
+ 	const ArrayLib::ArrayNIJK<FDTD_FLOAT>* volt = NULL;
+ 	const ArrayLib::ArrayNIJK<FDTD_FLOAT>* curr = NULL;
+-	if (!m_Eng->GetBasicFieldArrays(volt, curr))
+-		return NULL;   // no gather, the caller reads the fields node by node
+-	return Field_Gather_FDTD::New(m_Op, m_InterpolType, volt, curr, h_field, numLines, posLines);
++	if (m_Eng->GetBasicFieldArrays(volt, curr))
++		return Field_Gather_FDTD::New(m_Op, m_InterpolType, volt, curr, h_field, numLines, posLines);
++	if (m_Eng->GetType()==Engine::SSE)
++		return Field_Gather_SSE::New(m_Op, m_InterpolType, (const Engine_sse*)m_Eng, h_field, numLines, posLines);
++	return NULL;   // no gather, the caller reads the fields node by node
+ }
+ 
+ int Engine_Interface_FDTD::CreateFieldDFT(const Engine_Field_Gather* gather, unsigned int count)
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 6a3c092..02120da 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -33,6 +33,12 @@
+ #include "boost/date_time/posix_time/posix_time.hpp"
+ #include "boost/date_time/gregorian/gregorian.hpp"
+ #include <iomanip>
++#include <algorithm>
++#include <chrono>
++#include <cstdlib>
++#ifdef __APPLE__
++#include <sys/sysctl.h>
++#endif
+ 
+ using std::cout;
+ using std::endl;
+@@ -55,6 +61,8 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_Op_MT = op;
+ 	m_type = SSE;
+ 	m_IterateBarrier = 0;
++	m_VoltRange = 0;
++	m_CurrRange = 0;
+ 	m_startBarrier = 0;
+ 	m_stopBarrier = 0;
+ 	m_thread_group = 0;
+@@ -62,9 +70,28 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_numThreads = 0;
+ 	m_last_speed = 0;
+ 	m_opt_speed = false;
++	m_auto_threads = false;
++	m_Fused = false;
++	m_FusedStat = 0;
++	m_Balance = false;
+ 	m_stopThreads = true;
+ }
+ 
++//! first thread count of the automatic search: the performance cores (Apple) or half the hardware threads
++static unsigned int StartThreads(unsigned int maxThreads)
++{
++	unsigned int n = 0;
++#ifdef __APPLE__
++	int pcores = 0;
++	size_t len = sizeof(pcores);
++	if ((sysctlbyname("hw.perflevel0.physicalcpu", &pcores, &len, NULL, 0)==0) && (pcores>0))
++		n = pcores;
++#endif
++	if (n==0)
++		n = (maxThreads+1)/2;
++	return std::max(1u, std::min(n, maxThreads));
++}
++
+ Engine_Multithread::~Engine_Multithread()
+ {
+ #ifdef ENABLE_DEBUG_TIME
+@@ -97,14 +124,30 @@ void Engine_Multithread::Init()
+ {
+ 	m_stopThreads = true;
+ 	m_opt_speed = false;
++	m_auto_threads = false;
+ 	Engine_SSE_Compressed::Init();
+ 
+ 	// initialize threads
+ 	m_stopThreads = false;
+ 	if (m_numThreads == 0)
+ 	{
+-		m_opt_speed = true;
+-		m_numThreads = 1;
++		m_auto_threads = true;
++		m_numThreads = StartThreads(m_max_numThreads);
++		m_Tuner.start = m_Tuner.best = m_numThreads;
++		m_Tuner.best_speed = 0;
++		m_Tuner.todo.clear();
++		for (unsigned int n=m_numThreads+2; n<m_max_numThreads+2; n+=2)
++			m_Tuner.todo.push_back(std::min(n, m_max_numThreads));
++		if (m_numThreads>2)
++			m_Tuner.todo.push_back(m_numThreads-2);
++		m_Tuner.speed.assign(m_max_numThreads+1, 0);
++		m_Tuner.refined = false;
++		m_Tuner.ts = 0;
++		m_Tuner.time = 0;
++		const char* env = getenv("OPENEMS_TUNE_WINDOW_MS");
++		m_Tuner.window = (env ? atof(env) : 150)*1e-3;
++		m_Tuner.settle = 0.4*m_Tuner.window;
++		m_Tuner.ts_per_s = 0;
+ 	}
+ 	else if (m_numThreads > m_max_numThreads)
+ 		m_numThreads = m_max_numThreads;
+@@ -124,6 +167,12 @@ void Engine_Multithread::Reset()
+ 		m_thread_group->join_all(); // wait for termination
+ 		delete m_IterateBarrier;
+ 		m_IterateBarrier = 0;
++		delete[] m_VoltRange;
++		m_VoltRange = 0;
++		delete[] m_CurrRange;
++		m_CurrRange = 0;
++		delete[] m_FusedStat;
++		m_FusedStat = 0;
+ 		delete m_startBarrier;
+ 		m_startBarrier = 0;
+ 		delete m_stopBarrier;
+@@ -158,7 +207,7 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+ 	if (m_IterateBarrier!=0)
+ 		delete m_IterateBarrier;
+ 	// make sure all threads are waiting
+-	m_IterateBarrier = new boost::barrier(m_numThreads); // numThread workers
++	m_IterateBarrier = new SpinBarrier(m_numThreads); // numThread workers
+ 
+ 	if (m_startBarrier!=0)
+ 		delete m_startBarrier;
+@@ -168,6 +217,21 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+ 		delete m_stopBarrier;
+ 	m_stopBarrier = new boost::barrier(m_numThreads+1); // numThread workers + 1 controller
+ 
++	delete[] m_VoltRange;
++	delete[] m_CurrRange;
++	m_VoltRange = new WorkRange[m_numThreads];
++	m_CurrRange = new WorkRange[m_numThreads];
++	for (unsigned int n=0; n<m_numThreads; n++)
++	{
++		m_VoltRange[n].start = m_Start_Lines.at(n);
++		m_VoltRange[n].stop  = m_Stop_Lines.at(n);
++		m_CurrRange[n].start = m_Start_Lines.at(n);
++		// the last x-line has no current update
++		m_CurrRange[n].stop  = (n==m_numThreads-1) ? (int)m_Stop_Lines.at(n)-1 : m_Stop_Lines.at(n);
++	}
++	ResetRanges(m_VoltRange);
++	ResetRanges(m_CurrRange);
++
+ 	m_thread_group = new boost::thread_group();
+ 	for (unsigned int n=0; n<m_numThreads; n++)
+ 	{
+@@ -190,20 +254,143 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+ 
+ 	for (size_t n=0; n<m_Eng_exts.size(); ++n)
+ 		m_Eng_exts.at(n)->SetNumberOfThreads(m_numThreads);
++	// after SetNumberOfThreads: the extensions pick their fast paths there (the threads wait at the start barrier)
++	BuildHookPlan();
+ }
+ 
+ bool Engine_Multithread::IterateTS(unsigned int iterTS)
+ {
+-	m_iterTS = iterTS;
++	// e.g. the cylindrical multi-grid adds and sorts extensions after Init (the threads wait at the start barrier)
++	if (m_HookPlanExts!=m_Eng_exts)
++		BuildHookPlan();
++
++	// While the thread count is tuned, the call runs in pieces of 1/8 of the measurement window (a long
++	// call, e.g. between the probes of a large model, would otherwise time a single thread count),
++	// with the slabs balanced after every piece, as they will be for the rest of the run.
++	while (m_auto_threads && (iterTS>0))
++	{
++		unsigned int n = std::min(iterTS, 4u);   // the first piece estimates the speed
++		if (m_Tuner.ts_per_s>0)
++			n = (unsigned int)std::min<double>(iterTS, std::max(1.0, m_Tuner.window/8*m_Tuner.ts_per_s));
++		const double seconds = RunTimesteps(n);
++		if (seconds>0)
++			m_Tuner.ts_per_s = n/seconds;
++		iterTS -= n;
++		if (m_Fused && m_Balance)
++			BalanceSlabs();
++		TuneThreads(n, seconds);
++	}
++	if (iterTS>0)
++	{
++		RunTimesteps(iterTS);
++		if (m_Fused && m_Balance)
++			BalanceSlabs();
++	}
++	return true;
++}
+ 
+-	//cerr << "bool Engine_Multithread::IterateTS(): starting threads ...";
++double Engine_Multithread::RunTimesteps(unsigned int n)
++{
++	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
++	m_iterTS = n;
+ 	m_startBarrier->wait(); // start the threads
++	m_stopBarrier->wait(); // wait for the threads to finish n time steps
++	return std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
++}
+ 
+-	//cerr << "... threads started" << endl;
++void Engine_Multithread::BalanceSlabs()
++{
++	// wait for ~20 ms of sweeps per thread, the measurement is noisy below
++	double total = 0;
++	for (unsigned int t=0; t<m_numThreads; ++t)
++		total += m_FusedStat[t].busy;
++	if (total<0.02*m_numThreads)
++		return;
++
++	// time per line of each thread, spread over its lines, smoothed over the calls
++	const unsigned int NX = numLines[0];
++	const bool first = m_LineCost.empty();
++	m_LineCost.resize(NX, 0);
++	for (unsigned int t=0; t<m_numThreads; ++t)
++	{
++		FusedStat& stat = m_FusedStat[t];
++		const double cost = (stat.lines>0) ? stat.busy/stat.lines : 0;
++		for (unsigned int x=m_Blocks[m_SlabBlocks[t]]; x<m_Blocks[m_SlabBlocks[t+1]]; ++x)
++			m_LineCost[x] = first ? cost : 0.5*(m_LineCost[x]+cost);
++		stat.busy = stat.lines = 0;
++	}
+ 
+-	m_stopBarrier->wait(); // wait for the threads to finish <iterTS> time steps
++	// new boundaries at equal shares of the estimated time, on block boundaries
++	std::vector<double> cum(NX+1, 0);
++	for (unsigned int x=0; x<NX; ++x)
++		cum[x+1] = cum[x] + m_LineCost[x];
++	const unsigned int nb = m_Blocks.size()-1;
++	unsigned int b = 0;
++	for (unsigned int t=1; t<m_numThreads; ++t)
++	{
++		const double target = cum[NX]*t/m_numThreads;
++		while ((b<nb) && (cum[m_Blocks[b+1]]<=target))
++			++b;
++		// the nearer one of the boundaries around the target
++		if ((b<nb) && (target-cum[m_Blocks[b]] > cum[m_Blocks[b+1]]-target))
++			++b;
++		b = std::max(b, m_SlabBlocks[t-1]+1);
++		b = std::min(b, nb-(m_numThreads-t));
++		m_SlabBlocks[t] = b;
++	}
++}
+ 
+-	return true;
++void Engine_Multithread::TuneThreads(unsigned int iterTS, double seconds)
++{
++	ThreadTuner& t = m_Tuner;
++	// after a thread change: new caches, the slabs are balanced
++	if (t.settle>0)
++	{
++		t.settle -= seconds;
++		return;
++	}
++	t.ts += iterTS;
++	t.time += seconds;
++	if ((t.time<t.window) || (t.ts<2))
++		return;
++
++	const double speed = t.ts/t.time;
++	t.speed[m_numThreads] = speed;
++	if (speed>t.best_speed)
++	{
++		t.best = m_numThreads;
++		t.best_speed = speed;
++	}
++	// clearly slower with more threads: skip the larger counts
++	if ((m_numThreads>t.start) && (speed<0.85*t.best_speed))
++		t.todo.erase(std::remove_if(t.todo.begin(), t.todo.end(), [&](unsigned int n) {return n>m_numThreads;}), t.todo.end());
++	while (true)
++	{
++		while (!t.todo.empty() && (t.speed[t.todo.front()]>0))
++			t.todo.erase(t.todo.begin());
++		if (!t.todo.empty() || t.refined)
++			break;
++		// the coarse counts are done: the neighbours of the fastest one
++		t.refined = true;
++		if (t.best>1)
++			t.todo.push_back(t.best-1);
++		if (t.best<m_max_numThreads)
++			t.todo.push_back(t.best+1);
++	}
++	if (t.todo.empty())
++	{
++		m_auto_threads = false;
++		if (t.best!=m_numThreads)
++			changeNumThreads(t.best);
++		cout << "Multithreaded Engine: Best performance found using " << m_numThreads << " threads." << std::endl;
++		return;
++	}
++	const unsigned int next = t.todo.front();
++	t.todo.erase(t.todo.begin());
++	changeNumThreads(next);
++	t.ts = 0;
++	t.time = 0;
++	t.settle = 0.4*t.window;
+ }
+ 
+ void Engine_Multithread::NextInterval(float curr_speed)
+@@ -223,67 +410,266 @@ void Engine_Multithread::NextInterval(float curr_speed)
+ 	}
+ }
+ 
+-void Engine_Multithread::DoPreVoltageUpdates(int threadID)
++void Engine_Multithread::ResetRanges(WorkRange* ranges)
++{
++	for (unsigned int n=0; n<m_numThreads; ++n)
++		ranges[n].next.store(ranges[n].start, std::memory_order_relaxed);
++}
++
++void Engine_Multithread::UpdateStealing(WorkRange* ranges, int threadID, bool voltages)
+ {
+-	//execute extensions in reverse order -> highest priority gets access to the voltages last
+-	for (int n=m_Eng_exts.size()-1; n>=0; --n)
++	// The order of the x-lines does not matter within one update (each cell only reads the other
++	// field), so the result is the same whichever thread updates a line. One line per grab: the
++	// atomic costs ~10-50 ns, a line is >1 us of work.
++	for (unsigned int k=0; k<m_numThreads; ++k)
+ 	{
+-		m_Eng_exts.at(n)->DoPreVoltageUpdates(threadID);
+-		m_IterateBarrier->wait();
++		WorkRange& r = ranges[(threadID+k)%m_numThreads];
++		for (;;)
++		{
++			const int x = r.next.fetch_add(1, std::memory_order_relaxed);
++			if (x>r.stop)
++				break;
++			if (voltages)
++				UpdateVoltages(x, 1);
++			else
++				UpdateCurrents(x, 1);
++		}
+ 	}
+-
+ }
+ 
+-void Engine_Multithread::DoPostVoltageUpdates(int threadID)
++void Engine_Multithread::BuildHookPlan()
+ {
+-	//execute extensions in normal order -> highest priority gets access to the voltages first
+-	for (size_t n=0; n<m_Eng_exts.size(); ++n)
++	const unsigned int flags[6] = {Engine_Extension::PRE_VOLT, Engine_Extension::POST_VOLT, Engine_Extension::APPLY_VOLT,
++								   Engine_Extension::PRE_CURR, Engine_Extension::POST_CURR, Engine_Extension::APPLY_CURR};
++	for (int g=0; g<6; ++g)
+ 	{
+-		m_Eng_exts.at(n)->DoPostVoltageUpdates(threadID);
+-		m_IterateBarrier->wait();
++		std::vector<HookStep>& plan = m_HookPlan[g];
++		plan.clear();
++		// pre-updates run in reverse order -> highest priority gets access to the fields last
++		const bool reverse = (g==0) || (g==3);
++		// apply-hooks write engine fields: keep the priority order with one barrier per extension
++		const bool apply = (g==2) || (g==5);
++		const int N = m_Eng_exts.size();
++		for (int k=0; k<N; ++k)
++		{
++			Engine_Extension* ext = m_Eng_exts.at(reverse ? N-1-k : k);
++			const unsigned int used = ext->GetUsedHooks();
++			if (used==Engine_Extension::LEGACY_HOOKS)
++			{
++				// as before: a barrier before and after its (possibly empty) hook
++				if (!plan.empty())
++					plan.back().barrier = true;
++				HookStep step = {ext, true, false};
++				plan.push_back(step);
++			}
++			else if (used & flags[g])
++			{
++				// ordered: keep a barrier before and after the hook
++				const bool ordered = apply || (used & Engine_Extension::PREPOST_WRITES_FIELDS);
++				if (ordered && !plan.empty())
++					plan.back().barrier = true;
++				HookStep step = {ext, ordered, false};
++				plan.push_back(step);
++			}
++		}
++		// pre/post hooks of all extensions share one barrier at the end of the group
++		if (!plan.empty())
++			plan.back().barrier = true;
+ 	}
++	m_HookPlanExts = m_Eng_exts;
++	// the last barrier of a timestep increments numTS before it releases the threads
++	m_IncNumTS_AtCurrBarrier = false;
++	if (!m_HookPlan[5].empty())
++		m_HookPlan[5].back().inc_numTS = true;
++	else if (!m_HookPlan[4].empty())
++		m_HookPlan[4].back().inc_numTS = true;
++	else
++		m_IncNumTS_AtCurrBarrier = true;
++
++	SetupFused();
+ }
+ 
+-void Engine_Multithread::Apply2Voltages(int threadID)
++void Engine_Multithread::SetupFused()
+ {
+-	//execute extensions in normal order -> highest priority gets access to the voltages first
+-	for (size_t n=0; n<m_Eng_exts.size(); ++n)
++	m_Fused = false;
++	for (int g=0; g<6; ++g)
++		m_LineHooks[g].clear();
++	const char* env = getenv("OPENEMS_FUSED");
++	if ((env && (atoi(env)==0)) || !UseIJKN())
++		return;
++
++	const unsigned int flags[6] = {Engine_Extension::PRE_VOLT, Engine_Extension::POST_VOLT, Engine_Extension::APPLY_VOLT,
++								   Engine_Extension::PRE_CURR, Engine_Extension::POST_CURR, Engine_Extension::APPLY_CURR};
++	const int N = m_Eng_exts.size();
++	std::vector<unsigned int> coupled;
++	for (int k=0; k<N; ++k)
+ 	{
+-		m_Eng_exts.at(n)->Apply2Voltages(threadID);
+-		m_IterateBarrier->wait();
++		const unsigned int used = m_Eng_exts.at(k)->GetUsedHooks();
++		if ((used==Engine_Extension::LEGACY_HOOKS) || !(used & Engine_Extension::LINE_HOOKS))
++		{
++			if (g_settings.GetVerboseLevel()>0)
++				cout << "Multithreaded engine: no fused sweep, the extension \"" << m_Eng_exts.at(k)->GetExtensionName() << "\" has no line hooks" << endl;
++			return;
++		}
++		m_Eng_exts.at(k)->GetCoupledLines(coupled);
+ 	}
++	for (int g=0; g<6; ++g)
++	{
++		// same extension order as the hook plan: pre-updates in reverse order
++		const bool reverse = (g==0) || (g==3);
++		for (int k=0; k<N; ++k)
++		{
++			Engine_Extension* ext = m_Eng_exts.at(reverse ? N-1-k : k);
++			if (ext->GetUsedHooks() & flags[g])
++				m_LineHooks[g].push_back(ext);
++		}
++	}
++
++	// blocks: single x-lines, except that a coupled line x is swept together with x+1
++	const unsigned int NX = numLines[0];
++	std::vector<bool> joined(NX, false);
++	for (size_t n=0; n<coupled.size(); ++n)
++		if (coupled[n]+1<NX)
++			joined[coupled[n]] = true;
++	m_Blocks.clear();
++	for (unsigned int x=0; x<NX; ++x)
++		if ((x==0) || !joined[x-1])
++			m_Blocks.push_back(x);
++	m_Blocks.push_back(NX);
++	const unsigned int nb = m_Blocks.size()-1;
++	if (nb<m_numThreads)
++		return;
++
++	// slabs of about the same number of lines, on block boundaries
++	m_SlabBlocks.assign(m_numThreads+1, nb);
++	m_SlabBlocks[0] = 0;
++	unsigned int b = 0;
++	for (unsigned int t=1; t<m_numThreads; ++t)
++	{
++		const unsigned int target = (unsigned int)((uint64_t)NX*t/m_numThreads);
++		while ((b<nb) && (m_Blocks[b]<target))
++			++b;
++		b = std::max(b, m_SlabBlocks[t-1]+1);
++		b = std::min(b, nb-(m_numThreads-t));
++		m_SlabBlocks[t] = b;
++	}
++	delete[] m_FusedStat;
++	m_FusedStat = new FusedStat[m_numThreads];
++	for (unsigned int t=0; t<m_numThreads; ++t)
++		m_FusedStat[t].busy = m_FusedStat[t].lines = 0;
++	m_LineCost.clear();
++	const char* bal = getenv("OPENEMS_BALANCE");
++	m_Balance = (m_numThreads>1) && !(bal && (atoi(bal)==0));
++	m_Fused = true;
++	if (g_settings.GetVerboseLevel()>0)
++		cout << "Multithreaded engine: fused sweep, " << nb << " blocks of x-lines" << endl;
+ }
+ 
+-void Engine_Multithread::DoPreCurrentUpdates(int threadID)
++void Engine_Multithread::RunLineHooks(int group, unsigned int x0, unsigned int x1)
+ {
+-	//execute extensions in reverse order -> highest priority gets access to the currents last
+-	for (int n=m_Eng_exts.size()-1; n>=0; --n)
++	const std::vector<Engine_Extension*>& exts = m_LineHooks[group];
++	for (size_t n=0; n<exts.size(); ++n)
+ 	{
+-		m_Eng_exts.at(n)->DoPreCurrentUpdates(threadID);
+-		m_IterateBarrier->wait();
++		switch (group)
++		{
++		case 0: exts[n]->DoPreVoltageUpdatesLines(x0, x1); break;
++		case 1: exts[n]->DoPostVoltageUpdatesLines(x0, x1); break;
++		case 2: exts[n]->Apply2VoltagesLines(x0, x1); break;
++		case 3: exts[n]->DoPreCurrentUpdatesLines(x0, x1); break;
++		case 4: exts[n]->DoPostCurrentUpdatesLines(x0, x1); break;
++		case 5: exts[n]->Apply2CurrentLines(x0, x1); break;
++		}
+ 	}
+ }
+ 
+-void Engine_Multithread::DoPostCurrentUpdates(int threadID)
++void Engine_Multithread::FusedCurrents(unsigned int x0, unsigned int x1)
+ {
+-	//execute extensions in normal order -> highest priority gets access to the currents first
+-	for (size_t n=0; n<m_Eng_exts.size(); ++n)
++	if (x0>=x1)
++		return;
++	RunLineHooks(3, x0, x1);
++	UpdateCurrents(x0, x1-x0);
++	RunLineHooks(4, x0, x1);
++	RunLineHooks(5, x0, x1);
++}
++
++void Engine_Multithread::FusedTimestep(int threadID)
++{
++	// The voltages of a block need the old currents of the block and of the line before it; the
++	// currents of line x need the final voltages of x and x+1. So after the voltages (and their hooks)
++	// of a block are done, the currents of the line before the block and of the block but its last line
++	// are updated: every cell sees the same operands as in the unfused update (bit-identical).
++	// The line before the slab belongs to the previous thread's slab: it waits for the first barrier.
++	const unsigned int b0 = m_SlabBlocks[threadID], b1 = m_SlabBlocks[threadID+1];
++	const unsigned int start = m_Blocks[b0];
++	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
++	for (unsigned int b=b0; b<b1; ++b)
+ 	{
+-		m_Eng_exts.at(n)->DoPostCurrentUpdates(threadID);
+-		m_IterateBarrier->wait();
++		const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
++		RunLineHooks(0, x0, x1);
++		UpdateVoltages(x0, x1-x0);
++		RunLineHooks(1, x0, x1);
++		RunLineHooks(2, x0, x1);
++		FusedCurrents((x0==start) ? x0 : x0-1, x1-1);
+ 	}
++	FusedStat& stat = m_FusedStat[threadID];
++	stat.busy += std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
++	stat.lines += m_Blocks[b1]-start;
++	m_IterateBarrier->wait();
++	if (start>0)
++		FusedCurrents(start-1, start);
++	m_IterateBarrier->wait(&numTS);
+ }
+ 
+-void Engine_Multithread::Apply2Current(int threadID)
++void Engine_Multithread::RunHooks(int group, int threadID)
+ {
+-	//execute extensions in normal order -> highest priority gets access to the currents first
+-	for (size_t n=0; n<m_Eng_exts.size(); ++n)
++	const std::vector<HookStep>& plan = m_HookPlan[group];
++	for (size_t n=0; n<plan.size(); ++n)
+ 	{
+-		m_Eng_exts.at(n)->Apply2Current(threadID);
+-		m_IterateBarrier->wait();
++		Engine_Extension* ext = plan[n].ext;
++		switch (group)
++		{
++		case 0: ext->DoPreVoltageUpdates(threadID); break;
++		case 1: ext->DoPostVoltageUpdates(threadID); break;
++		case 2: ext->Apply2Voltages(threadID); break;
++		case 3: ext->DoPreCurrentUpdates(threadID); break;
++		case 4: ext->DoPostCurrentUpdates(threadID); break;
++		case 5: ext->Apply2Current(threadID); break;
++		}
++		if (plan[n].barrier)
++			m_IterateBarrier->wait(plan[n].inc_numTS ? &numTS : NULL);
+ 	}
+ }
+ 
++void Engine_Multithread::DoPreVoltageUpdates(int threadID)
++{
++	RunHooks(0, threadID);
++}
++
++void Engine_Multithread::DoPostVoltageUpdates(int threadID)
++{
++	RunHooks(1, threadID);
++}
++
++void Engine_Multithread::Apply2Voltages(int threadID)
++{
++	RunHooks(2, threadID);
++}
++
++void Engine_Multithread::DoPreCurrentUpdates(int threadID)
++{
++	RunHooks(3, threadID);
++}
++
++void Engine_Multithread::DoPostCurrentUpdates(int threadID)
++{
++	RunHooks(4, threadID);
++}
++
++void Engine_Multithread::Apply2Current(int threadID)
++{
++	RunHooks(5, threadID);
++}
++
+ //
+ // *************************************************************************************************************************
+ //
+@@ -324,11 +710,17 @@ void thread::operator()()
+ 
+ 		for (unsigned int iter=0; iter<m_enginePtr->m_iterTS; ++iter)
+ 		{
++			if (m_enginePtr->m_Fused)
++			{
++				m_enginePtr->FusedTimestep(m_threadID);
++				continue;
++			}
++
+ 			// pre voltage stuff...
+ 			m_enginePtr->DoPreVoltageUpdates(m_threadID);
+ 
+ 			//voltage updates
+-			m_enginePtr->UpdateVoltages(m_start,m_stop-m_start+1);
++			m_enginePtr->UpdateStealing(m_enginePtr->m_VoltRange, m_threadID, true);
+ 
+ 			// record time
+ 			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
+@@ -336,6 +728,10 @@ void thread::operator()()
+ 			//cout << "Thread " << boost::this_thread::get_id() << " m_barrier1 waiting..." << endl;
+ 			m_enginePtr->m_IterateBarrier->wait();
+ 
++			// all voltage lines are done: rearm them for the next timestep (seen by all after the next barrier)
++			if (m_threadID == 0)
++				m_enginePtr->ResetRanges(m_enginePtr->m_VoltRange);
++
+ 			// record time
+ 			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
+ 
+@@ -350,11 +746,15 @@ void thread::operator()()
+ 			m_enginePtr->DoPreCurrentUpdates(m_threadID);
+ 
+ 			//current updates
+-			m_enginePtr->UpdateCurrents(m_start,m_stop_h-m_start+1);
++			m_enginePtr->UpdateStealing(m_enginePtr->m_CurrRange, m_threadID, false);
+ 
+ 			// record time
+ 			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
+-			m_enginePtr->m_IterateBarrier->wait();
++			// the last barrier of the timestep increments numTS (here, or after the last current hook)
++			m_enginePtr->m_IterateBarrier->wait(m_enginePtr->m_IncNumTS_AtCurrBarrier ? &m_enginePtr->numTS : NULL);
++
++			if (m_threadID == 0)
++				m_enginePtr->ResetRanges(m_enginePtr->m_CurrRange);
+ 
+ 			// record time
+ 			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
+@@ -362,9 +762,6 @@ void thread::operator()()
+ 			//post current stuff
+ 			m_enginePtr->DoPostCurrentUpdates(m_threadID);
+ 			m_enginePtr->Apply2Current(m_threadID);
+-
+-			if (m_threadID == 0)
+-				++m_enginePtr->numTS; // only the first thread increments numTS
+ 		}
+ 
+ 		m_enginePtr->m_stopBarrier->wait();
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index d43b24a..891d13f 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -20,6 +20,8 @@
+ 
+ #include "operator_multithread.h"
+ #include "engine_sse_compressed.h"
++#include "tools/spin_barrier.h"
++#include <atomic>
+ 
+ #include <boost/thread.hpp>
+ #include <boost/fusion/include/list.hpp>
+@@ -107,7 +109,60 @@ protected:
+ 	const Operator_Multithread* m_Op_MT;
+ 	boost::thread_group *m_thread_group;
+ 	boost::barrier *m_startBarrier, *m_stopBarrier;
+-	boost::barrier *m_IterateBarrier;
++	SpinBarrier *m_IterateBarrier;
++
++	//! One extension hook call in a timestep, optionally followed by a barrier
++	struct HookStep
++	{
++		Engine_Extension* ext;
++		bool barrier;   //!< wait on m_IterateBarrier after the call
++		bool inc_numTS; //!< this is the last barrier of the timestep: it increments numTS
++	};
++	//! Per hook group (pre/post/apply voltages, pre/post/apply currents): the calls and barriers, see BuildHookPlan()
++	std::vector<HookStep> m_HookPlan[6];
++	std::vector<Engine_Extension*> m_HookPlanExts; //!< the extensions the plan was built for (the list can change after Init)
++	bool m_IncNumTS_AtCurrBarrier; //!< no current hooks run after the current update: its barrier increments numTS
++	void BuildHookPlan();
++	void RunHooks(int group, int threadID);
++
++	//! Fused sweep: every thread runs the voltage update, the voltage hooks, and the current update with
++	//! its hooks x-line by x-line over its own slab, so a line is still in the cache when its currents are
++	//! updated (one pass over the fields per timestep instead of two) and a timestep needs two barriers.
++	//! It needs the IJKN field layout and extensions that all implement the line hooks (LINE_HOOKS).
++	bool m_Fused;
++	std::vector<unsigned int> m_Blocks;     //!< x-line blocks [m_Blocks[b], m_Blocks[b+1]) of the fused sweep
++	std::vector<unsigned int> m_SlabBlocks; //!< thread t sweeps the blocks [m_SlabBlocks[t], m_SlabBlocks[t+1])
++	std::vector<Engine_Extension*> m_LineHooks[6]; //!< per hook group: the extensions to call, in order
++	void SetupFused();
++	void FusedTimestep(int threadID);
++	//! time and x-lines of each thread's sweep, to size the slabs (threads on efficiency cores are slower, PML lines cost more)
++	struct FusedStat
++	{
++		double busy;
++		double lines;
++		char pad[64-2*sizeof(double)]; // about one per cache line (C++11: new does not align to 64)
++	};
++	FusedStat* m_FusedStat;
++	bool m_Balance;
++	std::vector<double> m_LineCost; //!< smoothed time per x-line (s), from the threads' measurements
++	//! Between two IterateTS() calls: move the slab boundaries so that every thread gets the same estimated time
++	void BalanceSlabs();
++	void RunLineHooks(int group, unsigned int x0, unsigned int x1);
++	//! hooks and update of the currents of the x-lines [x0, x1)
++	void FusedCurrents(unsigned int x0, unsigned int x1);
++
++	//! x-lines of one thread for the voltage or current update; idle threads take lines from the others
++	struct WorkRange
++	{
++		std::atomic<int> next; //!< next x-line to update
++		int start, stop;       //!< first and last x-line of this range
++		char pad[64-sizeof(std::atomic<int>)-2*sizeof(int)]; // one range per cache line
++	};
++	WorkRange* m_VoltRange;
++	WorkRange* m_CurrRange;
++	//! Update all lines of the own range in order, then help with the ranges of the other threads.
++	void UpdateStealing(WorkRange* ranges, int threadID, bool voltages);
++	void ResetRanges(WorkRange* ranges);
+ 	volatile unsigned int m_iterTS;
+ 	unsigned int m_numThreads; //!< number of worker threads
+ 	unsigned int m_max_numThreads; //!< max. number of worker threads
+@@ -115,6 +170,29 @@ protected:
+ 	bool m_opt_speed;
+ 	float m_last_speed;
+ 
++	//! numThreads==0: IterateTS() times the engine itself and picks the thread count, see TuneThreads()
++	bool m_auto_threads;
++	struct ThreadTuner
++	{
++		unsigned int start;  //!< first thread count tried
++		unsigned int best;   //!< fastest thread count so far
++		double best_speed;   //!< its speed (timesteps/s)
++		std::vector<unsigned int> todo;   //!< thread counts still to time, in this order
++		std::vector<double> speed;        //!< timesteps/s by thread count (0: not timed)
++		bool refined;        //!< the neighbours of the best coarse count are queued
++		double settle;       //!< time left before the timing of the current thread count starts (s)
++		unsigned int ts;     //!< timesteps timed with the current thread count
++		double time;         //!< and their time (s)
++		double window;       //!< time to measure each thread count (s)
++		double ts_per_s;     //!< last speed, for the length of the pieces of IterateTS()
++	} m_Tuner;
++	//! Run \a n timesteps on the threads, returns the time (s)
++	double RunTimesteps(unsigned int n);
++	//! Times the performance core count P, then P+2, P+4, .. up to the maximum (until one is clearly
++	//! slower than the best) and P-2, then the two neighbours of the fastest; keeps the fastest count.
++	//! (Coarse steps: the speed is not monotonic, e.g. P+1 threads can be slower than P and P+2.)
++	void TuneThreads(unsigned int iterTS, double seconds);
++
+ #ifdef ENABLE_DEBUG_TIME
+ 	std::map<boost::thread::id, std::vector<double> > m_timer_list;
+ #endif
+diff --git a/FDTD/engine_sse_compressed.cpp b/FDTD/engine_sse_compressed.cpp
+index d1b2b22..23c8467 100644
+--- a/FDTD/engine_sse_compressed.cpp
++++ b/FDTD/engine_sse_compressed.cpp
+@@ -48,7 +48,7 @@ Engine_SSE_Compressed::~Engine_SSE_Compressed()
+ {
+ }
+ 
+-void Engine_SSE_Compressed::UpdateVoltages(unsigned int startX, unsigned int numX)
++void Engine_SSE_Compressed::UpdateVoltages_Generic(unsigned int startX, unsigned int numX)
+ {
+ 	f4vector* f4_volt = f4_volt_ptr->data();
+ 	f4vector* f4_curr = f4_curr_ptr->data();
+@@ -179,7 +179,7 @@ void Engine_SSE_Compressed::UpdateVoltages(unsigned int startX, unsigned int num
+ 	}
+ }
+ 
+-void Engine_SSE_Compressed::UpdateCurrents(unsigned int startX, unsigned int numX)
++void Engine_SSE_Compressed::UpdateCurrents_Generic(unsigned int startX, unsigned int numX)
+ {
+ 	f4vector* f4_volt = f4_volt_ptr->data();
+ 	f4vector* f4_curr = f4_curr_ptr->data();
+@@ -309,3 +309,199 @@ void Engine_SSE_Compressed::UpdateCurrents(unsigned int startX, unsigned int num
+ 		++pos[0];
+ 	}
+ }
++
++bool Engine_SSE_Compressed::UseIJKN() const
++{
++	return (f4_volt_ptr->stride(0)==1) && (f4_volt_ptr->stride(3)==3) &&
++		   (f4_curr_ptr->stride(0)==1) && (f4_curr_ptr->stride(3)==3) &&
++		   (f4_volt_ptr->stride(1)==f4_curr_ptr->stride(1)) && (f4_volt_ptr->stride(2)==f4_curr_ptr->stride(2)) &&
++		   (Op->m_Op_index.stride(2)==1);
++}
++
++void Engine_SSE_Compressed::UpdateVoltages(unsigned int startX, unsigned int numX)
++{
++	if (UseIJKN())
++		UpdateVoltages_IJKN(startX, numX);
++	else
++		UpdateVoltages_Generic(startX, numX);
++}
++
++void Engine_SSE_Compressed::UpdateCurrents(unsigned int startX, unsigned int numX)
++{
++	if (UseIJKN())
++		UpdateCurrents_IJKN(startX, numX);
++	else
++		UpdateCurrents_Generic(startX, numX);
++}
++
++typedef decltype(f4vector::v) f4vector_t; // v4sf, or __m128 with MSVC
++
++// {0, a0, a1, a2}: the z-1 neighbours of z-vector 0 are the lanes below in the last z-vector
++static inline f4vector ShiftLanesUp(const f4vector& a)
++{
++	f4vector r;
++#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)
++	const v4sf zero = {0,0,0,0};
++	r.v = __builtin_shufflevector(zero, a.v, 0, 4, 5, 6);
++#else
++	r.f[0] = 0;
++	r.f[1] = a.f[0];
++	r.f[2] = a.f[1];
++	r.f[3] = a.f[2];
++#endif
++	return r;
++}
++
++// {a1, a2, a3, 0}: the z+1 neighbours of the last z-vector are the lanes above in z-vector 0
++static inline f4vector ShiftLanesDown(const f4vector& a)
++{
++	f4vector r;
++#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)
++	const v4sf zero = {0,0,0,0};
++	r.v = __builtin_shufflevector(a.v, zero, 1, 2, 3, 4);
++#else
++	r.f[0] = a.f[1];
++	r.f[1] = a.f[2];
++	r.f[2] = a.f[3];
++	r.f[3] = 0;
++#endif
++	return r;
++}
++
++void Engine_SSE_Compressed::UpdateVoltages_IJKN(unsigned int startX, unsigned int numX)
++{
++	// (x,y,z-vector) holds the three components at [0..2], z-vectors are 3 apart
++	f4vector* __restrict volt = f4_volt_ptr->data();
++	const f4vector* __restrict curr = f4_curr_ptr->data();
++	const unsigned int* __restrict op_idx = Op->m_Op_index.data();
++	const f4vector* __restrict vv0 = Op->f4_vv_Compressed[0].data();
++	const f4vector* __restrict vv1 = Op->f4_vv_Compressed[1].data();
++	const f4vector* __restrict vv2 = Op->f4_vv_Compressed[2].data();
++	const f4vector* __restrict vi0 = Op->f4_vi_Compressed[0].data();
++	const f4vector* __restrict vi1 = Op->f4_vi_Compressed[1].data();
++	const f4vector* __restrict vi2 = Op->f4_vi_Compressed[2].data();
++	const ptrdiff_t sx = f4_curr_ptr->stride(1);
++	const ptrdiff_t sy = f4_curr_ptr->stride(2);
++	const ptrdiff_t isx = Op->m_Op_index.stride(0);
++	const ptrdiff_t isy = Op->m_Op_index.stride(1);
++	const unsigned int ny = numLines[1];
++	const unsigned int nvec = numVectors;
++
++	for (unsigned int x=startX; x<startX+numX; ++x)
++	{
++		const ptrdiff_t shx = (x>0) ? sx : 0;
++		for (unsigned int y=0; y<ny; ++y)
++		{
++			const ptrdiff_t shy = (y>0) ? sy : 0;
++			f4vector* __restrict v = volt + x*sx + y*sy;
++			const f4vector* __restrict c = curr + x*sx + y*sy;
++			const unsigned int* __restrict ip = op_idx + x*isx + y*isy;
++			f4vector_t a, t;
++			for (unsigned int z=1; z<nvec; ++z)
++			{
++				const unsigned int i = ip[z];
++				f4vector* __restrict vz = v + 3*z;
++				const f4vector* __restrict cz = c + 3*z;
++
++				// x-polarization
++				t = cz[2].v - cz[2-shy].v - cz[1].v + cz[1-3].v;
++				a = vz[0].v * vv0[i].v;
++				vz[0].v = a + vi0[i].v * t;
++
++				// y-polarization
++				t = cz[0].v - cz[0-3].v - cz[2].v + cz[2-shx].v;
++				a = vz[1].v * vv1[i].v;
++				vz[1].v = a + vi1[i].v * t;
++
++				// z-polarization
++				t = cz[1].v - cz[1-shx].v - cz[0].v + cz[0-shy].v;
++				a = vz[2].v * vv2[i].v;
++				vz[2].v = a + vi2[i].v * t;
++			}
++
++			// z-vector 0
++			const unsigned int i = ip[0];
++			const f4vector* __restrict ce = c + 3*(nvec-1);
++
++			t = c[2].v - c[2-shy].v - c[1].v + ShiftLanesUp(ce[1]).v;
++			a = v[0].v * vv0[i].v;
++			v[0].v = a + vi0[i].v * t;
++
++			t = c[0].v - ShiftLanesUp(ce[0]).v - c[2].v + c[2-shx].v;
++			a = v[1].v * vv1[i].v;
++			v[1].v = a + vi1[i].v * t;
++
++			t = c[1].v - c[1-shx].v - c[0].v + c[0-shy].v;
++			a = v[2].v * vv2[i].v;
++			v[2].v = a + vi2[i].v * t;
++		}
++	}
++}
++
++void Engine_SSE_Compressed::UpdateCurrents_IJKN(unsigned int startX, unsigned int numX)
++{
++	const f4vector* __restrict volt = f4_volt_ptr->data();
++	f4vector* __restrict curr = f4_curr_ptr->data();
++	const unsigned int* __restrict op_idx = Op->m_Op_index.data();
++	const f4vector* __restrict ii0 = Op->f4_ii_Compressed[0].data();
++	const f4vector* __restrict ii1 = Op->f4_ii_Compressed[1].data();
++	const f4vector* __restrict ii2 = Op->f4_ii_Compressed[2].data();
++	const f4vector* __restrict iv0 = Op->f4_iv_Compressed[0].data();
++	const f4vector* __restrict iv1 = Op->f4_iv_Compressed[1].data();
++	const f4vector* __restrict iv2 = Op->f4_iv_Compressed[2].data();
++	const ptrdiff_t sx = f4_volt_ptr->stride(1);
++	const ptrdiff_t sy = f4_volt_ptr->stride(2);
++	const ptrdiff_t isx = Op->m_Op_index.stride(0);
++	const ptrdiff_t isy = Op->m_Op_index.stride(1);
++	const unsigned int ny = numLines[1];
++	const unsigned int nvec = numVectors;
++
++	for (unsigned int x=startX; x<startX+numX; ++x)
++	{
++		for (unsigned int y=0; y+1<ny; ++y)
++		{
++			const f4vector* __restrict v = volt + x*sx + y*sy;
++			f4vector* __restrict c = curr + x*sx + y*sy;
++			const unsigned int* __restrict ip = op_idx + x*isx + y*isy;
++			f4vector_t a, t;
++			for (unsigned int z=0; z+1<nvec; ++z)
++			{
++				const unsigned int i = ip[z];
++				const f4vector* __restrict vz = v + 3*z;
++				f4vector* __restrict cz = c + 3*z;
++
++				// x-pol
++				t = vz[2].v - vz[2+sy].v - vz[1].v + vz[1+3].v;
++				a = cz[0].v * ii0[i].v;
++				cz[0].v = a + iv0[i].v * t;
++
++				// y-pol
++				t = vz[0].v - vz[0+3].v - vz[2].v + vz[2+sx].v;
++				a = cz[1].v * ii1[i].v;
++				cz[1].v = a + iv1[i].v * t;
++
++				// z-pol
++				t = vz[1].v - vz[1+sx].v - vz[0].v + vz[0+sy].v;
++				a = cz[2].v * ii2[i].v;
++				cz[2].v = a + iv2[i].v * t;
++			}
++
++			// last z-vector
++			const unsigned int i = ip[nvec-1];
++			const f4vector* __restrict ve = v + 3*(nvec-1);
++			f4vector* __restrict ce = c + 3*(nvec-1);
++
++			t = ve[2].v - ve[2+sy].v - ve[1].v + ShiftLanesDown(v[1]).v;
++			a = ce[0].v * ii0[i].v;
++			ce[0].v = a + iv0[i].v * t;
++
++			t = ve[0].v - ShiftLanesDown(v[0]).v - ve[2].v + ve[2+sx].v;
++			a = ce[1].v * ii1[i].v;
++			ce[1].v = a + iv1[i].v * t;
++
++			t = ve[1].v - ve[1+sx].v - ve[0].v + ve[0+sy].v;
++			a = ce[2].v * ii2[i].v;
++			ce[2].v = a + iv2[i].v * t;
++		}
++	}
++}
+diff --git a/FDTD/engine_sse_compressed.h b/FDTD/engine_sse_compressed.h
+index ab86cc8..9e96e9b 100644
+--- a/FDTD/engine_sse_compressed.h
++++ b/FDTD/engine_sse_compressed.h
+@@ -33,6 +33,16 @@ protected:
+ 
+ 	virtual void UpdateVoltages(unsigned int startX, unsigned int numX);
+ 	virtual void UpdateCurrents(unsigned int startX, unsigned int numX);
++
++	//! The original updates, for any array layout.
++	void UpdateVoltages_Generic(unsigned int startX, unsigned int numX);
++	void UpdateCurrents_Generic(unsigned int startX, unsigned int numX);
++	//! Same arithmetic in the same order (bit-identical), for the default I-J-K-N layout with
++	//! loop invariants in local restrict pointers (union stores otherwise make the compiler reload them).
++	void UpdateVoltages_IJKN(unsigned int startX, unsigned int numX);
++	void UpdateCurrents_IJKN(unsigned int startX, unsigned int numX);
++	//! true if both field arrays use the I-J-K-N layout (component stride 1, z stride 3)
++	bool UseIJKN() const;
+ };
+ 
+ #endif // ENGINE_SSE_COMPRESSED_H
+diff --git a/FDTD/extensions/engine_ext_excitation.cpp b/FDTD/extensions/engine_ext_excitation.cpp
+index d26c9fd..fc94894 100644
+--- a/FDTD/extensions/engine_ext_excitation.cpp
++++ b/FDTD/extensions/engine_ext_excitation.cpp
+@@ -18,11 +18,25 @@
+ #include "engine_ext_excitation.h"
+ #include "operator_ext_excitation.h"
+ #include "FDTD/engine_sse.h"
++#include <algorithm>
+ 
+ Engine_Ext_Excitation::Engine_Ext_Excitation(Operator_Ext_Excitation* op_ext) : Engine_Extension(op_ext)
+ {
+ 	m_Op_Exc = op_ext;
+ 	m_Priority = ENG_EXT_PRIO_EXCITATION;
++	SortByLine(m_Op_Exc->Volt_index[0], m_Op_Exc->Volt_Count, m_VoltOrder, m_VoltX);
++	SortByLine(m_Op_Exc->Curr_index[0], m_Op_Exc->Curr_Count, m_CurrOrder, m_CurrX);
++}
++
++void Engine_Ext_Excitation::SortByLine(const unsigned int* x, unsigned int count, std::vector<unsigned int>& order, std::vector<unsigned int>& sorted_x)
++{
++	order.resize(count);
++	for (unsigned int n=0; n<count; ++n)
++		order[n] = n;
++	std::stable_sort(order.begin(), order.end(), [x](unsigned int a, unsigned int b) {return x[a]<x[b];});
++	sorted_x.resize(count);
++	for (unsigned int n=0; n<count; ++n)
++		sorted_x[n] = x[order[n]];
+ }
+ 
+ Engine_Ext_Excitation::~Engine_Ext_Excitation()
+@@ -31,7 +45,7 @@ Engine_Ext_Excitation::~Engine_Ext_Excitation()
+ }
+ 
+ template <typename EngType>
+-void Engine_Ext_Excitation::Apply2VoltagesImpl(EngType* eng)
++void Engine_Ext_Excitation::Apply2VoltagesImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1)
+ {
+ 	//soft voltage excitation here (E-field excite)
+ 	int exc_pos;
+@@ -45,8 +59,9 @@ void Engine_Ext_Excitation::Apply2VoltagesImpl(EngType* eng)
+ 	if (m_Op_Exc->m_Exc->GetSignalPeriod()>0)
+ 		p = int(m_Op_Exc->m_Exc->GetSignalPeriod()/m_Op_Exc->m_Exc->GetTimestep());
+ 
+-	for (unsigned int n=0; n<m_Op_Exc->Volt_Count; ++n)
++	for (unsigned int k=n0; k<n1; ++k)
+ 	{
++		const unsigned int n = order ? order[k] : k;
+ 		exc_pos = numTS - (int)m_Op_Exc->Volt_delay[n];
+ 		exc_pos *= (exc_pos>0);
+ 		exc_pos %= p;
+@@ -61,11 +76,20 @@ void Engine_Ext_Excitation::Apply2VoltagesImpl(EngType* eng)
+ 
+ void Engine_Ext_Excitation::Apply2Voltages()
+ {
+-	ENG_DISPATCH(Apply2VoltagesImpl);
++	ENG_DISPATCH_ARGS(Apply2VoltagesImpl, (const unsigned int*)NULL, 0u, m_Op_Exc->Volt_Count);
++}
++
++void Engine_Ext_Excitation::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	// the fused sweep runs on the SSE engines only
++	const unsigned int n0 = std::lower_bound(m_VoltX.begin(), m_VoltX.end(), x0) - m_VoltX.begin();
++	const unsigned int n1 = std::lower_bound(m_VoltX.begin(), m_VoltX.end(), x1) - m_VoltX.begin();
++	if (n0<n1)
++		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, m_VoltOrder.data(), n0, n1);
+ }
+ 
+ template <typename EngType>
+-void Engine_Ext_Excitation::Apply2CurrentImpl(EngType* eng)
++void Engine_Ext_Excitation::Apply2CurrentImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1)
+ {
+ 	//soft current excitation here (H-field excite)
+ 	int exc_pos;
+@@ -79,8 +103,9 @@ void Engine_Ext_Excitation::Apply2CurrentImpl(EngType* eng)
+ 	if (m_Op_Exc->m_Exc->GetSignalPeriod()>0)
+ 		p = int(m_Op_Exc->m_Exc->GetSignalPeriod()/m_Op_Exc->m_Exc->GetTimestep());
+ 
+-	for (unsigned int n=0; n<m_Op_Exc->Curr_Count; ++n)
++	for (unsigned int k=n0; k<n1; ++k)
+ 	{
++		const unsigned int n = order ? order[k] : k;
+ 		exc_pos = numTS - (int)m_Op_Exc->Curr_delay[n];
+ 		exc_pos *= (exc_pos>0);
+ 		exc_pos %= p;
+@@ -95,5 +120,13 @@ void Engine_Ext_Excitation::Apply2CurrentImpl(EngType* eng)
+ 
+ void Engine_Ext_Excitation::Apply2Current()
+ {
+-	ENG_DISPATCH(Apply2CurrentImpl);
++	ENG_DISPATCH_ARGS(Apply2CurrentImpl, (const unsigned int*)NULL, 0u, m_Op_Exc->Curr_Count);
++}
++
++void Engine_Ext_Excitation::Apply2CurrentLines(unsigned int x0, unsigned int x1)
++{
++	const unsigned int n0 = std::lower_bound(m_CurrX.begin(), m_CurrX.end(), x0) - m_CurrX.begin();
++	const unsigned int n1 = std::lower_bound(m_CurrX.begin(), m_CurrX.end(), x1) - m_CurrX.begin();
++	if (n0<n1)
++		Apply2CurrentImpl<Engine_sse>((Engine_sse*)m_Eng, m_CurrOrder.data(), n0, n1);
+ }
+diff --git a/FDTD/extensions/engine_ext_excitation.h b/FDTD/extensions/engine_ext_excitation.h
+index 13af20f..20b24d9 100644
+--- a/FDTD/extensions/engine_ext_excitation.h
++++ b/FDTD/extensions/engine_ext_excitation.h
+@@ -31,17 +31,28 @@ public:
+ 	Engine_Ext_Excitation(Operator_Ext_Excitation* op_ext);
+ 	virtual ~Engine_Ext_Excitation();
+ 
++	virtual unsigned int GetUsedHooks() const {return APPLY_VOLT | APPLY_CURR | LINE_HOOKS;}
++
+ 	virtual void Apply2Voltages();
+ 	virtual void Apply2Current();
+ 
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
++	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
++
+ protected:
++	//! excite the points order[n0..n1) (the points n0..n1 if order is NULL)
+ 	template <typename EngType>
+-	void Apply2VoltagesImpl(EngType* eng);
++	void Apply2VoltagesImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1);
+ 
+ 	template <typename EngType>
+-	void Apply2CurrentImpl(EngType* eng);
++	void Apply2CurrentImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1);
+ 
+ 	Operator_Ext_Excitation* m_Op_Exc;
++
++	//! the excitation points sorted by x-line (stable, so points on the same cell keep their order), for the line hooks
++	std::vector<unsigned int> m_VoltOrder, m_VoltX;
++	std::vector<unsigned int> m_CurrOrder, m_CurrX;
++	static void SortByLine(const unsigned int* x, unsigned int count, std::vector<unsigned int>& order, std::vector<unsigned int>& sorted_x);
+ };
+ 
+ #endif // ENGINE_EXT_EXCITATION_H
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.cpp b/FDTD/extensions/engine_ext_lumpedRLC.cpp
+index 0b15fde..2f06b1a 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.cpp
++++ b/FDTD/extensions/engine_ext_lumpedRLC.cpp
+@@ -21,6 +21,7 @@
+ #include "operator_ext_lumpedRLC.h"
+ 
+ #include "FDTD/engine_sse.h"
++#include <algorithm>
+ 
+ Engine_Ext_LumpedRLC::Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC* op_ext_RLC) : Engine_Extension(op_ext_RLC)
+ {
+@@ -30,11 +31,22 @@ Engine_Ext_LumpedRLC::Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC* op_ext_RLC) :
+ 	v_Vdn		= new FDTD_FLOAT*[3];
+ 	v_Jn		= new FDTD_FLOAT*[3];
+ 	v_Il		= NULL;
++	m_RotatedVd = -1;
++	m_RotatedJ = -1;
+ 
+ 	// No additional allocations are required if there are no actual lumped elements.
+ 	if (!(m_Op_Ext_RLC->RLC_count))
+ 		return;
+ 
++	m_Order.resize(m_Op_Ext_RLC->RLC_count);
++	for (unsigned int n=0; n<m_Order.size(); ++n)
++		m_Order[n] = n;
++	const unsigned int* x = m_Op_Ext_RLC->v_RLC_pos[0];
++	std::stable_sort(m_Order.begin(), m_Order.end(), [x](unsigned int a, unsigned int b) {return x[a]<x[b];});
++	m_X.resize(m_Order.size());
++	for (unsigned int n=0; n<m_Order.size(); ++n)
++		m_X[n] = x[m_Order[n]];
++
+ 	// Initialize ADE containers for currents and voltages
+ 	v_Il		= new FDTD_FLOAT[m_Op_Ext_RLC->RLC_count];
+ 
+@@ -82,49 +94,80 @@ Engine_Ext_LumpedRLC::~Engine_Ext_LumpedRLC()
+ 
+ }
+ 
+-void Engine_Ext_LumpedRLC::DoPreVoltageUpdates()
++void Engine_Ext_LumpedRLC::Rotate(FDTD_FLOAT** c)
+ {
+-	if (!m_Op_Ext_RLC->RLC_count)
++	FDTD_FLOAT	*v_temp;
++	v_temp = c[2];
++	c[2] = c[1];
++	c[1] = c[0];
++	c[0] = v_temp;
++}
++
++void Engine_Ext_LumpedRLC::RotateOnce(std::atomic<int>& stamp, FDTD_FLOAT** c)
++{
++	const int ts = m_Eng->GetNumberOfTimesteps();
++	if (stamp.load(std::memory_order_acquire)==ts)
++		return;
++	std::lock_guard<std::mutex> lock(m_RotateMutex);
++	if (stamp.load(std::memory_order_relaxed)==ts)
+ 		return;
++	Rotate(c);
++	stamp.store(ts, std::memory_order_release);
++}
+ 
+-	// Iterate Vd containers
+-	FDTD_FLOAT	*v_temp;
+-	v_temp = v_Vdn[2];
+-	v_Vdn[2] = v_Vdn[1];
+-	v_Vdn[1] = v_Vdn[0];
+-	v_Vdn[0] = v_temp;
++void Engine_Ext_LumpedRLC::LineRange(unsigned int x0, unsigned int x1, unsigned int& n0, unsigned int& n1) const
++{
++	n0 = std::lower_bound(m_X.begin(), m_X.end(), x0) - m_X.begin();
++	n1 = std::lower_bound(m_X.begin(), m_X.end(), x1) - m_X.begin();
++}
+ 
++void Engine_Ext_LumpedRLC::UpdateInductorCurrents(const unsigned int* order, unsigned int n0, unsigned int n1)
++{
+ 	// In pre-process, only update the parallel inductor current:
+-	for (unsigned int pIdx = 0 ; pIdx < m_Op_Ext_RLC->RLC_count ; pIdx++)
++	for (unsigned int k = n0 ; k < n1 ; k++)
++	{
++		const unsigned int pIdx = order ? order[k] : k;
+ 		v_Il[pIdx] += (m_Op_Ext_RLC->v_RLC_i2v[pIdx])*(m_Op_Ext_RLC->v_RLC_ilv[pIdx])*v_Vdn[1][pIdx];
++	}
++}
++
++void Engine_Ext_LumpedRLC::DoPreVoltageUpdates()
++{
++	if (!m_Op_Ext_RLC->RLC_count)
++		return;
+ 
+-	return;
++	// Iterate Vd containers
++	Rotate(v_Vdn);
++	UpdateInductorCurrents(NULL, 0, m_Op_Ext_RLC->RLC_count);
+ }
+ 
+-template <typename EngType>
+-void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng)
++void Engine_Ext_LumpedRLC::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	if (!m_Op_Ext_RLC->RLC_count)
+ 		return;
++	RotateOnce(m_RotatedVd, v_Vdn);
++	unsigned int n0, n1;
++	LineRange(x0, x1, n0, n1);
++	UpdateInductorCurrents(m_Order.data(), n0, n1);
++}
+ 
++template <typename EngType>
++void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1)
++{
+ 	unsigned int **pos = m_Op_Ext_RLC->v_RLC_pos;
+ 	int *dir = m_Op_Ext_RLC->v_RLC_dir;
+ 
+-	// Iterate J containers
+-	FDTD_FLOAT	*v_temp;
+-	v_temp = v_Jn[2];
+-	v_Jn[2] = v_Jn[1];
+-	v_Jn[1] = v_Jn[0];
+-	v_Jn[0] = v_temp;
+-
+-
+ 	// Read engine calculated node voltage
+-	for (unsigned int pIdx = 0 ; pIdx < m_Op_Ext_RLC->RLC_count ; pIdx++)
++	for (unsigned int k = n0 ; k < n1 ; k++)
++	{
++		const unsigned int pIdx = order ? order[k] : k;
+ 		v_Vdn[0][pIdx] = eng->EngType::GetVolt(dir[pIdx],pos[0][pIdx],pos[1][pIdx],pos[2][pIdx]);
++	}
+ 
+ 	// Post process: Calculate node voltage with respect to the lumped RLC auxilliary quantity, J
+-	for (unsigned int pIdx = 0 ; pIdx < m_Op_Ext_RLC->RLC_count ; pIdx++)
++	for (unsigned int k = n0 ; k < n1 ; k++)
+ 	{
++		const unsigned int pIdx = order ? order[k] : k;
+ 		// Calculate updated node voltage, with series and parallel additions
+ 		v_Vdn[0][pIdx] = 	(m_Op_Ext_RLC->v_RLC_vvd[pIdx])*(
+ 							v_Vdn[0][pIdx] - v_Il[pIdx]						// Addition for Parallel inductor
+@@ -145,11 +188,31 @@ void Engine_Ext_LumpedRLC::Apply2VoltagesImpl(EngType* eng)
+ 
+ 
+ 	// Update node voltage
+-	for (unsigned int pIdx = 0 ; pIdx < m_Op_Ext_RLC->RLC_count ; pIdx++)
++	for (unsigned int k = n0 ; k < n1 ; k++)
++	{
++		const unsigned int pIdx = order ? order[k] : k;
+ 		eng->EngType::SetVolt(dir[pIdx],pos[0][pIdx],pos[1][pIdx],pos[2][pIdx],v_Vdn[0][pIdx]);
++	}
+ }
+ 
+ void Engine_Ext_LumpedRLC::Apply2Voltages()
+ {
+-	ENG_DISPATCH(Apply2VoltagesImpl);
++	if (!m_Op_Ext_RLC->RLC_count)
++		return;
++
++	// Iterate J containers
++	Rotate(v_Jn);
++	ENG_DISPATCH_ARGS(Apply2VoltagesImpl, (const unsigned int*)NULL, 0u, m_Op_Ext_RLC->RLC_count);
++}
++
++void Engine_Ext_LumpedRLC::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	if (!m_Op_Ext_RLC->RLC_count)
++		return;
++	RotateOnce(m_RotatedJ, v_Jn);
++	unsigned int n0, n1;
++	LineRange(x0, x1, n0, n1);
++	// the fused sweep runs on the SSE engines only
++	if (n0<n1)
++		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, m_Order.data(), n0, n1);
+ }
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.h b/FDTD/extensions/engine_ext_lumpedRLC.h
+index e5ccfa6..6f8636e 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.h
++++ b/FDTD/extensions/engine_ext_lumpedRLC.h
+@@ -23,6 +23,9 @@
+ #include "FDTD/engine.h"
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
++#include <atomic>
++#include <mutex>
++#include <vector>
+ 
+ class Operator_Ext_LumpedRLC;
+ 
+@@ -37,12 +40,31 @@ public:
+ 	Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC *op_ext_RLC);
+ 	virtual ~Engine_Ext_LumpedRLC();
+ 
++	virtual unsigned int GetUsedHooks() const {return PRE_VOLT | APPLY_VOLT | LINE_HOOKS;}
++
+ 	virtual void DoPreVoltageUpdates();
+ 	virtual void Apply2Voltages();
+ 
++	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
++
+ protected:
++	//! update the elements order[n0..n1) (the elements n0..n1 if order is NULL)
+ 	template <typename EngType>
+-	void Apply2VoltagesImpl(EngType* eng);
++	void Apply2VoltagesImpl(EngType* eng, const unsigned int* order, unsigned int n0, unsigned int n1);
++	void UpdateInductorCurrents(const unsigned int* order, unsigned int n0, unsigned int n1);
++
++	//! the [n],[n-1],[n-2] containers move on once per timestep
++	static void Rotate(FDTD_FLOAT** c);
++	//! line hooks: the first call of a timestep rotates (the other threads wait for it)
++	void RotateOnce(std::atomic<int>& stamp, FDTD_FLOAT** c);
++	std::mutex m_RotateMutex;
++	std::atomic<int> m_RotatedVd, m_RotatedJ; //!< timestep of the last rotation by a line hook
++
++	//! the elements sorted by x-line, for the line hooks
++	std::vector<unsigned int> m_Order, m_X;
++	//! elements [n0, n1) of m_Order are on the x-lines [x0, x1)
++	void LineRange(unsigned int x0, unsigned int x1, unsigned int& n0, unsigned int& n1) const;
+ 
+ 	Operator_Ext_LumpedRLC* m_Op_Ext_RLC;
+ 
+diff --git a/FDTD/extensions/engine_ext_mur_abc.cpp b/FDTD/extensions/engine_ext_mur_abc.cpp
+index fb4f951..f25c898 100644
+--- a/FDTD/extensions/engine_ext_mur_abc.cpp
++++ b/FDTD/extensions/engine_ext_mur_abc.cpp
+@@ -21,6 +21,7 @@
+ #include "FDTD/engine_sse.h"
+ #include "tools/useful.h"
+ #include "operator_ext_excitation.h"
++#include <algorithm>
+ 
+ using std::cerr;
+ using std::endl;
+@@ -62,6 +63,10 @@ Engine_Ext_Mur_ABC::Engine_Ext_Mur_ABC(Operator_Ext_Mur_ABC* op_ext) :
+ 		cerr << "Engine_Ext_Mur_ABC::Engine_Ext_Mur_ABC: Warning: Excitation inside the Mur-ABC #" <<  m_ny << "-" << (int)(m_LineNr>0) << " found!!!!  Mur-ABC will be switched on after excitation is done at " << m_start_TS << " timesteps!!! " << endl;
+ 	}
+ 
++	m_Fast = false;
++	m_FastChecked = false;
++	m_OffsetNyP = m_OffsetNyPP = m_OffsetShift = 0;
++
+ 	SetNumberOfThreads(1);
+ }
+ 
+@@ -79,8 +84,238 @@ void Engine_Ext_Mur_ABC::SetNumberOfThreads(int nrThread)
+ 	m_start.at(0)=0;
+ 	for (size_t n=1; n<m_numX.size(); ++n)
+ 		m_start.at(n) = m_start.at(n-1) + m_numX.at(n-1);
++
++	if (!m_FastChecked && m_Eng)
++		SetupFast();
++}
++
++void Engine_Ext_Mur_ABC::SetupFast()
++{
++	m_FastChecked = true;
++	m_Fast = false;
++	if (m_Eng->GetType()!=Engine::SSE)
++		return;
++	ArrayLib::ArrayENG<f4vector>* V = ((Engine_sse*)m_Eng)->f4_volt_ptr;
++	const unsigned int nvec = V->extent(3);
++	if ((uint64_t)V->size()*4 >= (1ull<<32))
++		return;
++	// float index of component n at pos: 4*linearIndex(n, x, y, z%nvec) + z/nvec
++	struct FloatIndex
++	{
++		ArrayLib::ArrayENG<f4vector>* V; unsigned int nvec;
++		int64_t operator()(unsigned int n, const unsigned int pos[3]) const
++		{return 4*(int64_t)V->linearIndex({n, pos[0], pos[1], pos[2]%nvec}) + pos[2]/nvec;}
++	} idx = {V, nvec};
++
++	m_FloatIndex.resize((size_t)m_numLines[0]*m_numLines[1]);
++	unsigned int pos[] = {0,0,0};
++	unsigned int pos_shift[] = {0,0,0};
++	pos[m_ny] = m_LineNr;
++	pos_shift[m_ny] = m_LineNr_Shift;
++	for (unsigned int i=0; i<m_numLines[0]; ++i)
++		for (unsigned int j=0; j<m_numLines[1]; ++j)
++		{
++			pos[m_nyP] = pos_shift[m_nyP] = i;
++			pos[m_nyPP] = pos_shift[m_nyPP] = j;
++			const int64_t base = idx(0, pos);
++			const int64_t oP = idx(m_nyP, pos) - base, oPP = idx(m_nyPP, pos) - base;
++			const int64_t oS = idx(m_nyP, pos_shift) - idx(m_nyP, pos);
++			if ((i==0) && (j==0))
++			{
++				m_OffsetNyP = oP;
++				m_OffsetNyPP = oPP;
++				m_OffsetShift = oS;
++			}
++			// the offsets must be the same for all cells of the face
++			if ((oP!=m_OffsetNyP) || (oPP!=m_OffsetNyPP) || (oS!=m_OffsetShift) ||
++				(idx(m_nyPP, pos_shift)-idx(m_nyPP, pos)!=oS))
++				return;
++			m_FloatIndex[(size_t)i*m_numLines[1]+j] = (unsigned int)base;
++		}
++
++	// face cells by x-line in memory order, for the line hooks
++	const unsigned int NX = V->extent(1);
++	std::vector<std::vector<unsigned int> > line(NX);
++	for (unsigned int i=0; i<m_numLines[0]; ++i)
++		for (unsigned int j=0; j<m_numLines[1]; ++j)
++		{
++			pos[m_nyP] = i;
++			pos[m_nyPP] = j;
++			line[pos[0]].push_back(i*m_numLines[1]+j);
++		}
++	const bool aligned = (m_OffsetNyP%4==0) && (m_OffsetNyPP%4==0) && (m_OffsetShift%4==0);
++	const FDTD_FLOAT* cP = m_Mur_Coeff_nyP.data();
++	const FDTD_FLOAT* cPP = m_Mur_Coeff_nyPP.data();
++	m_VecStart.assign(1, 0);
++	m_ScStart.assign(1, 0);
++	m_VecIndex.clear(); m_VecCoeffP.clear(); m_VecCoeffPP.clear();
++	m_ScIndex.clear(); m_ScCoeffP.clear(); m_ScCoeffPP.clear();
++	for (unsigned int x=0; x<NX; ++x)
++	{
++		std::vector<unsigned int>& cells = line[x];
++		std::sort(cells.begin(), cells.end(), [&](unsigned int a, unsigned int b) {return m_FloatIndex[a]<m_FloatIndex[b];});
++		for (size_t n=0; n<cells.size();)
++		{
++			const unsigned int f = m_FloatIndex[cells[n]];
++			if (aligned && (f%4==0) && (n+3<cells.size()) && (m_FloatIndex[cells[n+3]]==f+3))
++			{
++				// sorted and distinct: the four floats of one f4vector
++				f4vector p, pp;
++				for (int l=0; l<4; ++l)
++				{
++					p.f[l] = cP[cells[n+l]];
++					pp.f[l] = cPP[cells[n+l]];
++				}
++				m_VecIndex.push_back(f/4);
++				m_VecCoeffP.push_back(p);
++				m_VecCoeffPP.push_back(pp);
++				n += 4;
++				continue;
++			}
++			m_ScIndex.push_back(f);
++			m_ScCoeffP.push_back(cP[cells[n]]);
++			m_ScCoeffPP.push_back(cPP[cells[n]]);
++			++n;
++		}
++		m_VecStart.push_back(m_VecIndex.size());
++		m_ScStart.push_back(m_ScIndex.size());
++	}
++	m_VecP.resize(m_VecIndex.size());
++	m_VecPP.resize(m_VecIndex.size());
++	m_ScP.resize(m_ScIndex.size());
++	m_ScPP.resize(m_ScIndex.size());
++	m_Fast = true;
++}
++
++namespace
++{
++//! The face cell updates of the fast path, same arithmetic in the same order as the templated hooks (bit-identical).
++struct MurFast
++{
++	FDTD_FLOAT* E;
++	const FDTD_FLOAT* cP;
++	const FDTD_FLOAT* cPP;
++	FDTD_FLOAT* vP;
++	FDTD_FLOAT* vPP;
++	const unsigned int* fi;
++	ptrdiff_t oP, oPP, oS;
++
++	inline void Pre(size_t k) const
++	{
++		const FDTD_FLOAT* e = E + fi[k];
++		vP[k]  = e[oP+oS]  - cP[k]  * e[oP];
++		vPP[k] = e[oPP+oS] - cPP[k] * e[oPP];
++	}
++	inline void Post(size_t k) const
++	{
++		const FDTD_FLOAT* e = E + fi[k];
++		vP[k]  += cP[k]  * e[oP+oS];
++		vPP[k] += cPP[k] * e[oPP+oS];
++	}
++	inline void Apply(size_t k) const
++	{
++		FDTD_FLOAT* e = E + fi[k];
++		e[oP]  = vP[k];
++		e[oPP] = vPP[k];
++	}
++};
++}
++
++#define MUR_FAST_DATA \
++	const MurFast d = {(FDTD_FLOAT*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_Mur_Coeff_nyP.data(), m_Mur_Coeff_nyPP.data(), \
++					   m_volt_nyP.data(), m_volt_nyPP.data(), m_FloatIndex.data(), m_OffsetNyP, m_OffsetNyPP, m_OffsetShift};
++
++void Engine_Ext_Mur_ABC::DoPreVoltageUpdatesFast(int threadID)
++{
++	if (IsActive()==false) return;
++	if (threadID>=m_NrThreads)
++		return;
++	MUR_FAST_DATA
++	const size_t k0 = (size_t)m_start.at(threadID)*m_numLines[1];
++	const size_t k1 = k0 + (size_t)m_numX.at(threadID)*m_numLines[1];
++	for (size_t k=k0; k<k1; ++k)
++		d.Pre(k);
++}
++
++void Engine_Ext_Mur_ABC::DoPostVoltageUpdatesFast(int threadID)
++{
++	if (IsActive()==false) return;
++	if (threadID>=m_NrThreads)
++		return;
++	MUR_FAST_DATA
++	const size_t k0 = (size_t)m_start.at(threadID)*m_numLines[1];
++	const size_t k1 = k0 + (size_t)m_numX.at(threadID)*m_numLines[1];
++	for (size_t k=k0; k<k1; ++k)
++		d.Post(k);
++}
++
++void Engine_Ext_Mur_ABC::Apply2VoltagesFast(int threadID)
++{
++	if (IsActive()==false) return;
++	if (threadID>=m_NrThreads)
++		return;
++	MUR_FAST_DATA
++	const size_t k0 = (size_t)m_start.at(threadID)*m_numLines[1];
++	const size_t k1 = k0 + (size_t)m_numX.at(threadID)*m_numLines[1];
++	for (size_t k=k0; k<k1; ++k)
++		d.Apply(k);
+ }
+ 
++// The line hooks: the vectors with the same arithmetic per lane as MurFast (bit-identical), then the single cells
++#define MUR_LINE_DATA \
++	f4vector* E4 = ((Engine_sse*)m_Eng)->f4_volt_ptr->data(); \
++	const ptrdiff_t oP = m_OffsetNyP/4, oPP = m_OffsetNyPP/4, oS = m_OffsetShift/4; \
++	const MurFast d = {(FDTD_FLOAT*)E4, m_ScCoeffP.data(), m_ScCoeffPP.data(), m_ScP.data(), m_ScPP.data(), m_ScIndex.data(), \
++					   m_OffsetNyP, m_OffsetNyPP, m_OffsetShift};
++
++void Engine_Ext_Mur_ABC::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	if (IsActive()==false) return;
++	MUR_LINE_DATA
++	for (unsigned int g=m_VecStart[x0]; g<m_VecStart[x1]; ++g)
++	{
++		const f4vector* e = E4 + m_VecIndex[g];
++		m_VecP[g].v  = e[oP+oS].v  - m_VecCoeffP[g].v  * e[oP].v;
++		m_VecPP[g].v = e[oPP+oS].v - m_VecCoeffPP[g].v * e[oPP].v;
++	}
++	for (unsigned int k=m_ScStart[x0]; k<m_ScStart[x1]; ++k)
++		d.Pre(k);
++}
++
++void Engine_Ext_Mur_ABC::DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	if (IsActive()==false) return;
++	MUR_LINE_DATA
++	for (unsigned int g=m_VecStart[x0]; g<m_VecStart[x1]; ++g)
++	{
++		const f4vector* e = E4 + m_VecIndex[g];
++		m_VecP[g].v  += m_VecCoeffP[g].v  * e[oP+oS].v;
++		m_VecPP[g].v += m_VecCoeffPP[g].v * e[oPP+oS].v;
++	}
++	for (unsigned int k=m_ScStart[x0]; k<m_ScStart[x1]; ++k)
++		d.Post(k);
++}
++
++void Engine_Ext_Mur_ABC::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	if (IsActive()==false) return;
++	MUR_LINE_DATA
++	for (unsigned int g=m_VecStart[x0]; g<m_VecStart[x1]; ++g)
++	{
++		f4vector* e = E4 + m_VecIndex[g];
++		e[oP].v  = m_VecP[g].v;
++		e[oPP].v = m_VecPP[g].v;
++	}
++	for (unsigned int k=m_ScStart[x0]; k<m_ScStart[x1]; ++k)
++		d.Apply(k);
++}
++
++void Engine_Ext_Mur_ABC::GetCoupledLines(std::vector<unsigned int>& lines) const
++{
++	// on an x-face the hooks read the line next to the face
++	if (m_ny==0)
++		lines.push_back(std::min<unsigned int>(m_LineNr, m_LineNr_Shift));
++}
+ 
+ template <typename EngType>
+ void Engine_Ext_Mur_ABC::DoPreVoltageUpdatesImpl(EngType* eng, int threadID)
+@@ -117,6 +352,8 @@ void Engine_Ext_Mur_ABC::DoPreVoltageUpdatesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_Mur_ABC::DoPreVoltageUpdates(int threadID)
+ {
++	if (m_Fast)
++		return DoPreVoltageUpdatesFast(threadID);
+ 	ENG_DISPATCH_ARGS(DoPreVoltageUpdatesImpl, threadID);
+ }
+ 
+@@ -148,6 +385,8 @@ void Engine_Ext_Mur_ABC::DoPostVoltageUpdatesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_Mur_ABC::DoPostVoltageUpdates(int threadID)
+ {
++	if (m_Fast)
++		return DoPostVoltageUpdatesFast(threadID);
+ 	ENG_DISPATCH_ARGS(DoPostVoltageUpdatesImpl, threadID);
+ }
+ 
+@@ -177,5 +416,7 @@ void Engine_Ext_Mur_ABC::Apply2VoltagesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_Mur_ABC::Apply2Voltages(int threadID)
+ {
++	if (m_Fast)
++		return Apply2VoltagesFast(threadID);
+ 	ENG_DISPATCH_ARGS(Apply2VoltagesImpl, threadID);
+ }
+diff --git a/FDTD/extensions/engine_ext_mur_abc.h b/FDTD/extensions/engine_ext_mur_abc.h
+index 62633c1..384fb70 100644
+--- a/FDTD/extensions/engine_ext_mur_abc.h
++++ b/FDTD/extensions/engine_ext_mur_abc.h
+@@ -33,6 +33,7 @@ public:
+ 	virtual ~Engine_Ext_Mur_ABC();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
++	virtual unsigned int GetUsedHooks() const {return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS : 0);}
+ 
+ 	virtual void DoPreVoltageUpdates() {Engine_Ext_Mur_ABC::DoPreVoltageUpdates(0);}
+ 	virtual void DoPreVoltageUpdates(int threadID);
+@@ -44,6 +45,11 @@ public:
+ 	//! The ABC is switched off until this timestep, if an excitation lies on its plane
+ 	unsigned int GetStartTimestep() const {return m_start_TS;}
+ 
++	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
++	virtual void GetCoupledLines(std::vector<unsigned int>& lines) const;
++
+ protected:
+ 	template <typename EngType>
+ 	void DoPreVoltageUpdatesImpl(EngType* eng, int threadID);
+@@ -72,6 +78,26 @@ protected:
+ 	ArrayLib::ArrayIJ<FDTD_FLOAT>& m_Mur_Coeff_nyPP;
+ 	ArrayLib::ArrayIJ<FDTD_FLOAT> m_volt_nyP; //n+1 direction
+ 	ArrayLib::ArrayIJ<FDTD_FLOAT> m_volt_nyPP; //n+2 direction
++
++	//! Fast path for the SSE engines: the float index of every face cell in the f4vector field array
++	//! (component 0), so the hooks need no z%numVectors, z/numVectors per cell. The other component
++	//! and the shifted line are constant offsets from it.
++	bool m_Fast;
++	bool m_FastChecked;
++	std::vector<unsigned int> m_FloatIndex;
++	ptrdiff_t m_OffsetNyP, m_OffsetNyPP, m_OffsetShift;
++	//! The face cells of the line hooks by x-line, in memory order: runs of four cells that fill one
++	//! f4vector (the z-lines of x- and y-faces) are updated as vectors, the other cells one by one.
++	//! Line x: vectors m_VecStart[x] .. m_VecStart[x+1], cells m_ScStart[x] .. m_ScStart[x+1].
++	//! Own coefficient and save arrays in that order (the threaded hooks keep m_volt_nyP/nyPP).
++	std::vector<unsigned int> m_VecStart, m_VecIndex;   //!< f4vector index of component 0
++	std::vector<f4vector> m_VecCoeffP, m_VecCoeffPP, m_VecP, m_VecPP;
++	std::vector<unsigned int> m_ScStart, m_ScIndex;     //!< float index of component 0
++	std::vector<FDTD_FLOAT> m_ScCoeffP, m_ScCoeffPP, m_ScP, m_ScPP;
++	void SetupFast();
++	void DoPreVoltageUpdatesFast(int threadID);
++	void DoPostVoltageUpdatesFast(int threadID);
++	void Apply2VoltagesFast(int threadID);
+ };
+ 
+ #endif // ENGINE_EXT_MUR_ABC_H
+diff --git a/FDTD/extensions/engine_ext_upml.cpp b/FDTD/extensions/engine_ext_upml.cpp
+index b35cb2c..f012995 100644
+--- a/FDTD/extensions/engine_ext_upml.cpp
++++ b/FDTD/extensions/engine_ext_upml.cpp
+@@ -20,6 +20,8 @@
+ #include "FDTD/engine.h"
+ #include "FDTD/engine_sse.h"
+ #include "tools/useful.h"
++#include <cstring>
++#include <algorithm>
+ 
+ Engine_Ext_UPML::Engine_Ext_UPML(Operator_Ext_UPML* op_ext) : Engine_Extension(op_ext)
+ {
+@@ -31,6 +33,10 @@ Engine_Ext_UPML::Engine_Ext_UPML(Operator_Ext_UPML* op_ext) : Engine_Extension(o
+ 	volt_flux.Init("volt_flux", m_Op_UPML->m_numLines);
+ 	curr_flux.Init("curr_flux", m_Op_UPML->m_numLines);
+ 
++	m_Vec = false;
++	m_VecChecked = false;
++	m_nvec = 0;
++
+ 	SetNumberOfThreads(1);
+ }
+ 
+@@ -47,6 +53,269 @@ void Engine_Ext_UPML::SetNumberOfThreads(int nrThread)
+ 	m_start.at(0)=0;
+ 	for (size_t n=1; n<m_numX.size(); ++n)
+ 		m_start.at(n) = m_start.at(n-1) + m_numX.at(n-1);
++
++	if (!m_VecChecked && m_Eng)
++		SetupVectorized();
++	if (m_Vec)
++	{
++		// split the (x,y)-rows instead of the few x-lines of a PML slab
++		m_RowNum = AssignJobs2Threads(m_Op_UPML->m_numLines[0]*m_Op_UPML->m_numLines[1], m_NrThreads, false);
++		m_RowStart.assign(m_NrThreads, 0);
++		for (size_t n=1; n<m_RowNum.size(); ++n)
++			m_RowStart.at(n) = m_RowStart.at(n-1) + m_RowNum.at(n-1);
++		m_RowNum.resize(m_NrThreads, 0);
++	}
++}
++
++#if defined(__GNUC__) || defined(__clang__)
++#define UPML_F4VECTOR 1
++typedef int UPML_v4si __attribute__ ((vector_size (F4VECTOR_SIZE)));
++//! lanes of a where the mask is set, lanes of b elsewhere
++static inline v4sf UPML_Blend(const v4sf m, const v4sf a, const v4sf b)
++{
++	return (v4sf)(((UPML_v4si)a & (UPML_v4si)m) | ((UPML_v4si)b & ~(UPML_v4si)m));
++}
++#endif
++
++void Engine_Ext_UPML::SetupVectorized()
++{
++	m_VecChecked = true;
++	m_Vec = false;
++#ifdef UPML_F4VECTOR
++	if (m_Eng->GetType()!=Engine::SSE)
++		return;
++	Engine_sse* eng = (Engine_sse*)m_Eng;
++	ArrayLib::ArrayENG<f4vector>* V = eng->f4_volt_ptr;
++	ArrayLib::ArrayENG<f4vector>* I = eng->f4_curr_ptr;
++	if ((V->stride(0)!=1) || (V->stride(3)!=3) || (I->stride(0)!=1) || (I->stride(3)!=3) ||
++		(V->stride(1)!=I->stride(1)) || (V->stride(2)!=I->stride(2)))
++		return;
++	const unsigned int nvec = V->extent(3);
++	const unsigned int Nz = m_Op_UPML->m_Op->GetNumberOfLines(2);
++	if ((4*nvec<Nz) || (4*(nvec-1)>=Nz))
++		return;
++	// the f4vector lanes hold z = lane*nvec + v: only a PML over the full z range maps onto whole vectors
++	if ((m_Op_UPML->m_StartPos[2]!=0) || (m_Op_UPML->m_numLines[2]!=Nz))
++		return;
++
++	m_nvec = nvec;
++	const unsigned int NX = m_Op_UPML->m_numLines[0];
++	const unsigned int NY = m_Op_UPML->m_numLines[1];
++	const size_t size = (size_t)NX*NY*nvec*3;
++	f4vector zero;
++	zero.f[0] = zero.f[1] = zero.f[2] = zero.f[3] = 0;
++	m_f4_vv.assign(size, zero);   m_f4_vvfo.assign(size, zero); m_f4_vvfn.assign(size, zero);
++	m_f4_ii.assign(size, zero);   m_f4_iifo.assign(size, zero); m_f4_iifn.assign(size, zero);
++	m_f4_volt_flux.assign(size, zero); m_f4_curr_flux.assign(size, zero);
++	for (unsigned int x=0; x<NX; ++x)
++		for (unsigned int y=0; y<NY; ++y)
++			for (unsigned int v=0; v<nvec; ++v)
++				for (unsigned int n=0; n<3; ++n)
++				{
++					const size_t k = (((size_t)x*NY+y)*nvec+v)*3+n;
++					for (unsigned int l=0; l<4; ++l)
++					{
++						const unsigned int z = l*nvec+v;
++						if (z>=Nz)
++							continue;
++						m_f4_vv[k].f[l]   = m_Op_UPML->vv(n, x, y, z);
++						m_f4_vvfo[k].f[l] = m_Op_UPML->vvfo(n, x, y, z);
++						m_f4_vvfn[k].f[l] = m_Op_UPML->vvfn(n, x, y, z);
++						m_f4_ii[k].f[l]   = m_Op_UPML->ii(n, x, y, z);
++						m_f4_iifo[k].f[l] = m_Op_UPML->iifo(n, x, y, z);
++						m_f4_iifn[k].f[l] = m_Op_UPML->iifn(n, x, y, z);
++						m_f4_volt_flux[k].f[l] = volt_flux(n, x, y, z);
++						m_f4_curr_flux[k].f[l] = curr_flux(n, x, y, z);
++					}
++				}
++	m_f4_LaneMask.assign(nvec, zero);
++	for (unsigned int v=0; v<nvec; ++v)
++		for (unsigned int l=0; l<4; ++l)
++		{
++			const unsigned int bits = (l*nvec+v<Nz) ? 0xFFFFFFFFu : 0u;
++			memcpy(&m_f4_LaneMask[v].f[l], &bits, sizeof(bits));
++		}
++	m_Vec = true;
++#endif
++}
++
++// The f4vector hooks below do the same arithmetic as the scalar ones, lane by lane, in the
++// same order and with the same contractions (bit-identical); lanes outside the mesh are left as they are.
++
++void Engine_Ext_UPML::DoPreVoltageUpdatesRows(unsigned int r0, unsigned int r1)
++{
++#ifdef UPML_F4VECTOR
++	Engine_sse* eng = (Engine_sse*)m_Eng;
++	f4vector* __restrict field = eng->f4_volt_ptr->data();
++	const ptrdiff_t sx = eng->f4_volt_ptr->stride(1), sy = eng->f4_volt_ptr->stride(2);
++	const unsigned int NY = m_Op_UPML->m_numLines[1], nvec = m_nvec;
++	for (unsigned int r=r0; r<r1; ++r)
++	{
++		f4vector* __restrict e = field + (r/NY + m_Op_UPML->m_StartPos[0])*sx + (r%NY + m_Op_UPML->m_StartPos[1])*sy;
++		const size_t b = (size_t)r*nvec*3;
++		const f4vector* __restrict cv  = &m_f4_vv[b];
++		const f4vector* __restrict cfo = &m_f4_vvfo[b];
++		f4vector* __restrict flux = &m_f4_volt_flux[b];
++		for (unsigned int k=0; k<3*nvec; ++k)
++		{
++			const v4sf E = e[k].v, F = flux[k].v;
++			const v4sf p = -(cfo[k].v * F);
++			const v4sf f = cv[k].v * E + p;
++			e[k].v = UPML_Blend(m_f4_LaneMask[k/3].v, F, E);
++			flux[k].v = f;
++		}
++	}
++#else
++	UNUSED(r0);
++	UNUSED(r1);
++#endif
++}
++
++void Engine_Ext_UPML::DoPostVoltageUpdatesRows(unsigned int r0, unsigned int r1)
++{
++#ifdef UPML_F4VECTOR
++	Engine_sse* eng = (Engine_sse*)m_Eng;
++	f4vector* __restrict field = eng->f4_volt_ptr->data();
++	const ptrdiff_t sx = eng->f4_volt_ptr->stride(1), sy = eng->f4_volt_ptr->stride(2);
++	const unsigned int NY = m_Op_UPML->m_numLines[1], nvec = m_nvec;
++	for (unsigned int r=r0; r<r1; ++r)
++	{
++		f4vector* __restrict e = field + (r/NY + m_Op_UPML->m_StartPos[0])*sx + (r%NY + m_Op_UPML->m_StartPos[1])*sy;
++		const size_t b = (size_t)r*nvec*3;
++		const f4vector* __restrict cfn = &m_f4_vvfn[b];
++		f4vector* __restrict flux = &m_f4_volt_flux[b];
++		for (unsigned int k=0; k<3*nvec; ++k)
++		{
++			const v4sf E = e[k].v, f = flux[k].v;
++			const v4sf En = f + cfn[k].v * E;
++			flux[k].v = E;
++			e[k].v = UPML_Blend(m_f4_LaneMask[k/3].v, En, E);
++		}
++	}
++#else
++	UNUSED(r0);
++	UNUSED(r1);
++#endif
++}
++
++void Engine_Ext_UPML::DoPreCurrentUpdatesRows(unsigned int r0, unsigned int r1)
++{
++#ifdef UPML_F4VECTOR
++	Engine_sse* eng = (Engine_sse*)m_Eng;
++	f4vector* __restrict field = eng->f4_curr_ptr->data();
++	const ptrdiff_t sx = eng->f4_curr_ptr->stride(1), sy = eng->f4_curr_ptr->stride(2);
++	const unsigned int NY = m_Op_UPML->m_numLines[1], nvec = m_nvec;
++	for (unsigned int r=r0; r<r1; ++r)
++	{
++		f4vector* __restrict h = field + (r/NY + m_Op_UPML->m_StartPos[0])*sx + (r%NY + m_Op_UPML->m_StartPos[1])*sy;
++		const size_t b = (size_t)r*nvec*3;
++		const f4vector* __restrict ci  = &m_f4_ii[b];
++		const f4vector* __restrict cfo = &m_f4_iifo[b];
++		f4vector* __restrict flux = &m_f4_curr_flux[b];
++		for (unsigned int k=0; k<3*nvec; ++k)
++		{
++			const v4sf H = h[k].v, F = flux[k].v;
++			const v4sf p = -(cfo[k].v * F);
++			const v4sf f = ci[k].v * H + p;
++			h[k].v = UPML_Blend(m_f4_LaneMask[k/3].v, F, H);
++			flux[k].v = f;
++		}
++	}
++#else
++	UNUSED(r0);
++	UNUSED(r1);
++#endif
++}
++
++void Engine_Ext_UPML::DoPostCurrentUpdatesRows(unsigned int r0, unsigned int r1)
++{
++#ifdef UPML_F4VECTOR
++	Engine_sse* eng = (Engine_sse*)m_Eng;
++	f4vector* __restrict field = eng->f4_curr_ptr->data();
++	const ptrdiff_t sx = eng->f4_curr_ptr->stride(1), sy = eng->f4_curr_ptr->stride(2);
++	const unsigned int NY = m_Op_UPML->m_numLines[1], nvec = m_nvec;
++	for (unsigned int r=r0; r<r1; ++r)
++	{
++		f4vector* __restrict h = field + (r/NY + m_Op_UPML->m_StartPos[0])*sx + (r%NY + m_Op_UPML->m_StartPos[1])*sy;
++		const size_t b = (size_t)r*nvec*3;
++		const f4vector* __restrict cfn = &m_f4_iifn[b];
++		f4vector* __restrict flux = &m_f4_curr_flux[b];
++		for (unsigned int k=0; k<3*nvec; ++k)
++		{
++			const v4sf H = h[k].v, f = flux[k].v;
++			const v4sf Hn = f + cfn[k].v * H;
++			flux[k].v = H;
++			h[k].v = UPML_Blend(m_f4_LaneMask[k/3].v, Hn, H);
++		}
++	}
++#else
++	UNUSED(r0);
++	UNUSED(r1);
++#endif
++}
++
++bool Engine_Ext_UPML::LineRows(unsigned int x0, unsigned int x1, unsigned int& r0, unsigned int& r1) const
++{
++	const unsigned int start = m_Op_UPML->m_StartPos[0], NX = m_Op_UPML->m_numLines[0], NY = m_Op_UPML->m_numLines[1];
++	x0 = std::max(x0, start);
++	x1 = std::min(x1, start+NX);
++	if (x0>=x1)
++		return false;
++	r0 = (x0-start)*NY;
++	r1 = (x1-start)*NY;
++	return true;
++}
++
++void Engine_Ext_UPML::DoPreVoltageUpdatesVec(int threadID)
++{
++	if (threadID<m_NrThreads)
++		DoPreVoltageUpdatesRows(m_RowStart[threadID], m_RowStart[threadID]+m_RowNum[threadID]);
++}
++
++void Engine_Ext_UPML::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	unsigned int r0, r1;
++	if (LineRows(x0, x1, r0, r1))
++		DoPreVoltageUpdatesRows(r0, r1);
++}
++
++void Engine_Ext_UPML::DoPostVoltageUpdatesVec(int threadID)
++{
++	if (threadID<m_NrThreads)
++		DoPostVoltageUpdatesRows(m_RowStart[threadID], m_RowStart[threadID]+m_RowNum[threadID]);
++}
++
++void Engine_Ext_UPML::DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	unsigned int r0, r1;
++	if (LineRows(x0, x1, r0, r1))
++		DoPostVoltageUpdatesRows(r0, r1);
++}
++
++void Engine_Ext_UPML::DoPreCurrentUpdatesVec(int threadID)
++{
++	if (threadID<m_NrThreads)
++		DoPreCurrentUpdatesRows(m_RowStart[threadID], m_RowStart[threadID]+m_RowNum[threadID]);
++}
++
++void Engine_Ext_UPML::DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	unsigned int r0, r1;
++	if (LineRows(x0, x1, r0, r1))
++		DoPreCurrentUpdatesRows(r0, r1);
++}
++
++void Engine_Ext_UPML::DoPostCurrentUpdatesVec(int threadID)
++{
++	if (threadID<m_NrThreads)
++		DoPostCurrentUpdatesRows(m_RowStart[threadID], m_RowStart[threadID]+m_RowNum[threadID]);
++}
++
++void Engine_Ext_UPML::DoPostCurrentUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	unsigned int r0, r1;
++	if (LineRows(x0, x1, r0, r1))
++		DoPostCurrentUpdatesRows(r0, r1);
+ }
+ 
+ template <typename EngType>
+@@ -94,6 +363,8 @@ void Engine_Ext_UPML::DoPreVoltageUpdatesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_UPML::DoPreVoltageUpdates(int threadID)
+ {
++	if (m_Vec)
++		return DoPreVoltageUpdatesVec(threadID);
+ 	ENG_DISPATCH_ARGS(DoPreVoltageUpdatesImpl, threadID);
+ }
+ 
+@@ -138,6 +409,8 @@ void Engine_Ext_UPML::DoPostVoltageUpdatesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_UPML::DoPostVoltageUpdates(int threadID)
+ {
++	if (m_Vec)
++		return DoPostVoltageUpdatesVec(threadID);
+ 	ENG_DISPATCH_ARGS(DoPostVoltageUpdatesImpl, threadID);
+ }
+ 
+@@ -186,6 +459,8 @@ void Engine_Ext_UPML::DoPreCurrentUpdatesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_UPML::DoPreCurrentUpdates(int threadID)
+ {
++	if (m_Vec)
++		return DoPreCurrentUpdatesVec(threadID);
+ 	ENG_DISPATCH_ARGS(DoPreCurrentUpdatesImpl, threadID);
+ }
+ 
+@@ -230,5 +505,7 @@ void Engine_Ext_UPML::DoPostCurrentUpdatesImpl(EngType* eng, int threadID)
+ 
+ void Engine_Ext_UPML::DoPostCurrentUpdates(int threadID)
+ {
++	if (m_Vec)
++		return DoPostCurrentUpdatesVec(threadID);
+ 	ENG_DISPATCH_ARGS(DoPostCurrentUpdatesImpl, threadID);
+ }
+diff --git a/FDTD/extensions/engine_ext_upml.h b/FDTD/extensions/engine_ext_upml.h
+index 1104a2d..f47de19 100644
+--- a/FDTD/extensions/engine_ext_upml.h
++++ b/FDTD/extensions/engine_ext_upml.h
+@@ -19,6 +19,9 @@
+ #define ENGINE_EXT_UPML_H
+ 
+ #include "engine_extension.h"
++#include "tools/global.h"
++#include "tools/aligned_allocator.h"
++#include "tools/array_ops.h"
+ #include "FDTD/engine.h"
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
+@@ -32,6 +35,12 @@ public:
+ 	virtual ~Engine_Ext_UPML();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
++	virtual unsigned int GetUsedHooks() const {return PRE_VOLT | POST_VOLT | PRE_CURR | POST_CURR | PREPOST_WRITES_FIELDS | (m_Vec ? LINE_HOOKS : 0);}
++
++	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void DoPostCurrentUpdatesLines(unsigned int x0, unsigned int x1);
+ 
+ 	virtual void DoPreVoltageUpdates() {Engine_Ext_UPML::DoPreVoltageUpdates(0);};
+ 	virtual void DoPreVoltageUpdates(int threadID);
+@@ -61,6 +70,28 @@ protected:
+ 	std::vector<unsigned int> m_start;
+ 	std::vector<unsigned int> m_numX;
+ 
++	//! f4vector path for the SSE engines when the PML covers the full z range (see SetupVectorized())
++	bool m_Vec;
++	bool m_VecChecked;
++	unsigned int m_nvec;
++	std::vector<unsigned int> m_RowStart, m_RowNum; //!< (x,y)-rows of the PML per thread
++	//! coefficients and fluxes in the engine order: index ((x*Ny+y)*nvec+v)*3+n, lane l = z/nvec
++	std::vector<f4vector, aligned_allocator<f4vector> > m_f4_vv, m_f4_vvfo, m_f4_vvfn, m_f4_ii, m_f4_iifo, m_f4_iifn;
++	std::vector<f4vector, aligned_allocator<f4vector> > m_f4_volt_flux, m_f4_curr_flux;
++	std::vector<f4vector, aligned_allocator<f4vector> > m_f4_LaneMask; //!< per z-vector: all bits set in lanes inside the mesh
++	void SetupVectorized();
++	void DoPreVoltageUpdatesVec(int threadID);
++	void DoPostVoltageUpdatesVec(int threadID);
++	void DoPreCurrentUpdatesVec(int threadID);
++	void DoPostCurrentUpdatesVec(int threadID);
++	//! the f4vector hooks for the PML (x,y)-rows [r0, r1)
++	void DoPreVoltageUpdatesRows(unsigned int r0, unsigned int r1);
++	void DoPostVoltageUpdatesRows(unsigned int r0, unsigned int r1);
++	void DoPreCurrentUpdatesRows(unsigned int r0, unsigned int r1);
++	void DoPostCurrentUpdatesRows(unsigned int r0, unsigned int r1);
++	//! the PML rows of the x-lines [x0, x1), false if there are none
++	bool LineRows(unsigned int x0, unsigned int x1, unsigned int& r0, unsigned int& r1) const;
++
+ 	ArrayLib::ArrayNIJK<FDTD_FLOAT> volt_flux;
+ 	ArrayLib::ArrayNIJK<FDTD_FLOAT> curr_flux;
+ };
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index 13b9a10..27a50a9 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -29,6 +29,7 @@
+ #define ENG_EXT_PRIO_CYLINDERMULTIGRID	-3000 //cylindrial multi-grid extension priority
+ 
+ #include <string>
++#include <vector>
+ 
+ class Operator_Extension;
+ class Engine;
+@@ -41,6 +42,23 @@ public:
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+ 
++	//! Hook flags for GetUsedHooks()
++	enum Hooks {PRE_VOLT=1, POST_VOLT=2, APPLY_VOLT=4, PRE_CURR=8, POST_CURR=16, APPLY_CURR=32,
++				PREPOST_WRITES_FIELDS=64, //!< its Pre/Post hooks do change engine fields (e.g. the UPML)
++				LINE_HOOKS=128, //!< implements the *Lines() hooks below, for the fused sweep
++				LEGACY_HOOKS=~0u};
++	//! Which of the six update hooks this extension implements (or'ed Hooks).
++	/*!
++	  The multithreaded engine skips the hooks an extension does not implement, and runs the
++	  Pre/Post hooks of all extensions that declare them before a single barrier, as long as they
++	  only read engine fields (as documented below). An extension whose Pre/Post hooks write engine
++	  fields must add PREPOST_WRITES_FIELDS: it then gets a barrier before and after each of these
++	  hooks. Apply2* hooks keep one barrier per extension, because they write engine fields in
++	  priority order.
++	  The default LEGACY_HOOKS keeps the old behaviour: every hook is called, followed by a barrier.
++	  */
++	virtual unsigned int GetUsedHooks() const {return LEGACY_HOOKS;}
++
+ 	//! This method will be called __before__ the main engine does the usual voltage updates. This method may __not__ change the engine voltages!!!
+ 	virtual void DoPreVoltageUpdates() {}
+ 	virtual void DoPreVoltageUpdates(int threadID);
+@@ -61,6 +79,23 @@ public:
+ 	virtual void Apply2Current() {}
+ 	virtual void Apply2Current(int threadID);
+ 
++	//! Hooks for the fused sweep of the multithreaded engine (extensions with LINE_HOOKS).
++	/*!
++	  The fused sweep runs the voltage update, its hooks and the current update x-line by x-line
++	  and calls these instead of the hooks above: the same work, for the x-lines [x0, x1) only, with
++	  the same order of hooks and extensions for every cell. A line hook may touch the fields of its
++	  own lines only (and of the line next to a line from GetCoupledLines()). Different threads call
++	  them for disjoint line ranges at the same time.
++	  */
++	virtual void DoPreVoltageUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
++	virtual void DoPostVoltageUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
++	virtual void Apply2VoltagesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
++	virtual void DoPreCurrentUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
++	virtual void DoPostCurrentUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
++	virtual void Apply2CurrentLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
++	//! x-lines x whose voltage hooks also touch line x+1 (e.g. a Mur ABC on an x-face): x and x+1 are swept as one block
++	virtual void GetCoupledLines(std::vector<unsigned int>& /*lines*/) const {}
++
+ 	//! Set the Engine to this extension. This will usually done automatically by Engine::AddExtension
+ 	virtual void SetEngine(Engine* eng) {m_Eng=eng;}
+ 
+diff --git a/tools/spin_barrier.h b/tools/spin_barrier.h
+new file mode 100644
+index 0000000..3371f1c
+--- /dev/null
++++ b/tools/spin_barrier.h
+@@ -0,0 +1,110 @@
++/*
++*	This program is free software: you can redistribute it and/or modify
++*	it under the terms of the GNU General Public License as published by
++*	the Free Software Foundation, either version 3 of the License, or
++*	(at your option) any later version.
++*
++*	This program is distributed in the hope that it will be useful,
++*	but WITHOUT ANY WARRANTY; without even the implied warranty of
++*	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++*	GNU General Public License for more details.
++*
++*	You should have received a copy of the GNU General Public License
++*	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#ifndef SPIN_BARRIER_H
++#define SPIN_BARRIER_H
++
++#include <atomic>
++#include <chrono>
++#include <condition_variable>
++#include <cstdlib>
++#include <mutex>
++#include <thread>
++
++//! Reusable barrier that spins for a short time before it parks the thread.
++/*!
++  A boost::barrier (mutex + condition variable) costs 5-20 us per wait on 4-10 threads, which
++  is a large part of a timestep on small models. Here the waiting threads spin on a generation
++  counter for up to SpinTime() (default 50 us, env OPENEMS_BARRIER_SPIN_US) and only then park on
++  a condition variable, so a barrier between threads that arrive close together costs < 1 us.
++  The last thread to arrive can increment a counter before it releases the others.
++  */
++class SpinBarrier
++{
++public:
++	explicit SpinBarrier(unsigned int numThreads) : m_numThreads(numThreads), m_count(0), m_generation(0), m_sleepers(0) {}
++
++	//! Wait until all threads have arrived. The last one increments *inc (if given) before releasing the others.
++	void wait(volatile unsigned int* inc=NULL)
++	{
++		const unsigned int gen = m_generation.load(std::memory_order_acquire);
++		if (m_count.fetch_add(1, std::memory_order_acq_rel) + 1 == m_numThreads)
++		{
++			if (inc)
++				++(*inc);
++			m_count.store(0, std::memory_order_relaxed);
++			bool notify;
++			{
++				std::lock_guard<std::mutex> lock(m_mutex);
++				m_generation.store(gen+1, std::memory_order_release);
++				notify = m_sleepers>0;
++			}
++			if (notify)
++				m_cond.notify_all();
++			return;
++		}
++
++		const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now() + SpinTime();
++		for (unsigned int n=1;;++n)
++		{
++			if (m_generation.load(std::memory_order_acquire) != gen)
++				return;
++			CpuRelax();
++			if ((n%128)==0 && std::chrono::steady_clock::now()>stop)
++				break;
++		}
++
++		std::unique_lock<std::mutex> lock(m_mutex);
++		++m_sleepers;
++		while (m_generation.load(std::memory_order_acquire) == gen)
++			m_cond.wait(lock);
++		--m_sleepers;
++	}
++
++	static std::chrono::microseconds SpinTime()
++	{
++		static const std::chrono::microseconds t(ReadSpinTime());
++		return t;
++	}
++
++protected:
++	static long ReadSpinTime()
++	{
++		const char* env = getenv("OPENEMS_BARRIER_SPIN_US");
++		if (env)
++			return atol(env);
++		return 50;
++	}
++
++	static inline void CpuRelax()
++	{
++#if defined(__aarch64__) || defined(__arm__)
++		__asm__ __volatile__("yield" ::: "memory");
++#elif defined(__x86_64__) || defined(__i386__)
++		__builtin_ia32_pause();
++#else
++		std::this_thread::yield();
++#endif
++	}
++
++	const unsigned int m_numThreads;
++	std::atomic<unsigned int> m_count;
++	std::atomic<unsigned int> m_generation;
++	unsigned int m_sleepers; //!< guarded by m_mutex
++	std::mutex m_mutex;
++	std::condition_variable m_cond;
++};
++
++#endif // SPIN_BARRIER_H
+-- 
+2.54.0 (Apple Git-157)
+

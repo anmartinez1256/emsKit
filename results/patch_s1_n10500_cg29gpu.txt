@@ -1,0 +1,4 @@
+# patch_s1_n10500  2026-11-05 02:41
+cg29@multithreaded:4           1882.6 MC/s      0.58 s  10500 TS x 0.104 MC  others  61%  during 0.8 s: self cpu 182% gpu>=0.00 s, others cpu 35% gpu 5%, gpu dev 6%  [ref]  openEMS v0.37.0-44-g074a687
+cg29@metal-diamond:0           1763.3 MC/s      0.62 s  10500 TS x 0.104 MC  others  75%  busy mediaanalysisd:28  during 0.9 s: self cpu 42% gpu>=0.30 s, others cpu 84% gpu 2%, gpu dev 86%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-44-g074a687
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg29@metal-diamond:0)

@@ -1,0 +1,8 @@
+# patch_s5_n1200  reference /Users/anmar/opt/src/emskit-compare/runs/emskit/patch_s5_n1200/stock_multithreaded_t8/rep0
+emskit/patch_s5_n1200/cg18_multithreaded_t4/rep0             probes rel=0.0e+00  S11: identical
+emskit/patch_s5_n1200/cg18_fastest/rep0                      probes rel=0.0e+00  S11: identical
+master/patch_s5_n1200/multithreaded_t4/rep0                  probes rel=0.0e+00  S11: identical
+master/patch_s5_n1200/gpu/rep0                               probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07
+luikore-metal/patch_s5_n1200/multithreaded_t4/rep0           probes rel=0.0e+00  S11: identical
+luikore-metal/patch_s5_n1200/metal_t4/rep0                   probes rel=0.0e+00  PROBLEM: missing port_it_1; missing port_ut_1
+luikore-legacy/patch_s5_n1200/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=2.5e-07  S11: max|dS|=6.2e-08 max dB=9.2e-07

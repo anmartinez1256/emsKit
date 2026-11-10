@@ -1,0 +1,4 @@
+# notch_s1_n16000  2026-11-04 05:10
+multithreaded:4                 311.4 MC/s     13.86 s  16000 TS x 0.270 MC  others  59%  runs 311/248  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    378.6 MC/s     11.40 s  16000 TS x 0.270 MC  others  30%  runs 379/378  probes rel=8.1e-07  S11: max|dS|=1.7e-06 max dB=1.5e-04  S21: max|dS|=2.1e-06 max dB=1.1e-04  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)

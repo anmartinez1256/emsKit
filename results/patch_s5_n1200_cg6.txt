@@ -1,0 +1,7 @@
+# patch_s5_n1200  2026-10-28 12:55
+multithreaded:8                1069.7 MC/s      8.82 s  1200 TS x 7.863 MC  others  45%  runs 1069/1070  [ref]
+cg6@multithreaded:1             680.3 MC/s     13.87 s  1200 TS x 7.863 MC  others  60%  runs 677/680  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@multithreaded:4            1601.9 MC/s      5.89 s  1200 TS x 7.863 MC  others  57%  runs 1602/1580  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@multithreaded:8            1715.5 MC/s      5.50 s  1200 TS x 7.863 MC  others  47%  runs 1709/1715  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@multithreaded:10           1706.2 MC/s      5.53 s  1200 TS x 7.863 MC  others  44%  runs 1670/1706  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@fastest                    1621.2 MC/s      5.82 s  1200 TS x 7.863 MC  others  47%  runs 1621/1599  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

@@ -1,0 +1,4 @@
+# kgcpw_s1_n15000  2026-11-07 09:21
+pub29@multithreaded:4          1840.8 MC/s      1.97 s  15000 TS x 0.242 MC  others  74%  busy mediaanalysisd:37  during 2.3 s: self cpu 362% gpu>=0.00 s, others cpu 70% gpu 0%, gpu dev 0% [mediaanalysisd:42/0]  [ref]  openEMS v0.37.0-45-g1d091c7
+pub29@metal-diamond:0          2117.1 MC/s      1.71 s  15000 TS x 0.242 MC  others  76%  busy mediaanalysisd:45  during 2.0 s: self cpu 38% gpu>=1.34 s, others cpu 76% gpu 0%, gpu dev 98% [mediaanalysisd:50/0]  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-45-g1d091c7
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (pub29@metal-diamond:0)

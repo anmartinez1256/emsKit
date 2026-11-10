@@ -1,0 +1,7 @@
+# ksma_s1_n6000  2026-10-29 08:14
+stock@multithreaded:4           432.1 MC/s     14.87 s  6000 TS x 1.071 MC  others  42%  runs 432/379  [ref]
+cg13@multithreaded:1            446.6 MC/s     14.39 s  6000 TS x 1.071 MC  others  47%  runs 446/447  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg13@multithreaded:4           1137.3 MC/s      5.65 s  6000 TS x 1.071 MC  others  46%  runs 1137/1127  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg13@multithreaded:8           1262.5 MC/s      5.09 s  6000 TS x 1.071 MC  others  36%  runs 1262/1260  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg13@multithreaded:10          1210.2 MC/s      5.31 s  6000 TS x 1.071 MC  others  31%  runs 1210/1160  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg13@fastest                   1245.3 MC/s      5.16 s  6000 TS x 1.071 MC  others  37%  runs 1245/1236  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

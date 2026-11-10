@@ -1,0 +1,8 @@
+# kgcpw_s1_n15000  reference /Users/anmar/opt/src/emskit-compare/runs/emskit/kgcpw_s1_n15000/stock_multithreaded_t4/rep0
+emskit/kgcpw_s1_n15000/cg18_multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical  S21: identical
+emskit/kgcpw_s1_n15000/cg18_fastest/rep0                     probes rel=0.0e+00  S11: identical  S21: identical
+master/kgcpw_s1_n15000/multithreaded_t4/rep0                 probes rel=0.0e+00  S11: identical  S21: identical
+master/kgcpw_s1_n15000/gpu/rep0                              probes rel=4.5e-07  S11: below -40 dB, max|dS|=1.8e-07  S21: max|dS|=3.1e-07 max dB=7.1e-07
+luikore-metal/kgcpw_s1_n15000/multithreaded_t4/rep0          probes rel=0.0e+00  S11: identical  S21: identical
+luikore-metal/kgcpw_s1_n15000/metal_t4/rep0                  probes rel=0.0e+00  PROBLEM: missing port_it_1A; missing port_it_1B; missing port_it_2A; missing port_it_2B; missing port_ut_1A; missing port_ut_1B; missing port_ut_1C; missing port_ut_2A; missing port_ut_2B; missing port_ut_2C
+luikore-legacy/kgcpw_s1_n15000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=1.3e-06  S11: below -40 dB, max|dS|=6.5e-07  S21: max|dS|=1.0e-06 max dB=6.9e-06

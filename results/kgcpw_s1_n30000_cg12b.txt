@@ -1,0 +1,5 @@
+# kgcpw_s1_n30000  2026-10-29 05:14
+stock@multithreaded:4           257.6 MC/s     28.18 s  30000 TS x 0.242 MC  others  55%  runs 252/258  [ref]
+cg12@multithreaded:4           1434.8 MC/s      5.06 s  30000 TS x 0.242 MC  others  36%  runs 1435/1421  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:8           1226.3 MC/s      5.92 s  30000 TS x 0.242 MC  others 162%  runs 1226/1202  busy contactsd:34,speechmaintenanc:28  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@fastest                   1380.2 MC/s      5.26 s  30000 TS x 0.242 MC  others  16%  runs 1097/1380  (auto-picked 4 threads)  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

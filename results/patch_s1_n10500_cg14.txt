@@ -1,0 +1,7 @@
+# patch_s1_n10500  2026-10-29 14:31
+stock@multithreaded:2           282.0 MC/s      3.86 s  10500 TS x 0.104 MC  others  38%  runs 279/282  busy WindowServer:20  [ref]
+cgy@multithreaded:1             690.1 MC/s      1.58 s  10500 TS x 0.104 MC  others  43%  runs 686/690  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cgy@multithreaded:4            1911.5 MC/s      0.57 s  10500 TS x 0.104 MC  others  32%  runs 1912/1900  busy WindowServer:21  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cgy@multithreaded:8            1544.5 MC/s      0.70 s  10500 TS x 0.104 MC  others  44%  runs 1544/1544  busy WindowServer:23  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cgy@multithreaded:10           1549.5 MC/s      0.70 s  10500 TS x 0.104 MC  others  58%  runs 1549/1547  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cgy@fastest                    1498.6 MC/s      0.73 s  10500 TS x 0.104 MC  others  45%  runs 1499/1491  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

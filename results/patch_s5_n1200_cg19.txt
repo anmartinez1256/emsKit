@@ -1,0 +1,7 @@
+# patch_s5_n1200  2026-11-04 06:09
+stock@multithreaded:8           860.1 MC/s     10.97 s  1200 TS x 7.863 MC  others 321%  busy Python:292  [ref]  openEMS v0.37.0
+cg19@multithreaded:4           1580.4 MC/s      5.97 s  1200 TS x 7.863 MC  others  40%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@multithreaded:8           1690.9 MC/s      5.58 s  1200 TS x 7.863 MC  others  43%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@fastest                   1500.0 MC/s      6.29 s  1200 TS x 7.863 MC  others  46%  (auto-picked 10 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@metal-diamond:0            381.8 MC/s     24.71 s  1200 TS x 7.863 MC  others  35%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 4 configs equals the reference

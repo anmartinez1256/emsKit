@@ -1,0 +1,4 @@
+# patch_s5_n1200  2026-11-04 04:12
+multithreaded:4                 979.8 MC/s      9.63 s  1200 TS x 7.863 MC  others 133%  runs 980/861  busy KirchhoffStudio:42,WindowServer:28,mediaanalysisd:25  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            1529.2 MC/s      6.17 s  1200 TS x 7.863 MC  others 109%  runs 1519/1529  busy Python:86  probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)

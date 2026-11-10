@@ -1,0 +1,12 @@
+# patch_s5_n1200  2026-11-03 13:34
+# note (2026-11-03): base = libopenEMS of upstream's gpu-engine commit 7bb294f (v0.37.0-18-g7bb294f, the fork's base,
+# Release build -O3 -DNDEBUG, Apple clang) with the stock v0.37.0 libCSXCAD and libnf2ff; stock = v0.37.0; cg18 = the
+# final build (patches 0001-0006). Quiet Mac, best of two runs ('runs'); +nodumps = FDTD.Run with the dumps disabled.
+stock@multithreaded:8          1048.3 MC/s      9.00 s  1200 TS x 7.863 MC  others  57%  runs 1037/1048  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+base@multithreaded:4           1020.0 MC/s      9.25 s  1200 TS x 7.863 MC  others  54%  runs 1020/1009  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-18-g7bb294f
+base@multithreaded:8           1078.3 MC/s      8.75 s  1200 TS x 7.863 MC  others  57%  runs 1078/1050  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-18-g7bb294f
+cg18@multithreaded:8           1712.4 MC/s      5.51 s  1200 TS x 7.863 MC  others  57%  runs 1712/1703  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+stock@multithreaded:8+nodumps   1079.5 MC/s      8.74 s  1200 TS x 7.863 MC  others  48%  runs 1080/1061  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+base@multithreaded:8+nodumps   1061.3 MC/s      8.89 s  1200 TS x 7.863 MC  others  47%  runs 1061/1053  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-18-g7bb294f
+cg18@multithreaded:8+nodumps   1700.0 MC/s      5.55 s  1200 TS x 7.863 MC  others  53%  runs 1691/1700  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 7 configs equals the reference

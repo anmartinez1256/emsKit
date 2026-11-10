@@ -1,0 +1,52 @@
+# K x threads-per-tile sweep of the metal-diamond engine, 2026-11-04, loaded Mac (load avg 2-6). 'c21' = the cg21 kernel built
+# before the tile-size threads default (same arithmetic); reference = multithreaded:4 with OPENEMS_FTZ=1; every row rel 0 / 0 dB.
+#                                            notch_s1_n16000 load      avg  
+c21@multithreaded:4#                           1933.3 MC/s     2.23  
+c21@metal-diamond:0#K=4,TG=128                 1654.7 MC/s     2.61  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=256                 1819.7 MC/s     2.37  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=512                 1703.2 MC/s     2.53  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=1024                1013.3 MC/s     4.26  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=128                  706.5 MC/s     6.11  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=256                 1116.5 MC/s     3.87  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=512                 1495.6 MC/s     2.89  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=1024                1415.9 MC/s     3.05  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+#                                            notch_s3_n2000 load      avg  
+c21@multithreaded:4#                           1880.8 MC/s     5.58  
+c21@metal-diamond:0#K=4,TG=128                 2631.4 MC/s     3.99  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=256                 2984.8 MC/s     3.52  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=512                 3026.8 MC/s     3.47  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=1024                2181.9 MC/s     4.81  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=128                 1936.3 MC/s     5.42  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=256                 2407.1 MC/s     4.36  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=512                 2822.3 MC/s     3.72  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=1024                2854.0 MC/s     3.68  rel=0.0e+00 dB=0.0e+00 
+#                                            ksma_s1_n6000 load      avg  
+c21@multithreaded:4#                           1250.5 MC/s     4.18  
+c21@metal-diamond:0#K=4,TG=128                 1066.8 MC/s     4.90  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=256                 1259.6 MC/s     4.15  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=512                 1320.1 MC/s     3.96  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=1024                1041.3 MC/s     5.02  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=128                  562.1 MC/s     9.30  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=256                  686.9 MC/s     7.61  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=512                  755.4 MC/s     6.92  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=1024                 730.1 MC/s     7.16  rel=0.0e+00 dB=0.0e+00 dB=0.0e+00 
+#                                            patch_s1_n10500 load      avg  
+c21@multithreaded:4#                           1849.8 MC/s     0.59  
+c21@metal-diamond:0#K=4,TG=128                 1289.5 MC/s     0.84  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=256                 1644.7 MC/s     0.66  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=512                 1440.6 MC/s     0.76  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=1024                1240.4 MC/s     0.88  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=128                  308.7 MC/s     3.52  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=256                  500.4 MC/s     2.17  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=512                  650.4 MC/s     1.67  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=1024                 656.2 MC/s     1.66  rel=0.0e+00 dB=0.0e+00 
+#                                            patch_s5_n1200 load      avg  
+c21@multithreaded:4#                           1516.9 MC/s     6.22  
+c21@metal-diamond:0#K=4,TG=128                 2106.0 MC/s     4.48  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=256                 2642.4 MC/s     3.57  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=512                 2907.5 MC/s     3.25  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=4,TG=1024                2912.0 MC/s     3.24  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=128                 1418.8 MC/s     6.65  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=256                 1744.0 MC/s     5.41  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=512                 2087.4 MC/s     4.52  rel=0.0e+00 dB=0.0e+00 
+c21@metal-diamond:0#K=8,TG=1024                2129.8 MC/s     4.43  rel=0.0e+00 dB=0.0e+00 

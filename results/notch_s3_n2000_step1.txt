@@ -1,0 +1,13 @@
+# notch_s3_n2000  2026-10-28 09:01
+basic                           146.9 MC/s     71.45 s  2000 TS x 5.247 MC  others  58%  runs 147/143  [ref]
+sse                             204.3 MC/s     51.38 s  2000 TS x 5.247 MC  others  41%  runs 201/204  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+sse-compressed                  289.5 MC/s     36.25 s  2000 TS x 5.247 MC  others  51%  runs 274/290  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:1                 274.2 MC/s     38.28 s  2000 TS x 5.247 MC  others  49%  runs 274/183  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:2                 504.6 MC/s     20.80 s  2000 TS x 5.247 MC  others  41%  runs 444/505  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:3                 675.8 MC/s     15.53 s  2000 TS x 5.247 MC  others  33%  runs 676/658  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4                 692.7 MC/s     15.15 s  2000 TS x 5.247 MC  others  47%  runs 693/550  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:5                 671.0 MC/s     15.64 s  2000 TS x 5.247 MC  others  33%  runs 670/671  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:6                 692.3 MC/s     15.16 s  2000 TS x 5.247 MC  others  56%  runs 692/691  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:8                 845.0 MC/s     12.42 s  2000 TS x 5.247 MC  others  52%  runs 845/817  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:10                804.2 MC/s     13.05 s  2000 TS x 5.247 MC  others  50%  runs 804/801  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+fastest                         534.4 MC/s     19.64 s  2000 TS x 5.247 MC  others  43%  runs 532/534  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

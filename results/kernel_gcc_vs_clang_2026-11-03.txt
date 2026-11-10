@@ -1,0 +1,40 @@
+# kernel_gcc_vs_clang_2026-11-03.txt: scripts/kernel/gcc_vs_clang.sh on a quiet Mac. The stock and the rewritten
+# ("clean") inner loops of scripts/kernel/kb_idx.cpp, built by Apple clang and by GCC with the same flags
+# (-std=c++17 -O3 -DNDEBUG), one thread (KB_ONE=1), three grids outside the valley (steps, Nx, Ny, Nz), five rounds
+# with the order of the two builds alternating. Per line: the speed of both loops (MC/s); whether the clean loop's
+# final fields equal the stock loop's of the same build (bit-identical / MISMATCH); the hash of the stock loop's final
+# fields (FNV-1a over the voltages and currents: equal hashes across the compilers = the same values).
+# gcc_vs_clang.sh 2026-11-03 13:50, macOS 27.0.1, Apple M5
+# clang: Apple clang version 21.0.0 (clang-2100.3.34.2)
+# gcc:   g++-16 (Homebrew GCC 16.2.0) 16.2.0
+round 1  steps,grid 3000 40 40 40  clang  stock 483  clean 869 (bit-identical)  hash c498ed55600dd5bd
+round 1  steps,grid 3000 40 40 40  gcc  stock 619  clean 851 (MISMATCH)  hash c498ed55600dd5bd
+round 1  steps,grid 400 160 160 20  clang  stock 458  clean 802 (bit-identical)  hash a0750ce7e69048cc
+round 1  steps,grid 400 160 160 20  gcc  stock 535  clean 775 (MISMATCH)  hash a0750ce7e69048cc
+round 1  steps,grid 30 209 209 180  clang  stock 477  clean 849 (bit-identical)  hash b01478f879703ac9
+round 1  steps,grid 30 209 209 180  gcc  stock 659  clean 834 (MISMATCH)  hash b01478f879703ac9
+round 2  steps,grid 3000 40 40 40  gcc  stock 625  clean 854 (MISMATCH)  hash c498ed55600dd5bd
+round 2  steps,grid 3000 40 40 40  clang  stock 486  clean 869 (bit-identical)  hash c498ed55600dd5bd
+round 2  steps,grid 400 160 160 20  gcc  stock 532  clean 772 (MISMATCH)  hash a0750ce7e69048cc
+round 2  steps,grid 400 160 160 20  clang  stock 457  clean 803 (bit-identical)  hash a0750ce7e69048cc
+round 2  steps,grid 30 209 209 180  gcc  stock 663  clean 852 (MISMATCH)  hash b01478f879703ac9
+round 2  steps,grid 30 209 209 180  clang  stock 477  clean 852 (bit-identical)  hash b01478f879703ac9
+round 3  steps,grid 3000 40 40 40  clang  stock 485  clean 868 (bit-identical)  hash c498ed55600dd5bd
+round 3  steps,grid 3000 40 40 40  gcc  stock 622  clean 852 (MISMATCH)  hash c498ed55600dd5bd
+round 3  steps,grid 400 160 160 20  clang  stock 458  clean 805 (bit-identical)  hash a0750ce7e69048cc
+round 3  steps,grid 400 160 160 20  gcc  stock 533  clean 770 (MISMATCH)  hash a0750ce7e69048cc
+round 3  steps,grid 30 209 209 180  clang  stock 478  clean 858 (bit-identical)  hash b01478f879703ac9
+round 3  steps,grid 30 209 209 180  gcc  stock 660  clean 844 (MISMATCH)  hash b01478f879703ac9
+round 4  steps,grid 3000 40 40 40  gcc  stock 623  clean 853 (MISMATCH)  hash c498ed55600dd5bd
+round 4  steps,grid 3000 40 40 40  clang  stock 485  clean 868 (bit-identical)  hash c498ed55600dd5bd
+round 4  steps,grid 400 160 160 20  gcc  stock 530  clean 770 (MISMATCH)  hash a0750ce7e69048cc
+round 4  steps,grid 400 160 160 20  clang  stock 457  clean 803 (bit-identical)  hash a0750ce7e69048cc
+round 4  steps,grid 30 209 209 180  gcc  stock 657  clean 840 (MISMATCH)  hash b01478f879703ac9
+round 4  steps,grid 30 209 209 180  clang  stock 476  clean 851 (bit-identical)  hash b01478f879703ac9
+round 5  steps,grid 3000 40 40 40  clang  stock 486  clean 870 (bit-identical)  hash c498ed55600dd5bd
+round 5  steps,grid 3000 40 40 40  gcc  stock 622  clean 855 (MISMATCH)  hash c498ed55600dd5bd
+round 5  steps,grid 400 160 160 20  clang  stock 457  clean 797 (bit-identical)  hash a0750ce7e69048cc
+round 5  steps,grid 400 160 160 20  gcc  stock 535  clean 777 (MISMATCH)  hash a0750ce7e69048cc
+round 5  steps,grid 30 209 209 180  clang  stock 476  clean 848 (bit-identical)  hash b01478f879703ac9
+round 5  steps,grid 30 209 209 180  gcc  stock 662  clean 847 (MISMATCH)  hash b01478f879703ac9
+DONE

@@ -1,0 +1,12 @@
+# ksma_s1_n6000  2026-11-03 13:16
+# note (2026-11-03, final review): the full check of the final build (cg18 = patches 0001-0006,
+# v0.37.0-24-g087ce9e) against stock v0.37.0: bench/check.sh cg18 cg18 (1, 4, 8 and 10 threads and the automatic
+# choice 'fastest', --repeat 2 --quiet 60) on a quiet Mac ('others' = the other processes' CPU during the run,
+# 100 % = one core). 'fastest' names the thread count it picked when its search ended within the run.
+stock@multithreaded:4           434.8 MC/s     14.78 s  6000 TS x 1.071 MC  others  59%  runs 435/430  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:1            440.7 MC/s     14.58 s  6000 TS x 1.071 MC  others  57%  runs 440/441  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:4           1267.5 MC/s      5.07 s  6000 TS x 1.071 MC  others  53%  runs 1229/1267  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:8           1361.4 MC/s      4.72 s  6000 TS x 1.071 MC  others  55%  runs 1361/1215  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:10          1314.1 MC/s      4.89 s  6000 TS x 1.071 MC  others  59%  runs 1314/1306  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1322.2 MC/s      4.86 s  6000 TS x 1.071 MC  others  58%  runs 1322/1317  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 6 configs equals the reference

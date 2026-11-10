@@ -1,0 +1,52 @@
+Diamond-blocked Metal engine, UPML on the GPU (snapshot cg21), 2026-11-04
+==========================================================================
+Build: cg20 (cd80d8c) + commit 75417db (v0.37.0-27-g75417db) on speed-m5-gpu: the UPML stages in
+FDTD/metal/engine_metal_diamond.mm (Pre before the update, after the Mur Pre stage; Post after the update, before the
+Mur Post stage; voltages and currents; the box cells in the tile's ranges), the extension data in three Metal buffers
+(read-only words, read-only floats, state; the kernel had used 29 of Metal's 31 buffer slots), threads per tile from
+the tile size, OPENEMS_DIAMOND_TILE also as M:V, friend declarations in engine_ext_upml.h / operator_ext_upml.h.
+The libraries were built just before the commit, so their version string reads v0.37.0-26-gcd80d8c (as with cg19/cg20).
+Tables 1-3 ran on the first version of the commit (4903398, threads default 3/4 of M*M*nv); 75417db changes only that
+factor to 3/5 (section 4), which changes the default for the patch tutorial alone (512 -> 256 threads); diamond_check
+(36/36) and patch_s1_n10500_cg21gpu.txt were re-run on 75417db.
+Snapshot: ~/opt/openEMS-dev/snap/cg21 (three dylibs, cg21.patch = diff vs origin/gpu-engine 7bb294f, BASE).
+Not installed (~/opt/openEMS is cg18).
+
+1. Bit identity, box tests (scripts/checks/diamond_check.sh on cg21): PASS, 36 of 36 comparisons
+   (diamond_check_cg21_2026-11-04.txt); CPU reference = multithreaded, 4 threads, OPENEMS_FTZ=1. New cases:
+   PML_8 on all six faces (6 UPML boxes, 1100 coefficient sets), and PML_8/MUR/PEC/PML_8/MUR/PML_8 with the lumped
+   elements (3 UPML boxes, 2 Mur faces that cross them), K = 1, 2, 3, 4, 8 and tile 7,0 / 96 threads / batch 3.
+
+2. CPU paths vs stock v0.37.0 (bench/check.sh cg21 cg21, LITE=1, RFSIM_PATH set): ALL IDENTICAL, 6 models x
+   (4, 8 threads, auto); tables *_cg21.txt. The Mac was loaded (load avg 2-8, other sessions' runs), so the CPU speeds
+   in these tables are low; the cg18 tables (quiet Mac) stay the CPU reference speeds.
+   The metal-diamond rows in those tables are compared with stock WITHOUT FTZ and differ by the subnormal flush of
+   Apple's GPU (max probe rel / max S dB): patch x5 1.7e-7 / 7.7e-7, notch x3 2.3e-7 / 2.8e-6, patch tutorial
+   3.8e-7 / 2.3e-5, notch tutorial 9.4e-7 / 2.3e-4, SMA 2.2e-7 / 1.0e-5; GCPW 0 (it runs the CPU loops: conducting
+   sheets). bench.py now counts metal-diamond as a tolerant engine (like gpu); the first check.sh run of cg21 had
+   reported these rows as MISMATCH before that fix.
+
+3. The five models that now run on the GPU vs the FTZ CPU reference (tables *_cg21gpu.txt; same load for the three
+   columns, load avg 6-7):
+   | model (cells)            | CPU 4 thr FTZ | metal-diamond | upstream gpu | vs FTZ CPU (both GPU engines) | cg18 CPU best, quiet |
+   | notch tutorial (0.27 M)  |  791          | 1804          | 1583         | probes rel 0, S11/S21 0       | 1961                 |
+   | notch x3 (5.25 M)        | 1009          | 2966          | 1347         | probes rel 0, S11 0           | 2046                 |
+   | SMA launch (0.87 M)      |  565          | 1304          | 1122         | probes rel 0, S11/S21 0       | 1361                 |
+   | patch tutorial (0.10 M)  |  847          | 1531          | 1001         | probes rel 0, S11 0           | 1880                 |
+   | patch x5 (7.86 M)        |  992          | 2865          | 1481         | probes rel 0, S11 0           | 1716                 |
+   The GPU numbers held across the day's runs (notch x3 2775-3027, patch x5 2649-2912, SMA 1260-1320); the CPU ones
+   fell with the load. Against the quiet-Mac cg18 CPU best: notch x3 1.45x, patch x5 1.67x, SMA 0.96x, notch tutorial
+   0.92x, patch tutorial 0.81x. Upstream's --engine=gpu is also bit-identical to the FTZ CPU on all five (the paper's
+   "no GPU engine is bit-identical" was measured against stock without FTZ; to be reworded in step 5).
+
+4. Threads per tile (diamond_sweep_cg21_2026-11-04.txt; K 4/8 x 128-1024 threads, all rows identical): K=4 is best
+   on every model; the best thread count grows with the tile's work (M*M*nv f4vectors per half-step, M = 8): notch
+   tutorial (256) and patch tutorial (768) 256 threads, notch x3 (576) 256 = 512, SMA (960) 512, patch x5 (2880)
+   512-1024. Repeat check, 3 runs each, loaded Mac: patch tutorial 256 / 512 threads 1653 / 1511, SMA 1242 / 1308,
+   notch x3 2965 / 2979 MC/s. The old default (1024 = the pipeline maximum) cost 44 % on the notch tutorial and 21 %
+   on the SMA. New default: the power of two at or below 3/5 of M*M*nv, 256-1024: 256, 256, 512, 256, 1024 threads
+   for the five models (the measured best on each, notch x3 a tie); OPENEMS_DIAMOND_TG overrides it.
+   bench.py splits its #VAR settings on commas, so OPENEMS_DIAMOND_TILE=16,8 had been silently ignored there; the
+   engine now also reads M:V.
+
+5. Still on the CPU loops: GCPW line ("Conducting Sheet Extension"). Next: conducting sheets / Lorentz / Debye.

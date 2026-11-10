@@ -1,0 +1,161 @@
+# Metal diamond engine (--engine=metal-diamond), snapshots cg24-cg27, 2026-11-04. Apple M5 (10 GPU cores), macOS 27.0.1.
+# Branch speed-m5-gpu of the openEMS fork; diffs in ~/opt/openEMS-dev/snap/cgNN/cgNN.patch (against origin/gpu-engine).
+# The Mac was shared the whole time: other sessions' jobs took 0.5-7.7 cores and 0-31 % of the GPU (given per line). Every
+# speed comparison below is a paired interleaved A/B (bench/abtest.py: the configs run in turn, round after round; ratio =
+# the per-round ratio to c0, median [min-max]), so a slow phase of the machine hits all configs of a round alike. Single
+# runs (bench.py) are rough.
+#
+# 1. Commits (one per topic) and what was dropped
+# | snapshot | commit  | topic                                                                                      |
+# | cg24     | 3a8ca20 | operator setup on Operator_Multithread (all cores), OPENEMS_DIAMOND_TIMING diagnostics     |
+# | cg25     | ab12bbe | runs for the excitation and the dispersive materials, per-tile offsets read once           |
+# | cg26     | 74479c0 | the grid as compile-time constants in the kernel, Mur/UPML records passed by value         |
+# | cg27     | 4127e1e | split coefficient tables for graded meshes (default from the coefficients per block)       |
+# Dropped:
+# - the UPML update fused into the cell update (scratchpad build dev25a; the PML cells' Pre/Post stages folded into the
+#   update loop): paired A/B against cg24, 4 rounds: SMA launch x1.023 [0.934-1.106], notch tutorial x0.948
+#   [0.898-1.176], notch x3 x0.988 [0.966-0.991]: no gain, removed.
+# - OPENEMS_DIAMOND_XBAR, a diagnostic knob that restored the excitation barrier dropped in cg25: notch tutorial against
+#   the sheet runs alone (8 rounds) x1.045 without it, x1.037 with it, so the 3 % cg25 lost there was code generation, not
+#   the barrier (cg26 recovers it). Removed.
+#
+# 2. Identity (every snapshot)
+# - emsKit scripts/checks/diamond_check.sh: 54 of 54 comparisons identical on cg25, cg26 and cg27 (the default layout,
+#   packed on these small boxes), and on cg27 54 of 54 with OPENEMS_DIAMOND_COEF=split (every case on the split tables).
+# - Six benchmark models, GPU against the multithreaded engine (4 threads) of the same build, both with OPENEMS_FTZ=1,
+#   bench.py at the check step counts (notch 16000, notch x3 2000, SMA 6000, GCPW 15000, patch 10500, patch x5 1200 TS):
+#   cg25, cg26, cg27 all six models probes rel 0, S11/S21 max |dS| 0 (scratchpad six_dev26c.txt, six_dev26e.txt,
+#   six26f.txt; cg27 as results/*_cg27gpu.txt). Every A/B run below was also compared with c0's first run: all
+#   identical. Single runs, one per config (speeds rough; other processes on 0.5-7.7 cores, the CPU engine suffers most):
+# | model, steps         | cg25 GPU / CPU MC/s | cg26 GPU / CPU | cg27 GPU / CPU | GPU against the CPU (each) |
+# | notch_s1_n16000      | 1678 / 592          | 1644 / 1191    | 1693 / 760     | identical                  |
+# | notch_s3_n2000       | 2924 / 674          | 2927 / 1620    | 2853 / 968     | identical                  |
+# | ksma_s1_n6000        | 1510 / 677          | 1513 / 604     | 1565 / 354     | identical                  |
+# | kgcpw_s1_n15000      | 1779 / 1201         | 1729 / 722     | 1852 / 632     | identical                  |
+# | patch_s1_n10500      | 1642 / 945          | 1289 / 845     | 1478 / 844     | identical                  |
+# | patch_s5_n1200       | 2902 / 1062         | 2404 / 818     | 2744 / 944     | identical                  |
+# - Validation suite on metal-diamond, cg27: 15 of 15 checks pass (results/validation_cg27_metal.md; 5.7 other cores busy).
+# - End to end: the port data of the toolkit runs on cg27 equal the cg23 runs (section 9).
+# - The CPU engines are not touched (cg24 changed the diamond engine's files and the --engine help text in openems.cpp;
+#   cg25-cg27 only FDTD/metal/engine_metal_diamond.mm).
+#
+# 3. Final A/B of the commit states, one session (scratchpad ab27.txt)
+# Configs per model, interleaved: c0 cg24, c1 cg25, c2 cg26, c3 cg27 (default coefficient layout), c4 cg27 with the other
+# layout (OPENEMS_DIAMOND_COEF), c5 the multithreaded CPU engine of cg27 (4 or 8 threads), all with OPENEMS_FTZ=1.
+# 2026-11-04 20:26-20:43, 5 rounds per model; step counts notch tutorial 8000, GCPW 15000, patch tutorial 10500, SMA
+# 3000, notch x3 1000, patch x5 600. MC/s = median of the 5 runs; ratios = per-round ratio, median [min-max].
+# | model (M cells)        | cg24 MC/s | cg25/cg24          | cg26/cg25          | cg27/cg26          | cg27 MC/s | cg27/cg24          | split/packed (cg27 default) | CPU cg27 MC/s | others cpu/gpu |
+# | notch tutorial (0.270) | 1550      | x0.963 [0.93-1.01] | x1.058 [1.03-1.18] | x0.971 [0.92-1.02] | 1620      | x0.983 [0.93-1.09] | x1.008 [0.98-1.07] (packed) | 432 (4 thr)   | 430 %/1 %       |
+# | GCPW line (0.242)      | 1361      | x1.239 [1.20-1.29] | x1.017 [0.98-1.05] | x1.042 [1.02-1.08] | 1773      | x1.303 [1.29-1.37] | x1.038 [1.03-1.05] (split)  | 371 (4 thr)   | 464 %/1 %       |
+# | patch tutorial (0.104) | 743       | x1.158 [0.77-1.86] | x0.692 [0.51-1.45] | x1.148 [0.79-1.68] | 858       | x1.251 [0.93-1.47] | x0.980 [0.78-1.35] (split)  | 248 (4 thr)   | 457 %/0 %       |
+# | SMA launch (0.871)     | 1184      | x1.146 [1.14-1.21] | x1.031 [1.02-1.06] | x1.037 [1.02-1.05] | 1482      | x1.265 [1.22-1.28] | x1.038 [1.02-1.07] (split)  | 307 (8 thr)   | 398 %/2 %       |
+# | notch x3 (5.247)       | 2662      | x1.000 [0.96-1.04] | x1.023 [0.98-1.04] | x1.005 [0.22-1.03] | 2695      | x1.012 [0.22-1.07] | x0.994 [0.97-4.71] (packed) | 646 (8 thr)   | 477 %/1 %       |
+# | patch x5 (7.863)       | 2478      | x1.001 [0.98-1.01] | x1.011 [0.92-1.03] | x1.009 [0.96-1.04] | 2405      | x0.993 [0.91-1.07] | x1.024 [0.95-1.10] (packed) | 519 (8 thr)   | 564 %/2 %       |
+# runs identical to c0's first run: 180 of 180; loads at the model starts: notch tutorial 11.75, GCPW line 13.71, patch tutorial 15.75, SMA launch 14.29, notch x3 11.69, patch x5 25.22
+# - Heavy load: the other processes took 4-5.6 cores (load average 11.7-25.2), which costs the CPU engine 3.5-4.8x
+#   (c5; quiet cg18 CPU best in the step report) and the GPU engine much less. The patch tutorial (0.1 M cells, 343
+#   short IterateTS calls between nf2ff dumps, CPU work between them) ran at 743-858 MC/s against ~1600 on a quieter
+#   Mac: its ratios are noise. One cg27 run of notch x3 stalled (579 MC/s, the other four 2646-2750); it sets the wide
+#   ranges in that row.
+# - cg26 and cg27 compile the same kernel for the packed models (the split code is behind DIAMOND_SPLIT), so their
+#   ratio there (notch tutorial x0.971 [0.92-1.02]) is a measure of the noise.
+# - Earlier sessions, one step each against its predecessor (scratchpad ab26.txt, 1-4 other cores unless noted):
+#   sheet runs alone against cg24, GCPW x1.204 [1.19-1.22]; excitation runs, SMA x1.160 [1.07-1.16] and notch tutorial
+#   x0.970 [0.969-0.973]; offsets read once, GCPW x1.014 [1.012-1.017]; compile-time grid against cg25 at 3-4 other
+#   cores, notch tutorial x1.037, GCPW x1.032, notch x3 x0.978 [0.90-1.00] (others' GPU 21 %); split against packed in
+#   one build, 8 rounds at 4-5 other cores: SMA x1.053 [1.03-1.07], GCPW x1.031 [1.03-1.04], patch tutorial x0.998,
+#   notch tutorial x1.000; split against cg25 at 31 % other GPU use: notch x3 x0.908, patch x5 x0.977.
+#
+# 4. Coefficients (scratchpad opcount.py; the setup line of the engine with verbose >= 1)
+# | model          | grid (f4vectors) | operators | f4vectors per operator | packed  | KB per 16x16 columns | cg27 layout                   |
+# | notch tutorial | 235x82x4         | 2525      | 30                     | 0.48 MB | 9                    | packed                        |
+# | notch x3       | 689x224x9        | 5056      | 275                    | 0.97 MB | 6                    | packed                        |
+# | SMA launch     | 138x107x15       | 64410     | 3.4                    | 12.4 MB | 275                  | split, 88485 distinct f4vectors |
+# | GCPW line      | 195x73x5         | 4186      | 17                     | 0.80 MB | 46                   | split, 5965                   |
+# | patch tutorial | 49x47x12         | 3153      | 8.8                    | 0.61 MB | 58                   | split, 5517                   |
+# | patch x5       | 209x209x45       | 7562      | 260                    | 1.45 MB | 21                   | packed                        |
+# Packed = 6 f4vectors (96 B) per operator for the voltages and 6 for the currents (192 B); split = the distinct f4vectors
+# (16 B each) plus 2 x 16 B of indices per operator: SMA launch 1.4 MB + 2.1 MB. "KB per 16x16 columns" = the mean
+# number of distinct operators in a 16 x 16 block of (x, y) columns (all z) x 192 B: what one threadgroup's tiles touch.
+# The SMA launch's mesh is graded around the connector pin and the launch (0.05 mm floor), so nearly every few
+# f4vectors have their own operator; the uniform tutorial meshes repeat a few operators.
+#
+# 5. Operator setup (cg24), FDTD.Run of a short run, OPENEMS_SETUP_TIMING=1 (scratchpad setuptime.txt; loaded Mac)
+# | model (TS)          | diamond before cg24 | diamond cg24 | multithreaded | largest phase (cg24)                 | GPU setup |
+# | notch tutorial 2000 | 0.28 s              | 0.22 s       | 0.25 s        | Calc_EC (material averaging) 0.10 s  | 0.004 s   |
+# | notch x3 200        | 5.55 s              | 2.74 s       | 2.61 s        | Calc_EC 1.97 s                       | 0.033 s   |
+# | SMA launch 1000     | 1.25 s              | 0.57 s       | 0.59 s        | UPML BuildExtension 0.25 s           | 0.016 s   |
+# | GCPW line 2000      | 0.31 s              | 0.13 s       | 0.14 s        | Calc_EC 0.05 s, sheets 0.05 s        | 0.006 s   |
+# | patch tutorial 2000 | 0.17 s              | 0.03 s       | 0.03 s        | Calc_EC 0.02 s                       | 0.003 s   |
+# | patch x5 200        | 6.48 s              | 1.69 s       | 1.60 s        | Calc_EC 1.09 s                       | 0.015 s   |
+# The diamond engine's operator is now the multithreaded engine's (Operator_Multithread): the same setup time. On the
+# short bench runs the setup is most of FDTD.Run (notch x3 200 TS: 2.74 s of 3.51 s; the loop 0.41 s); on the author's
+# real runs it is not (SMA launch probe-end run: 0.57 s against a 27 s loop on cg27; GCPW line 0.13 s against 5.0 s). The GPU
+# setup (kernel compile, buffers, tile lists) is 3-33 ms. Left: Calc_EC (CPU code shared with stock, bit-identical
+# requirement) is the largest part on the big uniform models.
+#
+# 6. GPU time (cg24 kernel, OPENEMS_DIAMOND_TIMING=1/2; scratchpad gputime.txt, gputime_26.txt)
+# | model          | MC/s | GPU busy % of the loop | IterateTS calls (steps each) | phases MM/MV/VM/VV (TIMING=2) |
+# | notch x3       | 2819 | 96-98 %                | 10 (200)                     | 12/17/18/53 %                 |
+# | SMA launch     | 1269 | 98-99 %                | 12 (500)                     | 11/18/18/53 %                 |
+# | GCPW line      | 1395 | 96-99 %                | 39 (385)                     | 15/22/21/42 %                 |
+# | patch tutorial | 1317 | 78 % (46 % with 8 other cores busy) | 343 (31)        | 18/21/21/41 %                 |
+# | patch x5       | 2522 | 91 %                   | 9 (133)                      | -                             |
+# | notch tutorial | 1385 | 76 %                   | 197 (81)                     | -                             |
+# The schedule's work split (M = V = 8, K = 4) is 10/18/18/54 %, so per cell update the four phases cost the same. The
+# boards keep the GPU busy; they are slower per cell because of their extension work (section 7) and coefficients. The
+# patch tutorial's IterateTS calls are short (the nf2ff dumps every 31 steps), so the CPU side shows there.
+#
+# 7. Where the time goes (cg24, diagnostic build with ABLATE=..., which skips work: results NOT identical by design;
+#    3 rounds; scratchpad ablate.txt). Speed-up when a part is left out:
+# | model      | UPML   | Mur    | excitation | coefficients (all cells operator 0) | sheets (ADE) | all of these |
+# | SMA launch | x1.343 | x1.055 | x1.167     | x1.257                              | -            | x3.12        |
+# | GCPW line  | -      | x1.283 | x0.985     | x1.084                              | x1.514       | x2.89        |
+# | notch x3   | x1.111 | x1.078 | -          | x0.980                              | -            | x1.24        |
+# The excitation (SMA: 3851 entries, one thread per tile) and the sheets (two orders, a pass and a barrier each, and a
+# pass on the H steps) became cg25's runs; the coefficients became cg27's split tables.
+#
+# 8. Tile and K sweep (cg23, bench.py, faster of 2 runs, MC/s, all bit-identical; others' CPU 40-200 %, GPU 0-15 %;
+#    results/diamond_sweep_cg21_2026-11-04.txt has the threads-per-tile sweep)
+# | config                 | notch tut | notch x3 | SMA  | GCPW | patch tut | patch x5 |
+# | CPU 4 threads FTZ      | 1754      | 1517     | 1250 | 1312 | 1800      | 1560     |
+# | default K=4 tile 8:8   | 1822      | 2974     | 1308 | 1463 | 1607      | 2890     |
+# | K=2 (tile 4:4)         | 1294      | 2209     | 1438 | 968  | 1426      | 2538     |
+# | K=2 tile 8:4           | 1793      | 2511     | 1338 | 1356 | 1696      | 2439     |
+# | K=3 (6:6)              | 1773      | 2939     | 1434 | 1365 | 1676      | 2698     |
+# | K=4 tile 12:8          | 1745      | 3203     | 1089 | 1596 | 1237      | 2744     |
+# | K=4 tile 16:8          | 1634      | 2732     | 1019 | 1396 | 1436      | 2744     |
+# | K=4 tile 8:16          | 1342      | 2517     | 1050 | 1400 | 1128      | 2482     |
+# | K=4 tile 16:16         | 1676      | 3049     | 823  | 1305 | 1042      | 2648     |
+# | K=6 (12:12)            | 1528      | 2979     | 956  | 1472 | 1368      | 2766     |
+# | K=8 (16:16)            | 1486      | 2842     | 727  | 1298 | 646       | -        |
+# Paired A/B on cg24 (4-5 rounds): SMA launch K=2 tile 6:4 x1.132 [1.107-1.144], K=3 x1.099, K=2 x1.060, K=3 tile 8:6
+# x1.065 (scratchpad ab_sma.txt); GCPW line tile 12:8 x1.114-1.117 per round (cg23). No single setting is best for all six
+# models; the default K=4 tile 8:8 stays: best or within 8 % on the four tutorial models, 8-9 % below the best
+# setting on the two boards in the sweep above (in the paired runs just above, their best settings ran x1.11-x1.13 of
+# the default). A per-model choice (a tuner during the first steps, as the CPU engine picks its threads) is open.
+#
+# 9. End to end through the author's toolkit (cg27 = dev26f; scratchpad e2e27/, script e2e27.sh)
+# The toolkit runs of results/rfsim_e2e_gpu_2026-11-04.txt again (scripts/e2e/run_one.py: core.run(threads=0), the
+# model build, FDTD.Run with operator setup and time stepping, CalcPort; E2E_ENGINE=metal-diamond for the GPU, "cpu" =
+# the toolkit's default engine, multithreaded with the fork's thread tuner; both the cg27 library, no FTZ). One run
+# each, 20:44-21:00, in this order. The other processes took 3.6-4.7 cores the whole time (palace-arm64.bin, Python
+# jobs, Swift builds), which slows the CPU engine about 4x and the GPU engine little, so the CPU/GPU ratios of this
+# session overstate the GPU. run = FDTD.Run wall time, loop = openEMS's time-stepping time, MC/s from the loop.
+# | run          | eng | load  | others cpu/gpu | TS     | run s   | loop s  | MC/s  | cg23 run s (1 core busy) |
+# | GCPW full    | cpu | 24.57 |  447 %/11 % |  94217 |   76.92 |   76.67 |   297 |  18.24                   |
+# | GCPW full    | gpu | 17.80 |  459 %/ 1 % |  94217 |   13.70 |   13.29 |  1716 |  15.89 (GPU) -> x1.16    |
+# | GCPW -60 dB  | cpu | 15.62 |  382 %/ 2 % |  34300 |   27.84 |   27.54 |   301 |   7.43                   |
+# | GCPW -60 dB  | gpu | 14.12 |  449 %/ 2 % |  34300 |    5.62 |    4.97 |  1670 |   5.95 (GPU) -> x1.06    |
+# | SMA full     | cpu | 13.55 |  471 %/ 7 % | 118475 |  352.67 |  351.52 |   294 | 100.05                   |
+# | SMA full     | gpu | 18.41 |  390 %/ 2 % | 118475 |   65.46 |   64.56 |  1599 |  79.46 (GPU) -> x1.21    |
+# | SMA -60 dB   | cpu | 13.30 |  426 %/ 5 % |  50320 |  113.91 |  113.01 |   388 |  43.71                   |
+# | SMA -60 dB   | gpu | 17.57 |  360 %/ 2 % |  50320 |   27.60 |   26.94 |  1627 |  34.23 (GPU) -> x1.24    |
+# (-60 dB = the toolkit default: probe end -60 dB, hold 0.5; same stop steps as cg23.) The GCPW probe-end GPU run spends
+# 0.65 s outside the loop (operator setup and engine start under that load; 0.24 s in the cg23 session).
+# - Against the cg23 CPU runs (one other core busy then): GCPW 18.2 -> 13.7 s full (1.33x), 7.4 -> 5.6 s probe end
+#   (1.32x); SMA 100.1 -> 65.5 s (1.53x), 43.7 -> 27.6 s (1.58x).
+# - Identity: the data lines of all 10 port files (voltages, currents) of every GPU run equal those of the cg23 GPU runs
+#   (only the header's time stamp differs), and the CPU runs' those of the cg23 CPU runs. GPU against CPU (no FTZ on the
+#   CPU here, so the GPU flushes subnormals the CPU keeps): the differences of results/rfsim_e2e_gpu_2026-11-04.txt hold
+#   unchanged (S21 within 2e-4 dB, SMA S11 at 1 GHz -22.69 dB in every run).

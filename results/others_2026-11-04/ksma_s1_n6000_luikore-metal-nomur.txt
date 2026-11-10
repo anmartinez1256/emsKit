@@ -1,0 +1,4 @@
+# ksma_s1_n6000  2026-11-04 06:25
+multithreaded:4                 385.2 MC/s     13.57 s  6000 TS x 0.871 MC  others  43%  runs 385/385  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4                        1265.7 MC/s      4.13 s  6000 TS x 0.871 MC  others  47%  runs 1266/1266  probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4)

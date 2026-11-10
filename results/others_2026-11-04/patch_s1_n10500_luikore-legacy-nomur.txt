@@ -1,0 +1,4 @@
+# patch_s1_n10500  2026-11-04 06:07
+multithreaded:4                 319.4 MC/s      3.41 s  10500 TS x 0.104 MC  others  50%  runs 319/247  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-rc3-47-g55ce11b
+metal:4#OPENEMS_METAL_FUSED_PIPELINE=0    181.1 MC/s      6.01 s  10500 TS x 0.104 MC  others  33%  runs 150/181  probes rel=3.6e-07  S11: max|dS|=2.7e-07 max dB=3.1e-06  (tolerant)  openEMS v0.37.0-rc3-47-g55ce11b
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: metal:4#OPENEMS_METAL_FUSED_PIPELINE=0)

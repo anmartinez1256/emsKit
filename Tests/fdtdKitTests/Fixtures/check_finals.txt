@@ -1,0 +1,4 @@
+check.sh smoke: ALL IDENTICAL (6 models)
+check.sh smoke: PARTIAL: no differences on 4 of 6 models (RFSIM_PATH is not set: kgcpw and ksma skipped)
+check.sh smoke: FAIL: patch_x5 notch
+check.sh smoke: bench.py notch_x3 stopped with exit status 1

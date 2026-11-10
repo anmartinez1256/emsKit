@@ -1,0 +1,5 @@
+# patch_s1_n10500  2026-11-04 05:04
+stock@multithreaded:2           278.5 MC/s      3.91 s  10500 TS x 0.104 MC  others  36%  runs 278/274  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4           1855.7 MC/s      0.59 s  10500 TS x 0.104 MC  others  39%  runs 1856/1846  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1493.5 MC/s      0.73 s  10500 TS x 0.104 MC  others  45%  runs 1479/1494  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 3 configs equals the reference

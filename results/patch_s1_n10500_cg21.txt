@@ -1,0 +1,7 @@
+# patch_s1_n10500  2026-11-04 08:46
+stock@multithreaded:2           123.0 MC/s      8.85 s  10500 TS x 0.104 MC  others 458%  busy swiftpm-testing-:160,emskit-phase1:80,emskit-phase1:80,emskit-phase1:79,mediaanalysisd:34  [ref]  openEMS v0.37.0
+cg21@multithreaded:4            792.2 MC/s      1.37 s  10500 TS x 0.104 MC  others 430%  busy swiftpm-testing-:161,emskit-phase1:81,emskit-phase1:81,emskit-phase1:80  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@multithreaded:8            511.6 MC/s      2.13 s  10500 TS x 0.104 MC  others 355%  busy swiftpm-testing-:161,emskit-phase1:81,emskit-phase1:80  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@fastest                    843.9 MC/s      1.29 s  10500 TS x 0.104 MC  others 289%  busy swiftpm-testing-:166,emskit-phase1:83  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0           1545.4 MC/s      0.70 s  10500 TS x 0.104 MC  others 206%  busy swiftpm-testing-:84,emskit-phase1:84  probes rel=3.8e-07  S11: max|dS|=2.5e-07 max dB=2.3e-05  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg21@metal-diamond:0)

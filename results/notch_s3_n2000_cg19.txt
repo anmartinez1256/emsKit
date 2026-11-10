@@ -1,0 +1,7 @@
+# notch_s3_n2000  2026-11-04 06:11
+stock@multithreaded:8           655.1 MC/s     16.02 s  2000 TS x 5.247 MC  others 176%  busy mds_stores:81,mediaanalysisd:45  [ref]  openEMS v0.37.0
+cg19@multithreaded:4           1203.5 MC/s      8.72 s  2000 TS x 5.247 MC  others 116%  busy Python:69  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg19@multithreaded:8           1554.8 MC/s      6.75 s  2000 TS x 5.247 MC  others  52%  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg19@fastest                   1864.1 MC/s      5.63 s  2000 TS x 5.247 MC  others 116%  busy Python:51  (auto-picked 8 threads)  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg19@metal-diamond:0            279.6 MC/s     37.53 s  2000 TS x 5.247 MC  others  63%  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 4 configs equals the reference

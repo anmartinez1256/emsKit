@@ -1,0 +1,12 @@
+# patch_s5_n1200  2026-10-28 10:28
+# note (2026-11-03, final review): the load figure of the A@multithreaded:8 row (others -15493379%) is not a valid
+# reading, so the load during that run is unknown.
+multithreaded:8                1063.7 MC/s      8.87 s  1200 TS x 7.863 MC  others  55%  runs 1064/1053  [ref]
+A@multithreaded:1               407.4 MC/s     23.16 s  1200 TS x 7.863 MC  others  46%  runs 407/396  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:4               980.8 MC/s      9.62 s  1200 TS x 7.863 MC  others  52%  runs 978/981  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:8              1150.6 MC/s      8.20 s  1200 TS x 7.863 MC  others -15493379%  runs 1151/1142  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+A@multithreaded:10             1120.6 MC/s      8.42 s  1200 TS x 7.863 MC  others  56%  runs 1121/1114  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:1              607.9 MC/s     15.52 s  1200 TS x 7.863 MC  others  54%  runs 608/601  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:4             1008.0 MC/s      9.36 s  1200 TS x 7.863 MC  others  50%  runs 996/1008  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:8             1258.0 MC/s      7.50 s  1200 TS x 7.863 MC  others  54%  runs 1255/1258  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+AB@multithreaded:10            1226.9 MC/s      7.69 s  1200 TS x 7.863 MC  others  54%  runs 1227/1181  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

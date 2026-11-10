@@ -1,0 +1,12 @@
+# kgcpw_s1_n15000  2026-11-03 13:10
+# note (2026-11-03, final review): the full check of the final build (cg18 = patches 0001-0006,
+# v0.37.0-24-g087ce9e) against stock v0.37.0: bench/check.sh cg18 cg18 (1, 4, 8 and 10 threads and the automatic
+# choice 'fastest', --repeat 2 --quiet 60) on a quiet Mac ('others' = the other processes' CPU during the run,
+# 100 % = one core). 'fastest' names the thread count it picked when its search ended within the run.
+stock@multithreaded:4           307.4 MC/s     11.81 s  15000 TS x 0.242 MC  others  56%  runs 307/305  [ref]  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:1            526.8 MC/s      6.89 s  15000 TS x 0.242 MC  others  59%  runs 525/527  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:4           1760.2 MC/s      2.06 s  15000 TS x 0.242 MC  others  54%  runs 1690/1760  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:8           1342.5 MC/s      2.70 s  15000 TS x 0.242 MC  others  51%  runs 1322/1343  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:10          1021.5 MC/s      3.55 s  15000 TS x 0.242 MC  others  52%  runs 1022/989  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1527.3 MC/s      2.38 s  15000 TS x 0.242 MC  others  55%  runs 1527/1521  (auto-picked 4 threads)  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 6 configs equals the reference

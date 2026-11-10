@@ -1,0 +1,29 @@
+== pec, 41,37,30 lines, 400 timesteps 
+  K=1: IDENTICAL
+  K=2: DIFFERENT
+volt: max|a|=3.112e-01  max|a-b|=2.384e-07  rel=7.7e-07  differing elements 12/97200  (TS 400 vs 400)
+   worst at n,x,y,z=(2, 20, 18, 3): np.float32(0.01234) vs np.float32(0.012340238)
+curr: max|a|=8.270e-04  max|a-b|=0.000e+00  rel=0.0e+00  differing elements 0/97200  (TS 400 vs 400)
+DIFFERENT
+  K=3: IDENTICAL
+  K=4: the GPU path did not run
+Time for 400 iterations with 45510.00 cells : 0.03 sec
+Speed: 606.80 MCells/s 
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+  tuned, batch 8: the tuning did not finish
+Time for 400 iterations with 45510.00 cells : 0.02 sec
+Speed: 910.20 MCells/s 
+  tuned, batch 8 ( steps): IDENTICAL
+  tuning, default batch: IDENTICAL
+== mur, 41,37,30 lines, 400 timesteps 
+  K=1: IDENTICAL
+  K=2: IDENTICAL
+  K=3: IDENTICAL
+  K=4: IDENTICAL
+  K=8: IDENTICAL
+  K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+  tuned, batch 8 (K=3 tiles 8,6 after 612 steps): IDENTICAL
+  tuning, default batch: IDENTICAL
+== mur, 41,37,30 lines, 300 timesteps --debye
+  Metal run failed

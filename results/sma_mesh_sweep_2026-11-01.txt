@@ -1,0 +1,98 @@
+SMA launch mesh floor sweep, 2026-11-01 (Kirchhoff rfsim launch.sma_launch, P["min_cell"]; installed openEMS cg16,
+auto threads, probe end -60 dB; reference s_ref = full 10 ns run on the 0.02 mesh of 2026-10-17, 188697 TS, 182 s).
+The new merge rule (grid lines give way to geometry lines, geometry pairs meet in the middle) already moves three
+lines by 0.01 mm at 0.02, hence the first row's 0.038 dB.
+
+Corrections (2026-11-03, final review; no measured value below is changed):
+- The two sentences above are wrong. Against s_ref, the new merge rule moves 14 lines of the default 0.02 mm mesh,
+  not three. The merge itself moves 9 lines by at most 0.01 mm: x -3.0 -> -2.99, -2.1 -> -2.095,
+  -2.05526 -> -2.05263, 2.09 -> 2.095; y -3.0 -> -2.99, -2.1 -> -2.095, -1.2 -> -1.19, -0.9 -> -0.89,
+  2.09 -> 2.095. The y line set is then mirror-symmetric (largest deviation 2.4e-15 mm, against 0.104 mm in s_ref),
+  so CSXCAD's SmoothMeshLines fills the -y half and mirrors it, and 5 graded y lines between 3.6 and 4.45 mm move:
+  3.775 -> 3.770, 3.95 -> 4.009, 4.075 -> 4.179, 4.2 -> 4.301, 4.325 -> 4.388 mm. z is unchanged. The time step
+  goes from 53.0 fs (5.29949e-14 s, s_ref) to 54.8 fs. Lines read from the runs' HDF5 dumps.
+- Of the first row's 0.038 dB, 0.0337 dB is this mesh change and 0.0046 dB the probe end: r_0.02 against s_60 gives
+  0.0337 dB, s_60 against s_ref 0.0046 dB (s_60 = probe end -60 dB, hold 1, on the s_ref mesh; same mask as the
+  table).
+- The rows 0.03 to 0.06, and the 0.05 / hold 0.5 row (0.777 M cells, 46444 TS, 28.7 s), used the first version of
+  the floor: floor not scaled with the model, scan-order dependent merge, asymmetric y mesh. The published toolkit
+  patch does not build these meshes. The 2026-11-02 table below has 0.04 and 0.05 on the corrected mesh (0.05 /
+  hold 0.5 there: 0.871 M cells, 50320 TS); 0.03 was not rerun, and 0.06 is refused now.
+- Row 0.06: the prepreg goes from 4 to 2 cells, not 3 (z lines -0.2104, -0.1052, 0 against -0.2104, -0.1578,
+  -0.1052, -0.0526, 0 mm in s_ref and in the 0.05 run).
+- In the raw RESULT lines of 2026-11-01, "dt" and "TS" are the spacing and the number of the port-probe samples (one
+  sample every Nyquist/4 steps), not the FDTD time step and step count. The table takes dt from the "FDTD timestep is"
+  lines and TS from the "probe end criterion reached after N timesteps" lines. The 2026-11-02 RESULT lines give the
+  step count.
+
+floor mm | hold | cells   | dt fs | TS     | run s | S11@1G  | dS11 dB (S11>-40) | dS21 dB | dZ0 ohm
+0.02     | 1    | 1.071 M | 54.8  | 103831 | 86.6  | -22.80  | 0.038             | 0.0004  | +0.002
+0.03     | 1    | 1.007 M | 58.5  |  97097 | 82.9  | -22.79  | 0.021             | 0.0004  | +0.037
+0.04     | 1    | 0.930 M | 78.0  |  72891 | 56.9  | -22.73  | 0.074             | 0.0011  | +0.124
+0.05     | 1    | 0.777 M | 91.5  |  62153 | 41.4  | -22.65  | 0.160             | 0.0028  | +0.126
+0.06     | 1    | 0.625 M | 130.1 |  43680 | 24.3  | -19.98  | 3.292             | 0.0237  | +0.428  (prepreg 4 -> 3 cells: no)
+0.02     | 0.5  | 1.071 M | 54.8  |  77588 | 74.1  | -22.80  | 0.028             | 0.0004  | -0.001
+0.05     | 0.5  | 0.777 M | 91.5  |  46444 | 28.7  | -22.65  | 0.157             | 0.0025  | +0.132
+
+raw log:
+FDTD timestep is: 5.47578e-14 s; Nyquist rate: 4565 timesteps @2.00025e+09 Hz
+RunFDTD: probe end criterion reached after 103831 timesteps: all probes below -60.0 dB of their peak for 52318 timesteps (energy -10.97dB)
+RESULT floor 0.02 hold 1.0: 1.071 M cells, dt 62478.6 fs, 92 TS, runtime 86.6 s | S11 -22.80 dB (ref -22.80), S21 -0.0602 dB, Z0 50.786 ohm @1000M | vs s_ref: max|dS11| 5.20e-05 lin (0.038 dB where S11>-40dB), max|dS21| 0.0004 dB, dZ0 +0.002 ohm
+FDTD timestep is: 5.8536e-14 s; Nyquist rate: 4270 timesteps @2.00041e+09 Hz
+RunFDTD: probe end criterion reached after 97097 timesteps: all probes below -60.0 dB of their peak for 48941 timesteps (energy -11.12dB)
+RESULT floor 0.03 hold 1.0: 1.007 M cells, dt 62457.9 fs, 92 TS, runtime 82.9 s | S11 -22.79 dB (ref -22.80), S21 -0.0604 dB, Z0 50.821 ohm @1000M | vs s_ref: max|dS11| 2.89e-04 lin (0.021 dB where S11>-40dB), max|dS21| 0.0004 dB, dZ0 +0.037 ohm
+FDTD timestep is: 7.79834e-14 s; Nyquist rate: 3205 timesteps @2.00051e+09 Hz
+RunFDTD: probe end criterion reached after 72891 timesteps: all probes below -60.0 dB of their peak for 36736 timesteps (energy -15.28dB)
+RESULT floor 0.04 hold 1.0: 0.930 M cells, dt 62464.7 fs, 92 TS, runtime 56.9 s | S11 -22.73 dB (ref -22.80), S21 -0.0607 dB, Z0 50.907 ohm @1000M | vs s_ref: max|dS11| 2.01e-03 lin (0.074 dB where S11>-40dB), max|dS21| 0.0011 dB, dZ0 +0.124 ohm
+FDTD timestep is: 9.14736e-14 s; Nyquist rate: 2733 timesteps @2.00002e+09 Hz
+RunFDTD: probe end criterion reached after 62153 timesteps: all probes below -60.0 dB of their peak for 31319 timesteps (energy -15.51dB)
+RESULT floor 0.05 hold 1.0: 0.777 M cells, dt 62476.4 fs, 92 TS, runtime 41.4 s | S11 -22.65 dB (ref -22.80), S21 -0.0614 dB, Z0 50.909 ohm @1000M | vs s_ref: max|dS11| 2.97e-03 lin (0.160 dB where S11>-40dB), max|dS21| 0.0028 dB, dZ0 +0.126 ohm
+FDTD timestep is: 1.30051e-13 s; Nyquist rate: 1922 timesteps @2.00034e+09 Hz
+RunFDTD: probe end criterion reached after 43680 timesteps: all probes below -60.0 dB of their peak for 22029 timesteps (energy -13.93dB)
+RESULT floor 0.06 hold 1.0: 0.625 M cells, dt 62424.5 fs, 92 TS, runtime 24.3 s | S11 -19.98 dB (ref -22.80), S21 -0.0801 dB, Z0 51.212 ohm @1000M | vs s_ref: max|dS11| 4.88e-02 lin (3.292 dB where S11>-40dB), max|dS21| 0.0237 dB, dZ0 +0.428 ohm
+RunFDTD: probe end criterion reached after 77588 timesteps: all probes below -60.0 dB of their peak for 26159 timesteps (energy -11.32dB)
+RESULT floor 0.02 hold 0.5: 1.071 M cells, dt 62478.6 fs, 69 TS, runtime 74.1 s | S11 -22.80 dB (ref -22.80), S21 -0.0602 dB, Z0 50.783 ohm @1000M | vs s_ref: max|dS11| 4.75e-05 lin (0.028 dB where S11>-40dB), max|dS21| 0.0004 dB, dZ0 -0.001 ohm
+BATCH DONE
+RunFDTD: probe end criterion reached after 46444 timesteps: all probes below -60.0 dB of their peak for 15659 timesteps (energy -15.93dB)
+RESULT floor 0.05 hold 0.5: 0.777 M cells, dt 62476.4 fs, 69 TS, runtime 28.7 s | S11 -22.65 dB (ref -22.80), S21 -0.0614 dB, Z0 50.916 ohm @1000M | vs s_ref: max|dS11| 3.00e-03 lin (0.157 dB where S11>-40dB), max|dS21| 0.0025 dB, dZ0 +0.132 ohm
+
+## 2026-11-02: same sweep on the corrected mesh (symmetric merge, scaled floor; see CHANGELOG / launch.py)
+The default 0.02 mm mesh is unchanged line for line (same 150x119x60, same stop step); 0.04 and 0.05 gained lines (the old
+merge dropped lines asymmetrically). Measured while other simulations loaded the Mac (load 9-11), so "run s" is NOT
+comparable with the table above; "est. quiet s" = cell-steps / 1190 MC/s (the effective speed of the 2026-11-01 rows).
+Ratios of cell-steps against the 0.02 / hold 1 reference are load-independent. 0.0526 mm and above are refused now.
+Note (2026-11-03, final review): "unchanged line for line" compares with the first floor version of 2026-11-01
+(its 0.02 mesh equals the corrected one to 1.1e-15 mm). Against the pre-floor mesh of s_ref, 14 lines moved and the
+time step went from 53.0 to 54.8 fs (see the corrections at the top). Time steps of these runs, read from their
+excitation files: 0.02 54.8 fs, 0.04 78.0 fs (7.79834e-14 s), 0.05 84.4 fs (8.44053e-14 s, both holds); the
+first-merge 0.05 mesh above ran at 91.5 fs.
+
+floor mm | hold | cells   | TS     | cell-steps | ratio | run s (loaded) | est. quiet s | S11@1G | dS11 dB (S11>-40) | dS21 dB | dZ0 ohm
+0.02     | 1    | 1.071 M | 103831 | 111.2 G    | 1.0   | 380.9          | 86.6 (meas.) | -22.80 | 0.038             | 0.0004  | +0.002
+0.04     | 1    | 0.953 M |  72891 |  69.5 G    | 1.6   | 152.3          | 58           | -22.72 | 0.079             | 0.0013  | +0.131
+0.05     | 1    | 0.871 M |  67340 |  58.7 G    | 1.9   | 120.7          | 49           | -22.69 | 0.117             | 0.0019  | +0.113
+0.05     | 0.5  | 0.871 M |  50320 |  43.8 G    | 2.5   | 115.3          | 37           | -22.69 | 0.116             | 0.0018  | +0.130
+
+RESULT floor 0.02 hold 1.0: 1.071 M cells, 103831 TS, runtime 380.9 s | S11 -22.80 dB, S21 -0.0602 dB, Z0 50.786 ohm @1000M | vs s_ref: dS11 0.038 dB, dS21 0.0004 dB, dZ0 +0.002 ohm
+RESULT floor 0.04 hold 1.0: 0.953 M cells,  72891 TS, runtime 152.3 s | S11 -22.72 dB, S21 -0.0607 dB, Z0 50.915 ohm @1000M | vs s_ref: dS11 0.079 dB, dS21 0.0013 dB, dZ0 +0.131 ohm
+RESULT floor 0.05 hold 1.0: 0.871 M cells,  67340 TS, runtime 120.7 s | S11 -22.69 dB, S21 -0.0611 dB, Z0 50.897 ohm @1000M | vs s_ref: dS11 0.117 dB, dS21 0.0019 dB, dZ0 +0.113 ohm
+RESULT floor 0.05 hold 0.5: 0.871 M cells,  50320 TS, runtime 115.3 s | S11 -22.69 dB, S21 -0.0611 dB, Z0 50.914 ohm @1000M | vs s_ref: dS11 0.116 dB, dS21 0.0018 dB, dZ0 +0.130 ohm
+
+
+## 2026-11-03: re-measured on the final build (cg18) on a quiet Mac, against the full run on the published mesh
+Toolkit = the published patches/rfsim 0001-0003 (its default mesh is the corrected mesh of 2026-11-02, line for line).
+Reference = S_off of results/rfsim_e2e_2026-11-03.txt: the full 10 ns run on that default 0.02 mm mesh (182622 steps of
+54.76 fs, FDTD.Run 168.5 s), not s_ref. Same driver run as that file (rows S_60, M_03, M_04, M_05, S_60h, M_05h); one
+run each, auto threads (the tuner picked 8 in every row), before every run the other processes used less than one core
+for 10 s. The step counts of 0.04 and 0.05 are those of 2026-11-02; 0.03 is the first run of that floor on the
+corrected merge. "run s" = wall time of FDTD.Run (operator setup and time stepping); both ratios are against the
+0.02 / hold 1 row (cell-steps and run time). dS11 in dB where |S11_ref| > -40 dB over 50 MHz-2 GHz, dS21 max over the
+band, dZ0 = Re Z0 - Re Z0_ref at 1 GHz.
+
+floor mm | hold | cells   | dt fs | TS     | cell-steps | ratio | run s | t ratio | S11@1G | dS11 dB (S11>-40) | dS21 dB | dZ0 ohm
+0.02     | 1    | 1.071 M | 54.76 | 103831 | 111.2 G    | 1.00  |  97.6 | 1.00   | -22.80 | 0.0089            | 0.0002  | -0.007
+0.03     | 1    | 1.007 M | 58.54 |  97097 |  97.8 G    | 1.14  |  85.7 | 1.14   | -22.79 | 0.0292            | 0.0006  | +0.029
+0.04     | 1    | 0.953 M | 77.98 |  72891 |  69.5 G    | 1.60  |  58.0 | 1.68   | -22.72 | 0.0782            | 0.0014  | +0.123
+0.05     | 1    | 0.871 M | 84.41 |  67340 |  58.7 G    | 1.90  |  49.5 | 1.97   | -22.69 | 0.1156            | 0.0021  | +0.104
+0.02     | 0.5  | 1.071 M | 54.76 |  77588 |  83.1 G    | 1.34  |  72.9 | 1.34   | -22.80 | 0.0188            | 0.0002  | -0.009
+0.05     | 0.5  | 0.871 M | 84.41 |  50320 |  43.8 G    | 2.54  |  37.4 | 2.61   | -22.69 | 0.1157            | 0.0021  | +0.121

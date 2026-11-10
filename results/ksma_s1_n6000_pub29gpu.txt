@@ -1,0 +1,4 @@
+# ksma_s1_n6000  2026-11-07 09:21
+pub29@multithreaded:4          1560.2 MC/s      3.35 s  6000 TS x 0.871 MC  others  66%  busy mediaanalysisd:38  during 3.9 s: self cpu 354% gpu>=0.00 s, others cpu 61% gpu 0%, gpu dev 0% [mediaanalysisd:30/0]  [ref]  openEMS v0.37.0-45-g1d091c7
+pub29@metal-diamond:0          1852.8 MC/s      2.82 s  6000 TS x 0.871 MC  others  73%  busy mediaanalysisd:41  during 3.4 s: self cpu 75% gpu>=2.72 s, others cpu 78% gpu 0%, gpu dev 85% [mediaanalysisd:40/0]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-45-g1d091c7
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (pub29@metal-diamond:0)

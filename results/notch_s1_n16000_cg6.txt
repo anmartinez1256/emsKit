@@ -1,0 +1,7 @@
+# notch_s1_n16000  2026-10-28 13:02
+multithreaded:4                 328.7 MC/s     13.13 s  16000 TS x 0.270 MC  others  59%  runs 329/325  [ref]
+cg6@multithreaded:1             194.3 MC/s     22.21 s  16000 TS x 0.270 MC  others  46%  runs 193/194  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@multithreaded:4             709.9 MC/s      6.08 s  16000 TS x 0.270 MC  others  56%  runs 710/708  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@multithreaded:8            1347.3 MC/s      3.20 s  16000 TS x 0.270 MC  others  50%  runs 1310/1347  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@multithreaded:10           1491.1 MC/s      2.89 s  16000 TS x 0.270 MC  others  56%  runs 1473/1491  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg6@fastest                    1303.1 MC/s      3.31 s  16000 TS x 0.270 MC  others  53%  runs 1303/1302  (auto-picked 10 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

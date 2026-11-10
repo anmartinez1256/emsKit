@@ -1,0 +1,14 @@
+# patch_s1_n10500  2026-10-28 09:08
+basic                           161.9 MC/s      6.72 s  10500 TS x 0.104 MC  others  29%  runs 162/162  [ref]
+sse                             195.4 MC/s      5.57 s  10500 TS x 0.104 MC  others  33%  runs 192/195  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+sse-compressed                  254.8 MC/s      4.27 s  10500 TS x 0.104 MC  others  57%  runs 255/255  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:1                 254.2 MC/s      4.28 s  10500 TS x 0.104 MC  others  53%  runs 254/253  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:2                 276.5 MC/s      3.94 s  10500 TS x 0.104 MC  others  34%  runs 276/277  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:3                 264.8 MC/s      4.11 s  10500 TS x 0.104 MC  others  42%  runs 258/265  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4                 204.9 MC/s      5.31 s  10500 TS x 0.104 MC  others  52%  runs 205/185  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:5                 136.5 MC/s      7.97 s  10500 TS x 0.104 MC  others  32%  runs 133/137  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:6                 110.9 MC/s      9.81 s  10500 TS x 0.104 MC  others  36%  runs 108/111  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:8                  86.2 MC/s     12.62 s  10500 TS x 0.104 MC  others  27%  runs 79/86  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:10                 63.6 MC/s     17.11 s  10500 TS x 0.104 MC  others  34%  runs 63/64  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+fastest                         254.2 MC/s      4.28 s  10500 TS x 0.104 MC  others  31%  runs 254/252  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4+nodumps         261.6 MC/s      4.16 s  10500 TS x 0.104 MC  others  49%  runs 262/256  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

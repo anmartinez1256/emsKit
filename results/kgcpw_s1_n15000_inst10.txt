@@ -1,0 +1,4 @@
+# kgcpw_s1_n15000  2026-10-29 04:40
+stock@multithreaded:4           302.2 MC/s     12.01 s  15000 TS x 0.242 MC  others 124%  busy WindowServer:52,KirchhoffStudio:36  [ref]
+multithreaded:4                 881.0 MC/s      4.12 s  15000 TS x 0.242 MC  others  82%  busy WindowServer:31,KirchhoffStudio:22  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+multithreaded:4#OPENEMS_NO_STAGGER=1    504.9 MC/s      7.19 s  15000 TS x 0.242 MC  others  92%  busy WindowServer:36  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

@@ -1,0 +1,77 @@
+# cache_valley_placement_2026-11-03.txt: what triggers the valley of results/cache_valley_2026-11-01.txt.
+# scripts/cache_valley/placement.sh on the final build (cg18), quiet Mac, one thread throughout.
+# Section 1: where macOS 27 libmalloc puts two equal blocks of S bytes (posix_memalign, scripts/cache_valley/place.c);
+#   b-a = the second block's address minus the first's, in bytes.
+# Section 2: the standalone kernel (scripts/kernel/kb_idx.cpp, Apple clang, KB_ONE=1) at 110 x 110 x 20 with the
+#   current array moved by KB_PAD bytes from where the allocator put it; diff = its distance from the voltage array.
+# Section 3: openEMS (scripts/cache_valley/box.py) at both edges of the valley, with the allocator stagger and
+#   without it (OPENEMS_NO_STAGGER=1); array = bytes per field array (12 B per cell at nz = 20).
+# placement.sh 2026-11-03 13:48, macOS 27.0.1 (26A434), Apple M5
+# libraries: snapshot cg18 = the final build, patches 0001-0006 (v0.37.0-24-g087ce9e)
+## 1. place.c
+S=  1048576  a mod 16K=    0  b-a=   1048576  (b-a) mod 16K=    0  (b-a)-S=0
+S=  2031360  a mod 16K=    0  b-a=  -6291456  (b-a) mod 16K=    0  (b-a)-S=-8322816
+S=  2075760  a mod 16K=    0  b-a=  -6225920  (b-a) mod 16K=    0  (b-a)-S=-8301680
+S=  2097152  a mod 16K=    0  b-a=  -6275072  (b-a) mod 16K=    0  (b-a)-S=-8372224
+S=  2097168  a mod 16K=    0  b-a=   4210688  (b-a) mod 16K=    0  (b-a)-S=2113520
+S=  2120640  a mod 16K=    0  b-a=   4210688  (b-a) mod 16K=    0  (b-a)-S=2090048
+S=  3000000  a mod 16K=    0  b-a=   4210688  (b-a) mod 16K=    0  (b-a)-S=1210688
+S=  4181760  a mod 16K=    0  b-a=   4194304  (b-a) mod 16K=    0  (b-a)-S=12544
+S=  4194304  a mod 16K=    0  b-a=   4194304  (b-a) mod 16K=    0  (b-a)-S=0
+S=  4194320  a mod 16K=    0  b-a=   8404992  (b-a) mod 16K=    0  (b-a)-S=4210672
+S=  4245360  a mod 16K=    0  b-a=   8404992  (b-a) mod 16K=    0  (b-a)-S=4159632
+S=  4704000  a mod 16K=    0  b-a=   8404992  (b-a) mod 16K=    0  (b-a)-S=3700992
+S=  8000000  a mod 16K=    0  b-a=   8404992  (b-a) mod 16K=    0  (b-a)-S=404992
+## 2. kb_idx 300 steps at 110 x 110 x 20, one thread: KB_PAD (bytes), stock and clean loops (MC/s), distance
+round 1  KB_PAD 0  stock 210  clean 233  diff 8224 KB
+round 1  KB_PAD 256  stock 366  clean 440  diff 8224 KB
+round 1  KB_PAD 512  stock 459  clean 793  diff 8224 KB
+round 1  KB_PAD 1024  stock 460  clean 798  diff 8225 KB
+round 1  KB_PAD 2560  stock 463  clean 814  diff 8226 KB
+round 1  KB_PAD 4096  stock 463  clean 812  diff 8228 KB
+round 1  KB_PAD 8192  stock 462  clean 812  diff 8232 KB
+round 1  KB_PAD 16384  stock 462  clean 809  diff 8240 KB
+round 1  KB_PAD 32768  stock 464  clean 819  diff 8256 KB
+round 1  KB_PAD 65536  stock 463  clean 818  diff 8288 KB
+round 2  KB_PAD 0  stock 211  clean 233  diff 8224 KB
+round 2  KB_PAD 256  stock 366  clean 439  diff 8224 KB
+round 2  KB_PAD 512  stock 457  clean 788  diff 8224 KB
+round 2  KB_PAD 1024  stock 459  clean 794  diff 8225 KB
+round 2  KB_PAD 2560  stock 463  clean 815  diff 8226 KB
+round 2  KB_PAD 4096  stock 461  clean 812  diff 8228 KB
+round 2  KB_PAD 8192  stock 457  clean 809  diff 8232 KB
+round 2  KB_PAD 16384  stock 460  clean 807  diff 8240 KB
+round 2  KB_PAD 32768  stock 463  clean 816  diff 8256 KB
+round 2  KB_PAD 65536  stock 463  clean 815  diff 8288 KB
+round 3  KB_PAD 0  stock 211  clean 234  diff 8224 KB
+round 3  KB_PAD 256  stock 366  clean 439  diff 8224 KB
+round 3  KB_PAD 512  stock 455  clean 779  diff 8224 KB
+round 3  KB_PAD 1024  stock 459  clean 795  diff 8225 KB
+round 3  KB_PAD 2560  stock 463  clean 812  diff 8226 KB
+round 3  KB_PAD 4096  stock 463  clean 812  diff 8228 KB
+round 3  KB_PAD 8192  stock 462  clean 811  diff 8232 KB
+round 3  KB_PAD 16384  stock 462  clean 811  diff 8240 KB
+round 3  KB_PAD 32768  stock 464  clean 816  diff 8256 KB
+round 3  KB_PAD 65536  stock 464  clean 819  diff 8288 KB
+## 3. box.py 2000 steps, nz = 20, one thread: nx = ny, cells, bytes per field array, MC/s staggered / OPENEMS_NO_STAGGER=1
+round 1  n 90  cells 162000  array 1944000 B  stagger 875.827  nostagger 872.384
+round 1  n 92  cells 169280  array 2031360 B  stagger 873.917  nostagger 876.018
+round 1  n 93  cells 172980  array 2075760 B  stagger 894.566  nostagger 879.735
+round 1  n 94  cells 176720  array 2120640 B  stagger 874.185  nostagger 240.794
+round 1  n 96  cells 184320  array 2211840 B  stagger 868.827  nostagger 240.863
+round 1  n 130  cells 338000  array 4056000 B  stagger 895.198  nostagger 239.865
+round 1  n 132  cells 348480  array 4181760 B  stagger 867.704  nostagger 866.454
+round 1  n 133  cells 353780  array 4245360 B  stagger 889.816  nostagger 882.982
+round 1  n 134  cells 359120  array 4309440 B  stagger 899.697  nostagger 883.999
+round 1  n 136  cells 369920  array 4439040 B  stagger 897.399  nostagger 867.611
+round 2  n 90  cells 162000  array 1944000 B  stagger 873.678  nostagger 880.906
+round 2  n 92  cells 169280  array 2031360 B  stagger 882.501  nostagger 874.97
+round 2  n 93  cells 172980  array 2075760 B  stagger 880.258  nostagger 882.366
+round 2  n 94  cells 176720  array 2120640 B  stagger 878.749  nostagger 240.929
+round 2  n 96  cells 184320  array 2211840 B  stagger 870.165  nostagger 240.825
+round 2  n 130  cells 338000  array 4056000 B  stagger 888.273  nostagger 240.638
+round 2  n 132  cells 348480  array 4181760 B  stagger 876.293  nostagger 864.91
+round 2  n 133  cells 353780  array 4245360 B  stagger 894.779  nostagger 890.49
+round 2  n 134  cells 359120  array 4309440 B  stagger 890.497  nostagger 880.898
+round 2  n 136  cells 369920  array 4439040 B  stagger 890.819  nostagger 871.432
+DONE

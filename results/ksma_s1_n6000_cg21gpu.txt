@@ -1,0 +1,5 @@
+# ksma_s1_n6000  2026-11-04 08:50
+cg21@multithreaded:4#OPENEMS_FTZ=1    565.1 MC/s      9.25 s  6000 TS x 0.871 MC  others 324%  busy swiftpm-testing-:84,emskit-phase1:84,emskit-phase1:83,mediaanalysisd:32  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0#OPENEMS_FTZ=1   1303.5 MC/s      4.01 s  6000 TS x 0.871 MC  others 285%  busy emskit-phase1:83,swiftpm-testing-:83,emskit-phase1:83  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+cg21@gpu                       1121.7 MC/s      4.66 s  6000 TS x 0.871 MC  others 296%  busy swiftpm-testing-:82,emskit-phase1:82,emskit-phase1:82  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg21@metal-diamond:0#OPENEMS_FTZ=1, cg21@gpu)

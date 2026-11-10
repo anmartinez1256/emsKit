@@ -1,0 +1,36 @@
+# End-to-end rfsim runs on the Metal diamond engine, 2026-11-04, snapshot cg23 (452f905), Apple M5, macOS 27.0.1,
+# one run each, in this order. scripts/e2e/run_one.py (the author's toolkit: core.run(threads=0), model build, FDTD.Run
+# with operator setup and time stepping, CalcPort for S11/S21 and Z0); E2E_ENGINE=metal-diamond passes engine= to
+# FDTD.Run (the toolkit is not changed); "cpu" = the toolkit's default engine (multithreaded, the fork's tuner picks the
+# threads), the same cg23 library. Toolkit defaults of 2026-11-04: SMA mesh floor 0.05 mm (0.871 M cells), probe end
+# hold 0.5. GCPW line: core.gcpw_line(length=50, feed=10, f_max=2 GHz), 12 ns; SMA launch: launch.sma_launch(), 10 ns.
+# Not a quiet Mac: another session's FEM job used one core the whole time (load avg 2.6-8.0 at the run starts, below).
+# run = FDTD.Run wall time (s), loop = openEMS's 'Time for N iterations' (s), MC/s from the loop time.
+#
+# | run          | engine | load | TS (stop)          | run s | loop s | MC/s | speed-up (run) |
+# | GCPW full    | cpu    | 2.6  | 94217              | 18.24 | 18.12  | 1258 |                |
+# | GCPW full    | gpu    | 4.3  | 94217              | 15.89 | 15.66  | 1456 | 1.15x          |
+# | GCPW -60 dB  | cpu    | 4.0  | 34300 (probe end)  |  7.43 |  7.31  | 1136 |                |
+# | GCPW -60 dB  | gpu    | 4.2  | 34300 (probe end)  |  5.95 |  5.71  | 1454 | 1.25x          |
+# | SMA full     | cpu    | 3.8  | 118475             | 100.05| 99.64  | 1036 |                |
+# | SMA full     | gpu    | 8.0  | 118475             | 79.46 | 78.57  | 1314 | 1.26x          |
+# | SMA -60 dB   | cpu    | 3.9  | 50320 (probe end)  | 43.71 | 43.24  | 1014 |                |
+# | SMA -60 dB   | gpu    | 6.3  | 50320 (probe end)  | 34.23 | 33.33  | 1315 | 1.28x          |
+# (-60 dB = probe end -60 dB, hold 0.5 = the toolkit default run.) Build and CalcPort take 0.1-0.15 s and 0.02-0.03 s.
+#
+# GPU vs CPU results (the CPU runs without OPENEMS_FTZ, so they keep subnormals the GPU flushes; with FTZ the six bench
+# models are bit-identical, results/*_cg22gpu.txt): same stop steps; S over 50 MHz-2 GHz, dB differences where
+# |S_cpu| > -40 dB, Z0 of port 1:
+# | run         | max dS11 dB          | max dS21 dB | max |dS|  | dZ0 at f_ref (ohm)       | max dZ0 0.5-2 GHz | max dZ0 (at 50 MHz) |
+# | GCPW full   | - (S11 below -40 dB) | 3.9e-6      | 5.2e-7    | 3.3e-4 (49.925, 640 MHz) | 2.2e-3            | 1.7e-2              |
+# | GCPW -60 dB | -                    | 3.0e-6      | 3.7e-7    | 1.2e-4                   | 1.9e-3            | 1.3e-2              |
+# | SMA full    | 7.3e-3               | 2.0e-4      | 2.6e-5    | 5.5e-3 (50.90, 1 GHz)    | 4.1e-2            | 4.3e-1              |
+# | SMA -60 dB  | 7.2e-4               | 3.0e-5      | 5.1e-6    | 4.0e-3                   | 2.1e-2            | 5.3e-1              |
+# SMA S11 at 1 GHz -22.69 dB in all four runs. The largest Z0 differences sit at the 50 MHz band edge, where Z0 is the
+# ratio of two small spectra.
+#
+# Validation suite on the same engine (results/validation_cg23_metal.md): 15 of 15 checks pass; every Cartesian case
+# (Debye/Drude/Lorentz slabs, rectangular cavity, WR-90 with PML, microstrip) ran on the GPU without a fallback, the
+# dispersive slabs equal to the basic engine (0); the cylindrical cavity runs the cylinder engine whatever the engine
+# option says.
+# Run files: scratchpad diamond/e2e, script diamond/e2e_gpu.sh.

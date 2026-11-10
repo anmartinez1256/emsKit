@@ -1,0 +1,70 @@
+fdtdkit_run: cannot load /work/emsKit/bench/usage.py: FileNotFoundError: [Errno 2] No such file or directory: '/work/emsKit/bench/usage.py'
+FDTDKIT_CALL_BEGIN 0
+openEMS - enabled the diamond-blocked Metal engine
+ ---------------------------------------------------------------------- 
+ | openEMS 64bit -- version v0.37.0-26-gcd80d8c
+ | (C) 2010-2026 Thorsten Liebig <thorsten.liebig@gmx.de>  GPL license
+ ---------------------------------------------------------------------- 
+	Used external libraries:
+		CSXCAD -- Version: v0.7.0
+		hdf5   -- Version: 2.2.0
+		          compiled against: HDF5 library version: 2.2.0
+		tinyxml -- compiled against: 2.6.2
+		fparser
+		boost  -- compiled against: 1_92
+		vtk -- Version: 9.7.1
+		       compiled against: 9.7.1
+
+Create FDTD operator (compressed SSE, for the Metal diamond engine)
+FDTD simulation size: 195x73x17 --> 241995 FDTD cells 
+FDTD timestep is: 1.27364e-13 s; Nyquist rate: 1962 timesteps @2.00089e+09 Hz
+openEMS::SetupFDTD: Warning, the timestep seems to be very small --> long simulation. Check your mesh!?
+Excitation signal length is: 22493 timesteps (2.8648e-09s)
+Max. number of timesteps: 94217 ( --> 4.18873 * Excitation signal length)
+Create FDTD engine (Metal, diamond-blocked)
+Running FDTD engine... this may take a while... grab a cup of coffee?!?
+Engine_Metal_Diamond: OPENEMS_DIAMOND_TILE=6:6 ignored (M,V or M:V with M >= 2K-1 = 7)
+[@        4s] Timestep:        24500 || Speed: 1453.4 MC/s (1.665e-04 s/TS) || Energy: ~1.61e-15 (-14.58dB)
+RunFDTD: probe end criterion reached after 34300 timesteps: all probes below -60.0 dB of their peak for 11246 timesteps (energy -14.66dB)
+Time for 34300 iterations with 241995.00 cells : 5.71 sec
+Speed: 1454.76 MCells/s 
+FDTDKIT_CALL_END 0
+FDTDKIT_CALL_BEGIN 1
+openEMS - fixed number of threads: 4
+Create FDTD operator (compressed SSE + multi-threading)
+Create FDTD engine (compressed SSE + multi-threading)
+Running FDTD engine... this may take a while... grab a cup of coffee?!?
+RunFDTD: Warning: Max. number of timesteps was reached before the end-criteria of -50dB was reached... 
+	You may want to choose a higher number of max. timesteps... 
+Time for 15000 iterations with 241995.00 cells : 2.01 sec
+Speed: 1805.93 MCells/s 
+FDTDKIT_CALL_END 1
+FDTDKIT_CALL_BEGIN 2
+Create FDTD engine (compressed SSE + multi-threading)
+Multithreaded Engine: Best performance found using 6 threads.
+RunFDTD: end-criteria of -50dB reached after 9120 timesteps (-50.0412dB)
+Time for 9120 iterations with 27000.00 cells : 0.40 sec
+Speed: 615.60 MCells/s 
+FDTDKIT_CALL_END 2
+FDTDKIT_CALL_BEGIN 3
+Create FDTD engine (Metal, diamond-blocked)
+Engine_Metal_Diamond: the extension "Uniaxial PML Extension" has no GPU version here, running the CPU loops
+RunFDTD: simulation aborted after 812 timesteps (-3.21dB)
+Time for 812 iterations with 1071000.00 cells : 0.52 sec
+Speed: 1672.38 MCells/s 
+FDTDKIT_CALL_END 3
+FDTDKIT_CALL_BEGIN 4
+Create FDTD engine (Metal, diamond-blocked)
+Engine_Metal_Diamond: kernel compilation failed: program_source:412:9: error: use of undeclared identifier 'nv'
+Time for 600 iterations with 72000.00 cells : 0.95 sec
+FDTDKIT_CALL_END 4
+FDTDKIT_CALL_BEGIN 5
+Create FDTD engine (Metal, diamond-blocked)
+Engine_Metal_Diamond: pipeline creation failed: Compiler encountered an internal error
+Time for 600 iterations with 72000.00 cells : 0.97 sec
+FDTDKIT_CALL_END 5
+FDTDKIT_CALL_BEGIN 6
+Create FDTD engine
+Create FDTD engine (GPU, backend: Metal)
+Time for 600 iterations with 72000.00 cells : 0.51 sec
+RESULT {"model": "gcpw", "floor": 0.0, "db": "-60", "hold": 0.5, "cells": 241995, "f_ref": 640000000.0, "t_build": 0.1437791669741273, "t_run": 5.945446875062771, "t_post": 0.014521040953695774, "t_total": 6.103747082990594}

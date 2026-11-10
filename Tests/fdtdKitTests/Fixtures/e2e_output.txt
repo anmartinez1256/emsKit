@@ -1,0 +1,28 @@
+openEMS - enabled the diamond-blocked Metal engine
+ ---------------------------------------------------------------------- 
+ | openEMS 64bit -- version v0.37.0-26-gcd80d8c
+ | (C) 2010-2026 Thorsten Liebig <thorsten.liebig@gmx.de>  GPL license
+ ---------------------------------------------------------------------- 
+	Used external libraries:
+		CSXCAD -- Version: v0.7.0
+		hdf5   -- Version: 2.2.0
+		          compiled against: HDF5 library version: 2.2.0
+		tinyxml -- compiled against: 2.6.2
+		fparser
+		boost  -- compiled against: 1_92
+		vtk -- Version: 9.7.1
+		       compiled against: 9.7.1
+
+Create FDTD operator (compressed SSE, for the Metal diamond engine)
+FDTD simulation size: 195x73x17 --> 241995 FDTD cells 
+FDTD timestep is: 1.27364e-13 s; Nyquist rate: 1962 timesteps @2.00089e+09 Hz
+openEMS::SetupFDTD: Warning, the timestep seems to be very small --> long simulation. Check your mesh!?
+Excitation signal length is: 22493 timesteps (2.8648e-09s)
+Max. number of timesteps: 94217 ( --> 4.18873 * Excitation signal length)
+Create FDTD engine (Metal, diamond-blocked)
+Running FDTD engine... this may take a while... grab a cup of coffee?!?
+[@        4s] Timestep:        24500 || Speed: 1453.4 MC/s (1.665e-04 s/TS) || Energy: ~1.61e-15 (-14.58dB)
+RunFDTD: probe end criterion reached after 34300 timesteps: all probes below -60.0 dB of their peak for 11246 timesteps (energy -14.66dB)
+Time for 34300 iterations with 241995.00 cells : 5.71 sec
+Speed: 1454.76 MCells/s 
+RESULT {"model": "gcpw", "floor": 0.0, "db": "-60", "hold": 0.5, "cells": 241995, "f_ref": 640000000.0, "t_build": 0.1437791669741273, "t_run": 5.945446875062771, "t_post": 0.014521040953695774, "t_total": 6.103747082990594}

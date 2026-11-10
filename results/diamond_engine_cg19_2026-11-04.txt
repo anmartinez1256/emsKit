@@ -1,0 +1,61 @@
+Diamond-blocked Metal engine inside the fork (--engine=metal-diamond), snapshot cg19, 2026-11-04
+=================================================================================================
+Build: speed-m5-gpu = cg18 (087ce9e) + FDTD/engine_metal_diamond.h, FDTD/metal/engine_metal_diamond.mm, ArrayENG::InitView,
+the engine option in openems.cpp/.h, friend declarations (excitation, Mur). Tile schedule after luikore's Metal engine
+(openEMS PR #228, GPL). Apple M5, macOS 27, Mac shared with other sessions (load 2-7 during the speed runs: rough numbers).
+
+1. Bit identity (scripts/checks/diamond_check.sh, CPU reference = multithreaded engine, 4 threads, OPENEMS_FTZ=1;
+   exported final fields, every value compared)
+   == pec, 41,37,30 lines, 400 timesteps 
+     K=1: IDENTICAL
+     K=2: IDENTICAL
+     K=3: IDENTICAL
+     K=4: IDENTICAL
+     K=8: IDENTICAL
+     K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+   == mur, 41,37,30 lines, 400 timesteps 
+     K=1: IDENTICAL
+     K=2: IDENTICAL
+     K=3: IDENTICAL
+     K=4: IDENTICAL
+     K=8: IDENTICAL
+     K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+   == mixed, 43,38,29 lines, 700 timesteps --hexc --delay --murexc
+     K=1: IDENTICAL
+     K=2: IDENTICAL
+     K=3: IDENTICAL
+     K=4: IDENTICAL
+     K=8: IDENTICAL
+     K=4, tile 7,0, 96 threads, batch 3: IDENTICAL
+   PASS: every comparison is identical
+
+2. CPU paths vs stock v0.37.0 (bench/check.sh cg19 cg19, LITE=1, RFSIM_PATH set, EXTRA=cg19@metal-diamond:0):
+   ALL IDENTICAL on the 6 models (tables *_cg19.txt beside this file). On these models the Metal engine runs the CPU
+   loops (each has PML, lumped ports or conducting sheets), so the metal-diamond rows test the fallback; their speeds
+   are the single-threaded generic loops and mean nothing. Speeds in the tables are from a loaded Mac (LITE mode).
+   (The check ran on the build with a temporary layout knob, OPENEMS_DIAMOND_IJKN, removed afterwards; the CPU code is
+   the same; diamond_check.sh was re-run on the final build: PASS.)
+
+3. Speed, Mur box (diamond_box.py --bc mur, cubic n^3 lines, openEMS "Speed" line = whole run loop), MC/s
+   model                  CPU 4 thr     CPU 8 thr  upstream gpu   diamond K=4   diamond K=8
+   61^3 (0.23 M)               2281          1321          1695          2099          2087
+   121^3 (1.77 M)              1598          1795          1472          2447          2452
+   201^3 (8.12 M)              1466          1579          1446          2775          2046
+
+   GPU-only rates (OPENEMS_DIAMOND_TIMING=1, time inside IterateTS), 201^3: PEC box 3135 (tg 1024) / 3053 (tg 512),
+   Mur box 2805 / 2795; 600 timesteps; kernel setup 5 ms (Metal's shader cache).
+
+4. Field layout of the GPU arrays (Mur box, GPU-only MC/s, three alternating runs each, quieter Mac)
+   N-I-J-K (kept):  121^3 2589 2577 2573   201^3 2789 2782 2804
+   I-J-K-N:         121^3 2408 2396 2350   201^3 2563 2564 2576
+   N-I-J-K is 7-9 % faster: in I-J-K-N the three components of a cell are side by side, so a SIMD group's loads are
+   48 B apart.
+
+5. Excitation entries per tile
+   Before: thread 0 of every tile scanned all excitation entries at every half-step. The box at 201^3 has 1035 voltage
+   entries: GPU-only 1914 (tg 1024) / 2076 (tg 512) MC/s on the PEC box. The standalone prototype on the same
+   exported operator: 2074 / 2305 (on model.py's operator, 450 entries: 2479 / 2639).
+   After (per tile and phase, the entries inside the union of the tile's ranges, in entry order): 3135 / 3053.
+
+6. Not on the GPU yet: UPML, lumped RLC, conducting sheets (Lorentz/Drude ADE), Debye, TFSF, steady state, cylinder.
+   With any of them the engine prints the extension's name and runs the CPU loops.

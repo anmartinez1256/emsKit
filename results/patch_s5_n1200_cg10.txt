@@ -1,0 +1,7 @@
+# patch_s5_n1200  2026-10-29 04:29
+stock@multithreaded:8          1039.1 MC/s      9.08 s  1200 TS x 7.863 MC  others  35%  runs 1039/1011  [ref]
+cg10@multithreaded:1            692.7 MC/s     13.62 s  1200 TS x 7.863 MC  others  28%  runs 693/672  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@multithreaded:4           1612.8 MC/s      5.85 s  1200 TS x 7.863 MC  others  52%  runs 1613/1607  busy Python:25  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@multithreaded:8           1737.6 MC/s      5.43 s  1200 TS x 7.863 MC  others  14%  runs 1738/1725  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@multithreaded:10          1690.9 MC/s      5.58 s  1200 TS x 7.863 MC  others  34%  runs 1691/1570  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg10@fastest                   1706.2 MC/s      5.53 s  1200 TS x 7.863 MC  others  14%  runs 1706/1694  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

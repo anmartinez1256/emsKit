@@ -1,0 +1,4 @@
+# kgcpw_s1_n15000  2026-11-04 09:09
+cg23@multithreaded:4#OPENEMS_FTZ=1    896.3 MC/s      4.05 s  15000 TS x 0.242 MC  others 138%  busy emskit-phase1:88  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg23@metal-diamond:0#OPENEMS_FTZ=1   1453.6 MC/s      2.50 s  15000 TS x 0.242 MC  others 125%  busy emskit-phase1:87  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg23@metal-diamond:0#OPENEMS_FTZ=1)

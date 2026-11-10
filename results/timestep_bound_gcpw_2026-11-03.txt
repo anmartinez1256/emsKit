@@ -1,0 +1,20 @@
+# timestep_bound_gcpw_2026-11-03.txt: the exact leapfrog stability limit of the GCPW line against openEMS's time step.
+# Computed 2026-11-03 13:56 on the final build (snapshot cg18 = patches 0001-0006, v0.37.0-24-g087ce9e), Apple M5.
+# Model: rfsim core.gcpw_line(length=50, feed=10, scale=1, f_max=2 GHz, f_ref=640 MHz, air=4), the GCPW line of the
+# end-to-end runs (results/rfsim_e2e_2026-11-03.txt): 195 x 73 x 17 = 241995 cells, 4186 distinct operators,
+# Mur on five faces, two lumped ports, conducting sheets.
+# scripts/timestep/export_gcpw.py writes the compressed operator after one timestep (OPENEMS_EXPORT_OPERATOR);
+# scripts/timestep/stab.py builds the lossless update operator P = diag(vi) C^T diag(iv) C (C = the engine's E-to-H curl
+# bracket; the loss factors vv and ii are set to 1), symmetrises it with sqrt(vi) and finds its largest eigenvalues by
+# Lanczos (scipy eigsh, tol 1e-7). Leapfrog is stable iff lambda_max <= 4, so dt_max = dt * 2 / sqrt(lambda_max).
+# The bound covers the bulk update with the exported coefficients only: the extensions' own updates (Mur, the lumped
+# port's RLC, the conducting sheets' ADE) are not in it.
+# checks: vi < 0 in 0 cells, iv < 0 in 0; exported vv range -0.9901 .. 1.0000, ii range 0.0 .. 1.0
+#   (set to 1 for the bound); adjoint test of the transpose: 1079.7061195138058 vs 1079.7061195138083
+lambda_max (top 3)                  2.46694929  2.51794814  2.51796981
+dt (CalcTimestep_Var3, used)        1.273643e-13 s
+exact leapfrog limit                1.605286e-13 s
+ratio limit / dt                    1.2604
+limiting mode, largest entry        component 2 (0 = x, 1 = y, 2 = z) at x, y, z = 97, 32, 4
+# The earlier export (2026-11-03 10:16, snapshot cg17 by the fix agent's report, where the paper's 1.26 was first
+# computed) is byte-identical to this one, file for file (header, op_index, vv, vi, ii, iv, excitation).

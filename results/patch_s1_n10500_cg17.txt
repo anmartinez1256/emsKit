@@ -1,0 +1,10 @@
+# patch_s1_n10500  2026-11-02 20:43
+# note (2026-11-03, final review): a reduced check made with an unpublished scratch script: one run per config
+# (--repeat 1), no load wait (no --quiet), 4 and 8 threads and auto against stock, on a loaded Mac (others 417-801 %
+# across the six cg17 files). These rows show bit identity only; their speeds mean nothing. The full check is
+# bench/check.sh (1, 4, 8, 10 and auto threads, --repeat 2 --quiet 60). LITE=1 bench/check.sh runs the same reduced
+# set as the scratch script (added 2026-11-03).
+stock@multithreaded:2            28.7 MC/s     37.94 s  10500 TS x 0.104 MC  others 466%  busy kernel_task:240,Python:24,Python:24,Python:24,Python:23,Python:23,Python:23,Python:23,Python:23,Python:23  [ref]
+cg17@multithreaded:4            410.5 MC/s      2.65 s  10500 TS x 0.104 MC  others 492%  busy kernel_task:245,Python:26,Python:26,Python:26,Python:26,Python:26,Python:26,Python:26,Python:26,Python:25  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg17@multithreaded:8            285.6 MC/s      3.81 s  10500 TS x 0.104 MC  others 467%  busy kernel_task:254,Python:21,Python:21,Python:21,Python:20,Python:20  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg17@fastest                    315.4 MC/s      3.45 s  10500 TS x 0.104 MC  others 479%  busy kernel_task:249,Python:22,Python:22,Python:22,Python:22,Python:22,Python:22,Python:22,Python:21,Python:21,Python:21  (auto-picked 2 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

@@ -1,0 +1,118 @@
+# End-to-end rfsim runs of snapshot cg29 (1620939, v0.37.0-45-g1620939), 2026-11-05, Apple M5 (4 P + 6 E cores,
+# 10 GPU cores), macOS 27.0.1: the CPU (the multithreaded engine; the fork's tuner picks the threads) against the
+# Metal diamond engine (E2E_ENGINE=metal-diamond passes engine= to FDTD.Run; the toolkit is not changed), the same
+# cg29 library (DYLD_LIBRARY_PATH=~/opt/openEMS-dev/snap/cg29; the installed library is cg18). scripts/e2e/run_one.py
+# runs a board the way the author's toolkit does (core.run(threads=0): model build in Python, FDTD.Run with operator
+# setup and time stepping, CalcPort for S11/S21 and Z0), with the toolkit's defaults since 2026-11-04 (SMA mesh floor
+# 0.05 mm = 0.871 M cells, probe end -60 dB with hold 0.5 excitation lengths). GCPW line: core.gcpw_line(length=50,
+# feed=10, f_max=2 GHz), 12 ns; SMA launch: launch.sma_launch(), 10 ns. "default run" = probe end on (-60 dB, hold
+# 0.5), "full run" = probe end off (to max_time). Interleaved rounds: each round runs every case on the CPU and then
+# on the GPU (default runs 3 rounds, full runs 2). Each run started once the other processes used at most 150 % CPU
+# and 10 % GPU (bench.wait_quiet, 15 min at most) and was run again, 3 times at most, when they rose above that
+# during it (the "redo" column counts those). others = their CPU during the run (bench/usage.py; 100 = one core),
+# median [max] over the kept runs. run = FDTD.Run wall time (s), loop = openEMS's "Time for N iterations" (s),
+# MC/s from the loop time; median [min-max] over the rounds; GPU/CPU = median [min-max] of the per-round ratios
+# of the CPU run time to the GPU run time. "loaded" = kept runs during which the others stayed above 150 % CPU or
+# 10 % GPU through the third redo; the medians include them (the clean runs alone: the lines after the table).
+#
+# | run              | cells   | engine | TS (stop)         | run s                  | loop s                 | MC/s               | others CPU % | redo | CPU/GPU run time   | loaded |
+# | GCPW default run | 0.242 M | cpu    | 34300 (probe end) | 5.56 [4.76-5.86]       | 5.37 [4.65-5.74]       | 1546 [1446-1785]   |  130 [149] |    1 |                    |      0 |
+# | GCPW default run | 0.242 M | gpu    | 34300 (probe end) | 4.06 [4.05-4.06]       | 3.92 [3.91-3.92]       | 2118 [2118-2123]   |  147 [159] |    5 | x1.37 [1.17-1.44]  |      1 |
+# | GCPW full run    | 0.242 M | cpu    | 94217             | 13.07 [12.76-13.38]    | 12.95 [12.65-13.25]    | 1762 [1721-1802]   |  100 [144] |    1 |                    |      0 |
+# | GCPW full run    | 0.242 M | gpu    | 94217             | 11.18 [10.84-11.53]    | 11.04 [10.71-11.37]    | 2067 [2005-2129]   |  165 [182] |    5 | x1.17 [1.11-1.23]  |      1 |
+# | SMA default run  | 0.871 M | cpu    | 50320 (probe end) | 28.90 [27.94-36.16]    | 28.60 [27.58-35.67]    | 1533 [1229-1590]   |  136 [290] |    4 |                    |      1 |
+# | SMA default run  | 0.871 M | gpu    | 50320 (probe end) | 23.61 [23.48-24.35]    | 23.21 [23.11-23.89]    | 1889 [1835-1897]   |  147 [444] |    5 | x1.22 [1.19-1.49]  |      1 |
+# | SMA full run     | 0.871 M | cpu    | 118475            | 68.08 [65.45-70.71]    | 67.73 [65.13-70.33]    | 1526 [1468-1585]   |  130 [145] |    3 |                    |      0 |
+# | SMA full run     | 0.871 M | gpu    | 118475            | 58.52 [56.25-60.78]    | 58.12 [55.86-60.39]    | 1778 [1709-1848]   |  162 [209] |    5 | x1.17 [1.08-1.26]  |      1 |
+# GCPW default run gpu: loaded rounds r1; the clean runs: run s 4.05 [4.05-4.06] (2); CPU/GPU over the rounds where both runs were clean: x1.27 (2)
+# GCPW full run gpu: loaded rounds r1; the clean runs: run s 10.84 [10.84-10.84] (1); CPU/GPU over the rounds where both runs were clean: x1.23 (1)
+# SMA default run cpu: loaded rounds r1; the clean runs: run s 28.42 [27.94-28.90] (2)
+# SMA default run gpu: loaded rounds r1; the clean runs: run s 23.55 [23.48-23.61] (2); CPU/GPU over the rounds where both runs were clean: x1.21 (2)
+# SMA full run gpu: loaded rounds r0; the clean runs: run s 60.78 [60.78-60.78] (1); CPU/GPU over the rounds where both runs were clean: x1.08 (1)
+#
+# Results. The CPU runs keep subnormal numbers and the GPU flushes them, so the two engines can differ in the last
+# digits (with OPENEMS_FTZ=1 on the CPU the bench models are bit-identical, results/*_cg29gpu.txt). GPU against the CPU
+# run of the same round: max |dS11| in dB where |S11_cpu| > -40 dB ("-" when S11 stays below -40 dB, as on the
+# GCPW line), max |dS21| in dB over 50 MHz-2 GHz, max |dS| (linear, S11 and S21), dZ0 = Re Z0 difference at f_ref
+# (GCPW 640 MHz, SMA 1 GHz) and its largest magnitude over 0.5-2 GHz; same stop step yes/no.
+# | run              | round | dS11 dB   | dS21 dB   | max |dS|  | dZ0 at f_ref (ohm)     | max |dZ0| 0.5-2 GHz | same stop | S11 at f_ref |
+# | GCPW default run | r0    | -         | 3.0e-06   | 3.7e-07   | -1.1e-04 (49.924)     | 1.3e-03             | yes       | -46.90 dB    |
+# | GCPW default run | r1    | -         | 3.0e-06   | 3.7e-07   | -1.1e-04 (49.924)     | 1.3e-03             | yes       | -46.90 dB    |
+# | GCPW default run | r2    | -         | 3.0e-06   | 3.7e-07   | -1.1e-04 (49.924)     | 1.3e-03             | yes       | -46.90 dB    |
+# | GCPW full run    | r0    | -         | 3.9e-06   | 5.2e-07   | -3.3e-04 (49.925)     | 1.6e-03             | yes       | -46.88 dB    |
+# | GCPW full run    | r1    | -         | 3.9e-06   | 5.2e-07   | -3.3e-04 (49.925)     | 1.6e-03             | yes       | -46.88 dB    |
+# | SMA default run  | r0    | 7.2e-04   | 3.0e-05   | 5.1e-06   | -2.1e-03 (50.914)     | 2.1e-02             | yes       | -22.69 dB    |
+# | SMA default run  | r1    | 7.2e-04   | 3.0e-05   | 5.1e-06   | -2.1e-03 (50.914)     | 2.1e-02             | yes       | -22.69 dB    |
+# | SMA default run  | r2    | 7.2e-04   | 3.0e-05   | 5.1e-06   | -2.1e-03 (50.914)     | 2.1e-02             | yes       | -22.69 dB    |
+# | SMA full run     | r0    | 7.3e-03   | 2.0e-04   | 2.6e-05   | -5.4e-03 (50.901)     | 4.0e-02             | yes       | -22.69 dB    |
+# | SMA full run     | r1    | 7.3e-03   | 2.0e-04   | 2.6e-05   | -5.4e-03 (50.901)     | 4.0e-02             | yes       | -22.69 dB    |
+#
+# Port files (every probe line, compared as text): the default run's are a prefix of the full run's of the same
+# engine and round 0 (the run only stops earlier); every round equals round 0 of the same case and engine.
+# cpu: GCPW default run prefix of GCPW full run: yes; SMA default run prefix of SMA full run: yes; GCPW default run rounds identical (3); GCPW full run rounds identical (2); SMA default run rounds identical (3); SMA full run rounds identical (2)
+# gpu: GCPW default run prefix of GCPW full run: yes; SMA default run prefix of SMA full run: yes; GCPW default run rounds identical (3); GCPW full run rounds identical (2); SMA default run rounds identical (3); SMA full run rounds identical (2)
+#
+# Against the earlier runs of the same boards, FDTD.Run wall time in s (results/rfsim_e2e_2026-11-03.txt: snapshot cg18
+# and stock v0.37.0, one run each after the others were below one core for 10 s; results/rfsim_e2e_gpu_2026-11-04.txt:
+# snapshot cg23 with one core busy). The stock library was not run on the 0.05 mm SMA mesh.
+# | run              | stop step then | earlier                                                                                      | cg29 CPU now | cg29 GPU now | stop step now (cpu/gpu) |
+# | GCPW full run    |          94217 | stock 4 thr (11-03) 76.5, cg18 CPU (11-03) 13.7, cg23 CPU (11-04) 18.2, cg23 GPU (11-04) 15.9 |        13.07 |        11.18 | 94217/94217 |
+# | GCPW default run |          34300 | cg18 CPU (11-03) 5.2, cg23 CPU (11-04) 7.4, cg23 GPU (11-04) 6.0                              |         5.56 |         4.06 | 34300/34300 |
+# | SMA full run     |         118475 | cg23 CPU (11-04) 100.0, cg23 GPU (11-04) 79.5                                                 |        68.08 |        58.52 | 118475/118475 |
+# | SMA default run  |          50320 | cg18 CPU (11-03) 37.4, cg23 CPU (11-04) 43.7, cg23 GPU (11-04) 34.2                           |        28.90 |        23.61 | 50320/50320 |
+#
+# Run files: scratchpad diamond/e2e29, script e2e_q.py, this table gen_e2e29.py.
+#
+# Raw output (e2e_q.py), in order:
+# e2e cg29 2026-11-05 06:13 load avg 4.57, 3 rounds interleaved
+r0 G_60h  cpu  run    4.76 s  loop    4.65 s   34300 TS   1785.0 MC/s  cells 241995  others cpu  108% gpu   4% 
+# redo r0 G_60h gpu: others 220 % CPU, 7 % GPU during the run
+# redo r0 G_60h gpu: others 160 % CPU, 3 % GPU during the run
+r0 G_60h  gpu  run    4.06 s  loop    3.92 s   34300 TS   2117.5 MC/s  cells 241995  others cpu  147% gpu   1% 
+# redo r0 S_60h cpu: others 166 % CPU, 6 % GPU during the run
+r0 S_60h  cpu  run   27.94 s  loop   27.58 s   50320 TS   1589.5 MC/s  cells 871194  others cpu  136% gpu   0% 
+# redo r0 S_60h gpu: others 153 % CPU, 0 % GPU during the run
+r0 S_60h  gpu  run   23.48 s  loop   23.11 s   50320 TS   1896.9 MC/s  cells 871194  others cpu  147% gpu   0% 
+r0 G_off  cpu  run   13.38 s  loop   13.25 s   94217 TS   1720.8 MC/s  cells 241995  others cpu  144% gpu   0% 
+# redo r0 G_off gpu: others 166 % CPU, 0 % GPU during the run
+# redo r0 G_off gpu: others 220 % CPU, 0 % GPU during the run
+r0 G_off  gpu  run   10.84 s  loop   10.71 s   94217 TS   2128.9 MC/s  cells 241995  others cpu  148% gpu   0% 
+# redo r0 S_off cpu: others 158 % CPU, 3 % GPU during the run
+# redo r0 S_off cpu: others 155 % CPU, 2 % GPU during the run
+# redo r0 S_off cpu: others 187 % CPU, 4 % GPU during the run
+r0 S_off  cpu  run   70.71 s  loop   70.33 s  118475 TS   1467.6 MC/s  cells 871194  others cpu  145% gpu   2% 
+# redo r0 S_off gpu: others 186 % CPU, 2 % GPU during the run
+# redo r0 S_off gpu: others 202 % CPU, 3 % GPU during the run
+# redo r0 S_off gpu: others 234 % CPU, 5 % GPU during the run
+r0 S_off  gpu  run   56.25 s  loop   55.86 s  118475 TS   1847.7 MC/s  cells 871194  others cpu  209% gpu   4% 
+# redo r1 G_60h cpu: others 157 % CPU, 4 % GPU during the run
+r1 G_60h  cpu  run    5.86 s  loop    5.74 s   34300 TS   1446.1 MC/s  cells 241995  others cpu  149% gpu   1% 
+# redo r1 G_60h gpu: others 238 % CPU, 1 % GPU during the run
+# redo r1 G_60h gpu: others 250 % CPU, 1 % GPU during the run
+# redo r1 G_60h gpu: others 178 % CPU, 4 % GPU during the run
+r1 G_60h  gpu  run    4.06 s  loop    3.92 s   34300 TS   2117.5 MC/s  cells 241995  others cpu  159% gpu   3% 
+# redo r1 S_60h cpu: others 191 % CPU, 6 % GPU during the run
+# redo r1 S_60h cpu: others 405 % CPU, 3 % GPU during the run
+# redo r1 S_60h cpu: others 210 % CPU, 1 % GPU during the run
+r1 S_60h  cpu  run   36.16 s  loop   35.67 s   50320 TS   1229.0 MC/s  cells 871194  others cpu  290% gpu  10% 
+# redo r1 S_60h gpu: others 253 % CPU, 1 % GPU during the run
+# redo r1 S_60h gpu: others 304 % CPU, 6 % GPU during the run
+# redo r1 S_60h gpu: others 600 % CPU, 2 % GPU during the run
+r1 S_60h  gpu  run   24.35 s  loop   23.89 s   50320 TS   1835.0 MC/s  cells 871194  others cpu  444% gpu   1% 
+# redo r1 G_off cpu: others 322 % CPU, 3 % GPU during the run
+r1 G_off  cpu  run   12.76 s  loop   12.65 s   94217 TS   1802.4 MC/s  cells 241995  others cpu   56% gpu   2% 
+# redo r1 G_off gpu: others 182 % CPU, 1 % GPU during the run
+# redo r1 G_off gpu: others 311 % CPU, 1 % GPU during the run
+# redo r1 G_off gpu: others 490 % CPU, 1 % GPU during the run
+r1 G_off  gpu  run   11.53 s  loop   11.37 s   94217 TS   2005.3 MC/s  cells 241995  others cpu  182% gpu  10% 
+r1 S_off  cpu  run   65.45 s  loop   65.13 s  118475 TS   1584.7 MC/s  cells 871194  others cpu  115% gpu   1% 
+# redo r1 S_off gpu: others 242 % CPU, 2 % GPU during the run
+# redo r1 S_off gpu: others 493 % CPU, 6 % GPU during the run
+r1 S_off  gpu  run   60.78 s  loop   60.39 s  118475 TS   1709.1 MC/s  cells 871194  others cpu  114% gpu   9% 
+r2 G_60h  cpu  run    5.56 s  loop    5.37 s   34300 TS   1545.7 MC/s  cells 241995  others cpu  130% gpu   2% 
+r2 G_60h  gpu  run    4.05 s  loop    3.91 s   34300 TS   2122.9 MC/s  cells 241995  others cpu   95% gpu   1% 
+r2 S_60h  cpu  run   28.90 s  loop   28.60 s   50320 TS   1532.8 MC/s  cells 871194  others cpu   90% gpu   2% 
+# redo r2 S_60h gpu: others 130 % CPU, 15 % GPU during the run
+r2 S_60h  gpu  run   23.61 s  loop   23.21 s   50320 TS   1888.8 MC/s  cells 871194  others cpu   80% gpu   2% 
+e2e29 done
+cpu50 exit 0

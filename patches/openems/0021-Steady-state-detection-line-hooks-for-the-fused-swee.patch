@@ -1,0 +1,372 @@
+From 3c75b0b8ba895c3be23da78f8595e3ffcfb88073 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 01:51:09 -0600
+Subject: [PATCH 21/27] Steady-state detection: line hooks for the fused sweep
+
+A sinusoidal excitation adds the steady-state detection (Engine_Ext_SteadyState), and that extension had
+no line hooks, so the multithreaded engine ran every such simulation (all cases of upstream's benchmark,
+benchmark/cases.py) on the unfused plan. Apply2VoltagesLines() now records the E-field probes of its
+x-lines and, on an evaluation step, copies the voltages and currents of its lines; the thread that copies
+the last lines evaluates the period from the copies with the same energy sum (Engine_sse::FastEnergy,
+split out of CalcFastEnergy). The unfused hook sees the voltages after their update and the currents
+before theirs, and so do the copies, line by line: same values, same operations, same stop step
+(bit-identical). The copies (24 B per cell) are allocated at the first evaluation step of a fused run.
+
+Verified on boxes with Mur, PML, lumped RLC, conducting sheets, Drude and Debye blocks, a delayed and a
+soft H excitation (sinusoidal, 3000-30000 steps): raw fields, the E-field probe and a trace of every
+period evaluation (step, energy, change) identical to the sse-compressed engine at 1, 3 and 4 threads,
+fused and unfused; the stop step and probe identical to stock v0.37.0. Upstream's cases (benchmark/cases.py,
+1 M cells, 3000 steps, fused against OPENEMS_FUSED=0 in the same build, paired interleaved A/B, 5 rounds,
+other processes on about half a core): pml x1.36 at 4 threads (at 8 within the noise of a run under 2-3
+cores of other load), inhomogeneous x1.29 at 4 and x1.34 at 8,
+ideal x0.98 at 4 and x0.80 at 8 (a homogeneous box, where the unfused plan's work stealing evens out the
+threads within a timestep; the neighbour flags later recover most of it). The dispersive case needs the
+Debye line hooks of the next commit as well.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_interface_fdtd.cpp             |   7 +-
+ FDTD/engine_interface_fdtd.h               |   2 +
+ FDTD/engine_sse.cpp                        |   9 +-
+ FDTD/engine_sse.h                          |   3 +
+ FDTD/extensions/engine_ext_steadystate.cpp | 171 +++++++++++++++------
+ FDTD/extensions/engine_ext_steadystate.h   |  29 ++++
+ 6 files changed, 169 insertions(+), 52 deletions(-)
+
+diff --git a/FDTD/engine_interface_fdtd.cpp b/FDTD/engine_interface_fdtd.cpp
+index 7e3342e..acb93a6 100644
+--- a/FDTD/engine_interface_fdtd.cpp
++++ b/FDTD/engine_interface_fdtd.cpp
+@@ -271,9 +271,14 @@ double Engine_Interface_FDTD::CalcFastEnergy() const
+ {
+ 	// the engine knows how its fields are stored
+ 	unsigned int numNodes[3];
++	GetFastEnergyNodes(numNodes);
++	return m_Eng->CalcFastEnergy(numNodes);
++}
++
++void Engine_Interface_FDTD::GetFastEnergyNodes(unsigned int numNodes[3]) const
++{
+ 	for (int n=0; n<3; ++n)
+ 		numNodes[n] = m_Op->GetNumberOfLines(n)-1;
+-	return m_Eng->CalcFastEnergy(numNodes);
+ }
+ 
+ void Engine_Interface_FDTD::PrepareFieldAccess()
+diff --git a/FDTD/engine_interface_fdtd.h b/FDTD/engine_interface_fdtd.h
+index d6e6375..07fc790 100644
+--- a/FDTD/engine_interface_fdtd.h
++++ b/FDTD/engine_interface_fdtd.h
+@@ -55,6 +55,8 @@ public:
+ 	virtual unsigned int GetNumberOfTimesteps() const {return m_Eng->GetNumberOfTimesteps();}
+ 
+ 	virtual double CalcFastEnergy() const;
++	//! the nodes CalcFastEnergy() sums: the first numNodes[n] in each direction
++	void GetFastEnergyNodes(unsigned int numNodes[3]) const;
+ 
+ 	// the fields belong to the engine, which may keep them elsewhere (e.g. on a GPU)
+ 	virtual void PrepareFieldAccess();
+diff --git a/FDTD/engine_sse.cpp b/FDTD/engine_sse.cpp
+index 4c40414..079cc29 100644
+--- a/FDTD/engine_sse.cpp
++++ b/FDTD/engine_sse.cpp
+@@ -279,6 +279,12 @@ void Engine_sse::UpdateCurrents(unsigned int startX, unsigned int numX)
+ }
+ 
+ double Engine_sse::CalcFastEnergy(const unsigned int numNodes[3]) const
++{
++	return FastEnergy(*f4_volt_ptr, *f4_curr_ptr, numNodes, numVectors);
++}
++
++double Engine_sse::FastEnergy(const ArrayLib::ArrayENG<f4vector>& f4_volt, const ArrayLib::ArrayENG<f4vector>& f4_curr,
++							  const unsigned int numNodes[3], unsigned int numVectors)
+ {
+ 	f4vector E_energy;
+ 	E_energy.f[0]=0;
+@@ -288,9 +294,6 @@ double Engine_sse::CalcFastEnergy(const unsigned int numNodes[3]) const
+ 	f4vector H_energy;
+ 	H_energy = E_energy;
+ 
+-	ArrayLib::ArrayENG<f4vector>& f4_volt = *f4_volt_ptr;
+-	ArrayLib::ArrayENG<f4vector>& f4_curr = *f4_curr_ptr;
+-
+ 	unsigned int pos[3];
+ 	for (pos[0]=0; pos[0]<numNodes[0]; ++pos[0])
+ 	{
+diff --git a/FDTD/engine_sse.h b/FDTD/engine_sse.h
+index e586af7..4ec80b1 100644
+--- a/FDTD/engine_sse.h
++++ b/FDTD/engine_sse.h
+@@ -86,6 +86,9 @@ public:
+ 
+ 	//! The energy estimate from the sse vectors, including the last z-line(s)
+ 	virtual double CalcFastEnergy(const unsigned int numNodes[3]) const;
++	//! The same sum over the given arrays (this engine's layout and extents, e.g. copies of its fields)
++	static double FastEnergy(const ArrayLib::ArrayENG<f4vector>& f4_volt, const ArrayLib::ArrayENG<f4vector>& f4_curr,
++							 const unsigned int numNodes[3], unsigned int numVectors);
+ 
+ protected:
+ 	Engine_sse(const Operator_sse* op);
+diff --git a/FDTD/extensions/engine_ext_steadystate.cpp b/FDTD/extensions/engine_ext_steadystate.cpp
+index febc07d..3c5b0cb 100644
+--- a/FDTD/extensions/engine_ext_steadystate.cpp
++++ b/FDTD/extensions/engine_ext_steadystate.cpp
+@@ -19,6 +19,8 @@
+ #include "operator_ext_steadystate.h"
+ #include "FDTD/engine_sse.h"
+ #include "FDTD/engine_interface_fdtd.h"
++#include <cstring>
++#include <limits>
+ 
+ Engine_Ext_SteadyState::Engine_Ext_SteadyState(Operator_Ext_SteadyState* op_ext): Engine_Extension(op_ext)
+ {
+@@ -33,6 +35,10 @@ Engine_Ext_SteadyState::Engine_Ext_SteadyState(Operator_Ext_SteadyState* op_ext)
+ 	m_last_max_diff = 1;
+ 	last_total_energy = 0;
+ 	m_Eng_Interface = NULL;
++	m_Lines = false;
++	m_LinesChecked = false;
++	m_SnapLines = 0;
++	m_NX = 0;
+ }
+ 
+ Engine_Ext_SteadyState::~Engine_Ext_SteadyState()
+@@ -47,63 +53,132 @@ Engine_Ext_SteadyState::~Engine_Ext_SteadyState()
+ 	m_Eng_Interface = NULL;
+ }
+ 
++void Engine_Ext_SteadyState::SetNumberOfThreads(int nrThread)
++{
++	Engine_Extension::SetNumberOfThreads(nrThread);
++	if (!m_LinesChecked && m_Eng)
++		SetupLines();
++}
++
++void Engine_Ext_SteadyState::SetupLines()
++{
++	m_LinesChecked = true;
++	m_Lines = false;
++	if (m_Eng->GetType()!=Engine::SSE)
++		return;
++	const ArrayLib::ArrayENG<f4vector>* V = ((Engine_sse*)m_Eng)->f4_volt_ptr;
++	const ArrayLib::ArrayENG<f4vector>* I = ((Engine_sse*)m_Eng)->f4_curr_ptr;
++	if ((V==NULL) || (I==NULL))
++		return;
++	// the I-J-K-N layout of the fused sweep: every x-line is one block of the arrays (one memcpy per call)
++	for (const ArrayLib::ArrayENG<f4vector>* A : {V, I})
++		if ((A->stride(0)!=1) || (A->stride(3)!=3) || (A->stride(2)!=3*A->extent(3)) || (A->stride(1)!=A->stride(2)*A->extent(2)))
++			return;
++	m_NX = V->extent(1);
++	m_Lines = true;
++}
++
++bool Engine_Ext_SteadyState::IsEvaluationStep(unsigned int TS) const
++{
++	const unsigned int p = m_Op_SS->m_TS_period;
++	return (TS%p==0) && (TS>=2*p);
++}
++
++void Engine_Ext_SteadyState::RecordProbes(unsigned int TS, unsigned int x0, unsigned int x1)
++{
++	const unsigned int rel_pos = TS%(2*m_Op_SS->m_TS_period);
++	for (size_t n=0;n<m_E_records.size();++n)
++	{
++		const unsigned int x = m_Op_SS->m_E_probe_pos[0].at(n);
++		if ((x>=x0) && (x<x1))
++			m_E_records.at(n)[rel_pos] = m_Eng->GetVolt(m_Op_SS->m_E_probe_dir.at(n), x, m_Op_SS->m_E_probe_pos[1].at(n), m_Op_SS->m_E_probe_pos[2].at(n));
++	}
++}
++
+ void Engine_Ext_SteadyState::Apply2Voltages()
+ {
+-	unsigned int p = m_Op_SS->m_TS_period;
+-	unsigned int TS = m_Eng->GetNumberOfTimesteps();
+-	unsigned int rel_pos = m_Eng->GetNumberOfTimesteps()%(2*p);
++	const unsigned int TS = m_Eng->GetNumberOfTimesteps();
++	RecordProbes(TS, 0, std::numeric_limits<unsigned int>::max());
++	if (IsEvaluationStep(TS))
++		EvaluatePeriod(TS, m_Eng_Interface->CalcFastEnergy());
++}
++
++void Engine_Ext_SteadyState::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	const unsigned int TS = m_Eng->GetNumberOfTimesteps();
++	RecordProbes(TS, x0, x1);
++	if (!IsEvaluationStep(TS))
++		return;
++	const ArrayLib::ArrayENG<f4vector>& V = *((Engine_sse*)m_Eng)->f4_volt_ptr;
++	const ArrayLib::ArrayENG<f4vector>& I = *((Engine_sse*)m_Eng)->f4_curr_ptr;
++	std::call_once(m_SnapOnce, [&]()
++	{
++		m_SnapVolt.Init("SteadyState_volt", {V.extent(1), V.extent(2), V.extent(3)});
++		m_SnapCurr.Init("SteadyState_curr", {I.extent(1), I.extent(2), I.extent(3)});
++	});
++	const size_t line = V.stride(1); // f4vectors per x-line, all three components
++	memcpy(m_SnapVolt.data()+x0*line, V.data()+x0*line, (x1-x0)*line*sizeof(f4vector));
++	memcpy(m_SnapCurr.data()+x0*line, I.data()+x0*line, (x1-x0)*line*sizeof(f4vector));
++	// the thread that copies the last lines evaluates (the others' copies and records are complete then)
++	if (m_SnapLines.fetch_add(x1-x0, std::memory_order_acq_rel)+(x1-x0)!=m_NX)
++		return;
++	m_SnapLines.store(0, std::memory_order_relaxed);
++	unsigned int numNodes[3];
++	m_Eng_Interface->GetFastEnergyNodes(numNodes);
++	EvaluatePeriod(TS, Engine_sse::FastEnergy(m_SnapVolt, m_SnapCurr, numNodes, V.extent(3)));
++}
++
++void Engine_Ext_SteadyState::EvaluatePeriod(unsigned int TS, double curr_total_energy)
++{
++	const unsigned int p = m_Op_SS->m_TS_period;
++	const unsigned int rel_pos = TS%(2*p);
++	bool no_valid = true;
++	m_last_max_diff = 0;
++	if (last_total_energy>0)
++	{
++		m_last_max_diff = abs(curr_total_energy-last_total_energy)/last_total_energy;
++		no_valid = false;
++	}
++	//cerr << curr_total_energy << "/" << last_total_energy << "=" << abs(curr_total_energy-last_total_energy)/last_total_energy << endl;
++	last_total_energy = curr_total_energy;
++	unsigned int old_pos = 0;
++	unsigned int new_pos = p;
++	if (rel_pos<=p)
++	{
++		new_pos = 0;
++		old_pos = p;
++	}
++	//cerr << TS << "/" << rel_pos << ": one period complete, new_pos" << new_pos << " old pos: " << old_pos << endl;
++	double *curr_pow = new double[m_E_records.size()];
++	double *diff_pow = new double[m_E_records.size()];
++	double max_pow = 0;
+ 	for (size_t n=0;n<m_E_records.size();++n)
+-		m_E_records.at(n)[rel_pos] = m_Eng->GetVolt(m_Op_SS->m_E_probe_dir.at(n), m_Op_SS->m_E_probe_pos[0].at(n), m_Op_SS->m_E_probe_pos[1].at(n), m_Op_SS->m_E_probe_pos[2].at(n));
+-	if ((TS%(m_Op_SS->m_TS_period)==0) && (TS>=2*p))
+ 	{
+-		bool no_valid = true;
+-		m_last_max_diff = 0;
+-		double curr_total_energy = m_Eng_Interface->CalcFastEnergy();
+-		if (last_total_energy>0)
++		double *buf = m_E_records.at(n);
++		curr_pow[n] = 0;
++		diff_pow[n] = 0;
++		for (unsigned int nt=0;nt<p;++nt)
+ 		{
+-			m_last_max_diff = abs(curr_total_energy-last_total_energy)/last_total_energy;
+-			no_valid = false;
++			curr_pow[n] += buf[nt+new_pos]*buf[nt+new_pos];
++			diff_pow[n] += (buf[nt+old_pos]-buf[nt+new_pos])*(buf[nt+old_pos]-buf[nt+new_pos]);
+ 		}
+-		//cerr << curr_total_energy << "/" << last_total_energy << "=" << abs(curr_total_energy-last_total_energy)/last_total_energy << endl;
+-		last_total_energy = curr_total_energy;
+-		unsigned int old_pos = 0;
+-		unsigned int new_pos = p;
+-		if (rel_pos<=p)
+-		{
+-			new_pos = 0;
+-			old_pos = p;
+-		}
+-		//cerr << TS << "/" << rel_pos << ": one period complete, new_pos" << new_pos << " old pos: " << old_pos << endl;
+-		double *curr_pow = new double[m_E_records.size()];
+-		double *diff_pow = new double[m_E_records.size()];
+-		double max_pow = 0;
+-		for (size_t n=0;n<m_E_records.size();++n)
+-		{
+-			double *buf = m_E_records.at(n);
+-			curr_pow[n] = 0;
+-			diff_pow[n] = 0;
+-			for (unsigned int nt=0;nt<p;++nt)
+-			{
+-				curr_pow[n] += buf[nt+new_pos]*buf[nt+new_pos];
+-				diff_pow[n] += (buf[nt+old_pos]-buf[nt+new_pos])*(buf[nt+old_pos]-buf[nt+new_pos]);
+-			}
+-			max_pow = std::max(max_pow, curr_pow[n]);
+-		}
+-		for (size_t n=0;n<m_E_records.size();++n)
++		max_pow = std::max(max_pow, curr_pow[n]);
++	}
++	for (size_t n=0;n<m_E_records.size();++n)
++	{
++		//cerr << "curr_pow: " << curr_pow[n] <<  " diff_pow: " << diff_pow[n] << " diff: " << diff_pow[n]/curr_pow[n] << endl;
++		if (curr_pow[n]>max_pow*1e-2)
+ 		{
+-			//cerr << "curr_pow: " << curr_pow[n] <<  " diff_pow: " << diff_pow[n] << " diff: " << diff_pow[n]/curr_pow[n] << endl;
+-			if (curr_pow[n]>max_pow*1e-2)
+-			{
+-				m_last_max_diff = std::max(m_last_max_diff, diff_pow[n]/curr_pow[n]);
+-				//cerr << m_last_max_diff << endl;
+-				no_valid = false;
+-			}
++			m_last_max_diff = std::max(m_last_max_diff, diff_pow[n]/curr_pow[n]);
++			//cerr << m_last_max_diff << endl;
++			no_valid = false;
+ 		}
+-		if ((no_valid) || (m_last_max_diff>1))
+-			m_last_max_diff = 1;
+-		delete[] curr_pow; curr_pow = NULL;
+-		//cerr << m_last_max_diff << endl;
+ 	}
++	if ((no_valid) || (m_last_max_diff>1))
++		m_last_max_diff = 1;
++	delete[] curr_pow; curr_pow = NULL;
++	delete[] diff_pow; diff_pow = NULL;
++	//cerr << m_last_max_diff << endl;
+ }
+ 
+ void Engine_Ext_SteadyState::Apply2Current()
+diff --git a/FDTD/extensions/engine_ext_steadystate.h b/FDTD/extensions/engine_ext_steadystate.h
+index f69e1d0..b80482f 100644
+--- a/FDTD/extensions/engine_ext_steadystate.h
++++ b/FDTD/extensions/engine_ext_steadystate.h
+@@ -21,6 +21,10 @@
+ #include "engine_extension.h"
+ #include "FDTD/engine.h"
+ #include "FDTD/operator.h"
++#include "tools/array_ops.h"
++#include "tools/arraylib/array_e.h"
++#include <atomic>
++#include <mutex>
+ 
+ class Operator_Ext_SteadyState;
+ class Engine_Interface_FDTD;
+@@ -33,13 +37,38 @@ public:
+ 	Engine_Ext_SteadyState(Operator_Ext_SteadyState* op_ext);
+ 	virtual ~Engine_Ext_SteadyState();
+ 
++	virtual void SetNumberOfThreads(int nrThread);
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_SteadyState); return APPLY_VOLT | (m_Lines ? LINE_HOOKS : 0);}
++
+ 	virtual void Apply2Voltages();
+ 	virtual void Apply2Current();
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 
+ 	void SetEngineInterface(Engine_Interface_FDTD* eng_if) {m_Eng_Interface=eng_if;}
+ 	double GetLastDiff() {return m_last_max_diff;}
+ 
+ protected:
++	//! the E-field records of timestep TS, the probes on the x-lines [x0, x1) only
++	void RecordProbes(unsigned int TS, unsigned int x0, unsigned int x1);
++	//! timestep TS ends a period (from the third period on): compare the last two periods
++	bool IsEvaluationStep(unsigned int TS) const;
++	void EvaluatePeriod(unsigned int TS, double curr_total_energy);
++
++	//! Line hooks for the fused sweep of the SSE engines (fields in the I-J-K-N layout). The unfused hook sees all fields
++	//! at one point of the timestep: the voltages after their update, the post hooks and the apply hooks before this one
++	//! (the extension comes first in that order), the currents before their update. The fused sweep has that state line
++	//! by line, at this hook: the hook records the probes of its lines, and on an evaluation step copies the voltages and
++	//! currents of its lines; the thread that copies the last line evaluates the period from the copies with the same
++	//! energy sum (Engine_sse::FastEnergy). Same values, same operations (bit-identical). The copies (24 B per cell) are
++	//! allocated at the first evaluation step that runs the fused sweep.
++	bool m_Lines;
++	bool m_LinesChecked;
++	void SetupLines();
++	ArrayLib::ArrayENG<f4vector> m_SnapVolt, m_SnapCurr;
++	std::once_flag m_SnapOnce;
++	std::atomic<unsigned int> m_SnapLines; //!< x-lines copied in this evaluation step
++	unsigned int m_NX;
++
+ 	Operator_Ext_SteadyState* m_Op_SS;
+ 	double m_last_max_diff;
+ 	std::vector<double*> m_E_records;
+-- 
+2.54.0 (Apple Git-157)
+

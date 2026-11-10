@@ -1,0 +1,43 @@
+# Step 2 of the 2026-11-04 plan: a fused, unblocked Metal sweep, measured as the K=1 case of the diamond engine
+# (--engine=metal-diamond, OPENEMS_DIAMOND_K=1), snapshot cg27 (4127e1e). Apple M5 (10 GPU cores), macOS 27.0.1.
+# At K=1 every threadgroup updates the voltages of its tile and then the currents of the same tile in one pass (the
+# mountain, valley and mixed phases of the schedule complete the tile edges), so each field value is read and written
+# once per time step: the 49 bytes per cell of the CPU's fused sweep (12 + 12 B of fields read and written per cell plus
+# the operator index), against 74 B for an unfused engine (voltages and currents in separate passes).
+# The question (paper/sec_beyond.tex): at the 121-127 GB/s the GPU kernels drew, 49 B per cell bounds a fused GPU sweep
+# at about 2,470-2,590 million cells/s.
+#
+# A. Paired interleaved A/B on the two large models, 4 rounds (bench/abtest.py; others' CPU 2.5-4 cores, GPU 3-5 %).
+#    MC/s median [min-max]; ratio to the default K=4; every run identical to c0's first run (and so to the
+#    multithreaded CPU engine with OPENEMS_FTZ=1, results/*_cg27gpu.txt).
+# | model (cells)       | upstream gpu (unfused)    | K=1 tile 8:8             | K=1 16:8                 | K=1 32:16                | K=2 (4:4)                | K=4 (default 8:8)  |
+# | notch x3 (5.25 M)   | 1330 [1289-1347] x0.446   | 1716 [1707-1723] x0.573  | 1729 [1678-1742] x0.579  | 1733 [1657-1746] x0.579  | 2123 [1910-2158] x0.710  | 2986 [2975-3003]   |
+# | patch x5 (7.86 M)   | 1469 [1279-1484] x0.515   | 1799 [1721-1901] x0.637  | 1844 [1704-1905] x0.649  | 1530 [1412-1601] x0.541  | 2408 [2321-2470] x0.852  | 2817 [2784-2862]   |
+# "upstream gpu" = --engine=gpu of the same build (the Metal engine of the fork's base, upstream's former gpu-engine
+# branch at 7bb294f, not the reworked engine that master merged as c3a956b; unfused; bit-identical to the FTZ CPU on
+# these models). Corrected 2026-11-05: this line first called it upstream's merged engine.
+#
+# B. All six models, single runs (bench.py --repeat 2, the faster run), MC/s (others' CPU in cores); identical to the
+#    first config throughout (42 of 42 GPU runs probes rel 0):
+# | config      | notch x3       | patch x5       | SMA launch     | GCPW line      | notch tutorial | patch tutorial |
+# | CPU 8 thr   |   1249 (3.0)   |    832 (7.9)   |    636 (5.5)   |    460 (7.0)   |    888 (2.6)   |    568 (4.2)   |
+# | K=4 8:8     |   2749 (6.8)   |   2739 (6.3)   |   1576 (4.7)   |   1845 (3.3)   |   1873 (4.0)   |   1688 (1.9)   |
+# | K=1 8:8     |   1584 (3.4)   |   1876 (2.2)   |   1161 (3.9)   |   1425 (5.6)   |   1418 (2.6)   |   1393 (6.5)   |
+# | K=1 16:8    |   1669 (6.7)   |   1864 (2.0)   |   1167 (4.5)   |   1310 (4.2)   |   1345 (2.4)   |   1239 (5.0)   |
+# | K=1 16:16   |   1594 (3.8)   |   1778 (4.9)   |   1090 (4.2)   |   1211 (6.0)   |   1282 (6.8)   |   1048 (1.9)   |
+# | K=1 32:16   |   1712 (3.7)   |   1580 (2.2)   |    896 (4.4)   |   1288 (3.6)   |   1163 (4.8)   |    622 (1.4)   |
+# | K=1 32:32   |   1656 (3.6)   |   1312 (4.8)   |    897 (7.1)   |   1136 (6.1)   |   1120 (5.1)   |    619 (3.7)   |
+# | K=2 4:4     |   1926 (4.6)   |   2440 (4.9)   |   1560 (3.8)   |   1170 (7.8)   |   1261 (4.0)   |   1499 (1.2)   |
+# (The CPU column is the multithreaded engine at 8 threads under that load; the quiet-Mac CPU best of cg18 is notch x3
+# 2046, patch x5 1716, SMA 1361, GCPW 1760, notch tutorial 1961, patch tutorial 1880 MC/s.)
+#
+# Answer:
+# - The fused, unblocked GPU sweep runs the two large models at 1,730-1,840 MC/s: 1.25-1.30x the unfused GPU engine,
+#   0.85x (notch x3) and 1.07x (patch x5) the CPU's quiet-Mac best of cg18, and 67-75 % of the bound. At 49 B per cell that is 85-90 GB/s, not the 121-127 GB/s
+#   the streaming kernels drew: the per-step structure (four dispatches, the tile edges, a threadgroup barrier between the
+#   voltage and the current half step) costs more than the bytes it saves, and the bound is a traffic bound only.
+# - Temporal blocking does what the fused sweep alone does not: K=2 runs 2,120-2,410 and K=4 2,820-2,990 MC/s, 14-21 %
+#   above the fused bound, because the fields of a tile stay on chip across K time steps.
+# - A dedicated one-dispatch fused kernel was not built: tiles that compute their edges themselves overwrite values their
+#   neighbours still read in the same dispatch, so it needs a second copy of both fields (twice the field memory) and every
+#   extension would have to follow; with K=4 already above its bound it would not make a model faster.

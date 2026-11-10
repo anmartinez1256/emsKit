@@ -1,0 +1,1039 @@
+From 4acfb6453971abc4826e2d7e73c1cfc9d0aa24c5 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 02:55:15 -0500
+Subject: [PATCH 02/27] Speed up operator setup and nf2ff, add engine export
+ hooks (snapshot cg9)
+
+Operator setup: CalcTimestep_Var3 and the Calc_ECOperatorPos loop run on
+GetNumSetupThreads() threads with direct index arithmetic; vPrims passed by
+const& through Calc_ECPos/Calc_EffMatPos/AverageMat*/GetMaterial; GetMaterial
+caches the last lookup per thread; GetDiscDelta tabulated in Init_EC; the
+excitation extension skips lines without excitation primitives.
+OPENEMS_SETUP_TIMING=1 prints the phase times. Patch x5 4.1 -> 0.9 s,
+notch x3 4.1 -> 1.3 s. Bit-identical to stock on all bench models and the
+cylindrical multigrid example.
+
+nf2ff: on Cartesian planes the phase factor separates per mesh line, so
+N/L are one cgemm (Accelerate, APPLE only) per plane plus a row dot.
+Legacy loop kept for cylindrical meshes and OPENEMS_NF2FF_LEGACY=1.
+3-D 91x181 pattern x2 freq: 17.9 -> 1.0 s, within 7e-7 relative.
+
+Export hooks for the Swift/Metal prototype: OPENEMS_EXPORT_OPERATOR=dir
+writes the compressed operator and excitation before CreateEngine,
+OPENEMS_EXPORT_FIELDS=dir writes the fields after the run.
+OPENEMS_FTZ=1 (arm64, opt-in) flushes subnormals in the engine threads.
+
+Generated-by: Claude Fable 5.1 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/operator_ext_excitation.cpp |   2 +
+ FDTD/extensions/operator_ext_excitation.h   |   5 +
+ FDTD/operator.cpp                           | 247 ++++++++++++++------
+ FDTD/operator.h                             |  15 +-
+ FDTD/operator_cylinder.cpp                  |   2 +-
+ FDTD/operator_cylinder.h                    |   2 +-
+ FDTD/operator_multithread.cpp               |   5 +-
+ FDTD/operator_multithread.h                 |   1 +
+ FDTD/operator_sse.h                         |   1 +
+ FDTD/operator_sse_compressed.cpp            |   3 +
+ nf2ff/CMakeLists.txt                        |   4 +
+ nf2ff/nf2ff_calc.cpp                        | 144 +++++++++++-
+ nf2ff/nf2ff_calc.h                          |   4 +
+ openems.cpp                                 | 118 ++++++++++
+ tools/denormal.h                            |  15 ++
+ 15 files changed, 480 insertions(+), 88 deletions(-)
+
+diff --git a/FDTD/extensions/operator_ext_excitation.cpp b/FDTD/extensions/operator_ext_excitation.cpp
+index caf946c..2307267 100644
+--- a/FDTD/extensions/operator_ext_excitation.cpp
++++ b/FDTD/extensions/operator_ext_excitation.cpp
+@@ -149,6 +149,8 @@ bool Operator_Ext_Excitation::BuildExtension()
+ 				-1, pos[1], pos[2],
+ 				CSProperties::EXCITATION
+ 			);
++			if (vPrims.empty()) // no excitation along this line: nothing below could match
++				continue;
+ 
+ 			for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
+ 			{
+diff --git a/FDTD/extensions/operator_ext_excitation.h b/FDTD/extensions/operator_ext_excitation.h
+index 503bedf..8eecbcf 100644
+--- a/FDTD/extensions/operator_ext_excitation.h
++++ b/FDTD/extensions/operator_ext_excitation.h
+@@ -59,6 +59,11 @@ public:
+ 
+ 	unsigned int GetCurrCount() const {return Curr_Count;}
+ 	unsigned int GetCurrCount(int ny) const {return Curr_Count_Dir[ny];}
++	// read access to the voltage excitation entries (raw operator export, OPENEMS_EXPORT_OPERATOR)
++	const unsigned int* GetVoltIndex(int ny) const {return Volt_index[ny];}
++	const unsigned short* GetVoltDir() const {return Volt_dir;}
++	const FDTD_FLOAT* GetVoltAmp() const {return Volt_amp;}
++	const unsigned int* GetVoltDelay() const {return Volt_delay;}
+ 
+ protected:
+ 	Operator_Ext_Excitation(Operator* op, Operator_Ext_Excitation* op_ext);
+diff --git a/FDTD/operator.cpp b/FDTD/operator.cpp
+index 54e7b7e..4176b1d 100644
+--- a/FDTD/operator.cpp
++++ b/FDTD/operator.cpp
+@@ -18,6 +18,25 @@
+ #include <fstream>
+ #include <algorithm>
+ #include <stdexcept>
++#include <thread>
++#include <chrono>
++#include <iostream>
++
++// OPENEMS_SETUP_TIMING=1 prints the time of every phase of the operator setup to stderr
++struct SetupTimer
++{
++	SetupTimer(const char* what) : m_what(what), m_t0(std::chrono::steady_clock::now()) {}
++	static bool Enabled() { static const bool on = getenv("OPENEMS_SETUP_TIMING")!=NULL; return on; }
++	void Lap(const std::string& step)
++	{
++		if (!Enabled()) return;
++		std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
++		std::cerr << "setup timing: " << m_what << " " << step << ": " << std::chrono::duration<double>(t-m_t0).count() << " s" << std::endl;
++		m_t0 = t;
++	}
++	const char* m_what;
++	std::chrono::steady_clock::time_point m_t0;
++};
+ #include "operator.h"
+ #include "engine.h"
+ #include "extensions/operator_extension.h"
+@@ -138,6 +157,11 @@ void Operator::Delete()
+ 
+ void Operator::Reset()
+ {
++	for (int n=0; n<3; ++n)
++	{
++		m_DiscDelta[n][0].clear();
++		m_DiscDelta[n][1].clear();
++	}
+ 	Delete();
+ 	Operator_Base::Reset();
+ }
+@@ -161,6 +185,14 @@ double Operator::GetDiscDelta(int n, unsigned int pos, bool dualMesh) const
+ {
+ 	if ((n<0) || (n>2)) return 0.0;
+ 	if (pos>=numLines[n]) return 0.0;
++	const std::vector<double>& table = m_DiscDelta[n][dualMesh ? 1 : 0];
++	if (pos<table.size())
++		return table[pos];
++	return CalcDiscDelta(n, pos, dualMesh);
++}
++
++double Operator::CalcDiscDelta(int n, unsigned int pos, bool dualMesh) const
++{
+ 	double delta=0;
+ 	if (dualMesh==false)
+ 	{
+@@ -956,7 +988,8 @@ void Operator::SetExcitationSignal(Excitation* exc)
+ 
+ void Operator::Calc_ECOperatorPos(int n, unsigned int* pos)
+ {
+-	unsigned int i = MainOp->SetPos(pos[0],pos[1],pos[2]);
++	// linear index as MainOp->SetPos() would return it, without touching the shared address operator (thread safe)
++	unsigned int i = pos[0] + pos[1]*numLines[0] + pos[2]*numLines[0]*numLines[1];
+ 	double C = EC_C[n][i];
+ 	double G = EC_G[n][i];
+ 	if (C>0)
+@@ -986,11 +1019,14 @@ void Operator::Calc_ECOperatorPos(int n, unsigned int* pos)
+ 
+ int Operator::CalcECOperator( DebugFlags debugFlags )
+ {
++	SetupTimer timer("Operator::CalcECOperator");
+ 	Init_EC();
+ 	InitDataStorage();
++	timer.Lap("Init_EC");
+ 
+ 	if (Calc_EC()==0)
+ 		return -1;
++	timer.Lap("Calc_EC (material averaging)");
+ 
+ 	m_InvaildTimestep = false;
+ 	opt_dT = 0;
+@@ -1021,24 +1057,33 @@ int Operator::CalcECOperator( DebugFlags debugFlags )
+ 	}
+ 
+ 	m_Exc->Reset(dT);
++	timer.Lap("CalcTimestep");
+ 
+ 	InitOperator();
++	timer.Lap("InitOperator");
+ 
+-	unsigned int pos[3];
+-
+-	for (int n=0; n<3; ++n)
++	// operator coefficients per cell, one x-range per setup thread (every cell writes only its own entries)
+ 	{
+-		for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
++		const unsigned int nThreads = std::max(1u, std::min(GetNumSetupThreads(), numLines[0]));
++		auto job = [this, nThreads](unsigned int t)
+ 		{
+-			for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
+-			{
+-				for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
+-				{
+-					Calc_ECOperatorPos(n,pos);
+-				}
+-			}
+-		}
+-	}
++			unsigned int pos[3];
++			const unsigned int x0 = (unsigned int)((unsigned long long)numLines[0]*t/nThreads);
++			const unsigned int x1 = (unsigned int)((unsigned long long)numLines[0]*(t+1)/nThreads);
++			for (int n=0; n<3; ++n)
++				for (pos[0]=x0; pos[0]<x1; ++pos[0])
++					for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
++						for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
++							Calc_ECOperatorPos(n,pos);
++		};
++		std::vector<std::thread> threads;
++		for (unsigned int t=1; t<nThreads; ++t)
++			threads.emplace_back(job, t);
++		job(0);
++		for (size_t t=0; t<threads.size(); ++t)
++			threads[t].join();
++	}
++	timer.Lap("Calc_ECOperatorPos");
+ 
+ 	//Apply PEC to all boundary's
+ 	bool PEC[6]={1,1,1,1,1,1};
+@@ -1047,20 +1092,27 @@ int Operator::CalcECOperator( DebugFlags debugFlags )
+ 		if (m_BC[n]==-1)
+ 			PEC[n] = false;
+ 	ApplyElectricBC(PEC);
++	timer.Lap("ApplyElectricBC");
+ 
+ 	CalcPEC();
++	timer.Lap("CalcPEC");
+ 
+ 	Calc_LumpedElements();
++	timer.Lap("Calc_LumpedElements");
+ 
+ 	bool PMC[6];
+ 	for (int n=0; n<6; ++n)
+ 		PMC[n] = m_BC[n]==1;
+ 	ApplyMagneticBC(PMC);
++	timer.Lap("ApplyMagneticBC");
+ 
+ 	//all information available for extension... create now...
+ 	for (size_t n=0; n<m_Op_exts.size(); ++n)
++	{
+ 		if (m_Op_exts.at(n)->BuildExtension()==false)
+ 			m_Op_exts.at(n)->SetActive(false); //extension has nothing to do or failed to build, drop it below
++		timer.Lap(std::string("BuildExtension ") + m_Op_exts.at(n)->GetExtensionName());
++	}
+ 
+ 	//remove inactive extensions
+ 	std::vector<Operator_Extension*>::iterator it = m_Op_exts.begin();
+@@ -1192,7 +1244,7 @@ bool Operator::Calc_ECPos(
+ 	int ny,
+ 	const unsigned int* pos,
+ 	double* EC,
+-	std::vector<CSPrimitives*> vPrims
++	const std::vector<CSPrimitives*>& vPrims
+ ) const
+ {
+ 	double EffMat[4];
+@@ -1279,13 +1331,25 @@ double Operator::GetMaterial(
+ 	int ny,
+ 	const double* coords,
+ 	int MatType,
+-	std::vector<CSPrimitives*> vPrims,
++	const std::vector<CSPrimitives*>& vPrims,
+ 	bool markAsUsed
+ ) const
+ {
+-	CSProperties* prop = CSX->GetPropertyByCoordPriority(coords,vPrims,markAsUsed);
+-
+-	CSPropMaterial* mat = dynamic_cast<CSPropMaterial*>(prop);
++	// The material averaging asks for two types at the same coordinate in a row (epsilon+kappa, mue+sigma):
++	// remember the last lookup per thread, the primitives do not change during the setup.
++	struct LastLookup { double coords[3]; const CSPrimitives* const* prims; size_t num; CSPropMaterial* mat; bool valid; };
++	static thread_local LastLookup last = {{0,0,0}, NULL, 0, NULL, false};
++	CSPropMaterial* mat;
++	if (last.valid && last.coords[0]==coords[0] && last.coords[1]==coords[1] && last.coords[2]==coords[2]
++		&& last.prims==vPrims.data() && last.num==vPrims.size())
++		mat = last.mat;
++	else
++	{
++		CSProperties* prop = CSX->FindPropertyByCoordPriority(coords,vPrims,markAsUsed);
++		mat = dynamic_cast<CSPropMaterial*>(prop);
++		last.coords[0]=coords[0]; last.coords[1]=coords[1]; last.coords[2]=coords[2];
++		last.prims = vPrims.data(); last.num = vPrims.size(); last.mat = mat; last.valid = markAsUsed;
++	}
+ 	if (mat)
+ 	{
+ 		switch (MatType)
+@@ -1328,7 +1392,7 @@ bool Operator::AverageMatCellCenter(
+ 	int ny,
+ 	const unsigned int* pos,
+ 	double* EffMat,
+-	std::vector<CSPrimitives *> vPrims
++	const std::vector<CSPrimitives*>& vPrims
+ ) const
+ {
+ 	int n=ny;
+@@ -1439,7 +1503,7 @@ bool Operator::AverageMatQuarterCell(
+ 	int ny,
+ 	const unsigned int* pos,
+ 	double* EffMat,
+-	std::vector<CSPrimitives*> vPrims
++	const std::vector<CSPrimitives*>& vPrims
+ ) const
+ {
+ 	int n=ny;
+@@ -1558,7 +1622,7 @@ bool Operator::Calc_EffMatPos(
+ 	int ny,
+ 	const unsigned int* pos,
+ 	double* EffMat,
+-	std::vector<CSPrimitives *> vPrims
++	const std::vector<CSPrimitives*>& vPrims
+ ) const
+ {
+ 	switch (m_MatAverageMethod)
+@@ -1765,6 +1829,15 @@ bool Operator::IsLEparRC(const CSPropLumpedElement* const p_prop)
+ 
+ void Operator::Init_EC()
+ {
++	// the material averaging asks for every edge length many times per cell: tabulate GetDiscDelta()
++	for (int n=0; n<3; ++n)
++		for (int dual=0; dual<2; ++dual)
++		{
++			m_DiscDelta[n][dual].clear();
++			m_DiscDelta[n][dual].reserve(numLines[n]);
++			for (unsigned int pos=0; pos<numLines[n]; ++pos)
++				m_DiscDelta[n][dual].push_back(CalcDiscDelta(n, pos, dual!=0));
++		}
+ 	for (int n=0; n<3; ++n)
+ 	{
+ 		//init x-cell-array
+@@ -1944,65 +2017,99 @@ double Operator::CalcTimestep_Var3()
+ {
+ 	dT=1e200;
+ 	m_Used_TS_Name = std::string("Rennings_2");
+-	double newT;
+-	unsigned int pos[3];
+ 	unsigned int smallest_pos[3] = {0, 0, 0};
+ 	unsigned int smallest_n = 0;
+-	unsigned int ipos;
+-	double w_total=0;
+-	double wqp=0,wt1=0,wt2=0;
+-	double wt_4[4]={0,0,0,0};
+ 	MainOp->SetReflection2Cell();
+-	for (int n=0; n<3; ++n)
+-	{
+-		int nP = (n+1)%3;
+-		int nPP = (n+2)%3;
+ 
+-		for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
++	// One z-range per setup thread. The result is the same as the single loop: the first cell in loop order
++	// (n, z, y, x) with the smallest timestep.
++	struct Best { double dT; unsigned int n; unsigned int pos[3]; };
++	const unsigned int nThreads = std::max(1u, std::min(GetNumSetupThreads(), numLines[2]));
++	std::vector<Best> best(nThreads, Best{1e200, 0, {0, 0, 0}});
++	auto job = [this, nThreads, &best](unsigned int t)
++	{
++		Best& b = best[t];
++		double newT;
++		unsigned int pos[3];
++		unsigned int ipos;
++		double w_total=0;
++		double wqp=0,wt1=0,wt2=0;
++		double wt_4[4]={0,0,0,0};
++		const unsigned int z0 = (unsigned int)((unsigned long long)numLines[2]*t/nThreads);
++		const unsigned int z1 = (unsigned int)((unsigned long long)numLines[2]*(t+1)/nThreads);
++		// MainOp with SetReflection2Cell(): a shift by +-1 that leaves the domain stays in the cell, so the shifted
++		// index is plain arithmetic on the clamped position (same memory reads as the address operator)
++		const unsigned int stride[3] = {1, numLines[0], numLines[0]*numLines[1]};
++		auto shifted = [&](const unsigned int* p, int ny, int step) -> unsigned int
+ 		{
+-			for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
++			const int q = (int)p[ny]+step;
++			return (q>=0 && q<(int)numLines[ny]) ? (unsigned int)q : p[ny];
++		};
++		for (int n=0; n<3; ++n)
++		{
++			int nP = (n+1)%3;
++			int nPP = (n+2)%3;
++
++			for (pos[2]=z0; pos[2]<z1; ++pos[2])
+ 			{
+-				for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
++				for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
+ 				{
+-					MainOp->ResetShift();
+-					ipos = MainOp->SetPos(pos[0],pos[1],pos[2]);
+-					wqp  = 1/(EC_L[nPP][ipos]*EC_C[n][MainOp->GetShiftedPos(nP ,1)]) + 1/(EC_L[nPP][ipos]*EC_C[n][ipos]);
+-					wqp += 1/(EC_L[nP ][ipos]*EC_C[n][MainOp->GetShiftedPos(nPP,1)]) + 1/(EC_L[nP ][ipos]*EC_C[n][ipos]);
+-					ipos = MainOp->Shift(nP,-1);
+-					wqp += 1/(EC_L[nPP][ipos]*EC_C[n][MainOp->GetShiftedPos(nP ,1)]) + 1/(EC_L[nPP][ipos]*EC_C[n][ipos]);
+-					ipos = MainOp->Shift(nPP,-1);
+-					wqp += 1/(EC_L[nP ][ipos]*EC_C[n][MainOp->GetShiftedPos(nPP,1)]) + 1/(EC_L[nP ][ipos]*EC_C[n][ipos]);
+-
+-					MainOp->ResetShift();
+-					ipos = MainOp->SetPos(pos[0],pos[1],pos[2]);
+-					wt_4[0] = 1/(EC_L[nPP][ipos]						  *EC_C[nP ][ipos]);
+-					wt_4[1] = 1/(EC_L[nPP][MainOp->GetShiftedPos(nP ,-1)] *EC_C[nP ][ipos]);
+-					wt_4[2] = 1/(EC_L[nP ][ipos]						  *EC_C[nPP][ipos]);
+-					wt_4[3] = 1/(EC_L[nP ][MainOp->GetShiftedPos(nPP,-1)] *EC_C[nPP][ipos]);
+-
+-					wt1 = wt_4[0]+wt_4[1]+wt_4[2]+wt_4[3] - 2*min(wt_4,4);
+-
+-					MainOp->ResetShift();
+-					ipos = MainOp->SetPos(pos[0],pos[1],pos[2]);
+-					wt_4[0] = 1/(EC_L[nPP][ipos]						  *EC_C[nP ][MainOp->GetShiftedPos(n,1)]);
+-					wt_4[1] = 1/(EC_L[nPP][MainOp->GetShiftedPos(nP ,-1)] *EC_C[nP ][MainOp->GetShiftedPos(n,1)]);
+-					wt_4[2] = 1/(EC_L[nP ][ipos]						  *EC_C[nPP][MainOp->GetShiftedPos(n,1)]);
+-					wt_4[3] = 1/(EC_L[nP ][MainOp->GetShiftedPos(nPP,-1)] *EC_C[nPP][MainOp->GetShiftedPos(n,1)]);
+-
+-					wt2 = wt_4[0]+wt_4[1]+wt_4[2]+wt_4[3] - 2*min(wt_4,4);
+-
+-					w_total = wqp + wt1 + wt2;
+-					newT = 2/sqrt( w_total );
+-					if ((newT<dT) && (newT>0.0))
++					for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
+ 					{
+-						dT=newT;
+-						smallest_pos[0]=pos[0];smallest_pos[1]=pos[1];smallest_pos[2]=pos[2];
+-						smallest_n = n;
++						ipos = pos[0] + pos[1]*stride[1] + pos[2]*stride[2];
++						const unsigned int iP1  = ipos + (shifted(pos,nP ,1)-pos[nP ])*stride[nP ];  // +1 along nP
++						const unsigned int iPP1 = ipos + (shifted(pos,nPP,1)-pos[nPP])*stride[nPP];  // +1 along nPP
++						const unsigned int iPm  = ipos + (shifted(pos,nP ,-1)-pos[nP ])*stride[nP ]; // -1 along nP
++						const unsigned int iPPm = ipos + (shifted(pos,nPP,-1)-pos[nPP])*stride[nPP]; // -1 along nPP
++						const unsigned int iPmPPm = iPm + (iPPm-ipos);                                 // -1 along nP and nPP
++						const unsigned int iN1  = ipos + (shifted(pos,n,1)-pos[n])*stride[n];        // +1 along n
++
++						wqp  = 1/(EC_L[nPP][ipos]*EC_C[n][iP1]) + 1/(EC_L[nPP][ipos]*EC_C[n][ipos]);
++						wqp += 1/(EC_L[nP ][ipos]*EC_C[n][iPP1]) + 1/(EC_L[nP ][ipos]*EC_C[n][ipos]);
++						wqp += 1/(EC_L[nPP][iPm]*EC_C[n][ipos]) + 1/(EC_L[nPP][iPm]*EC_C[n][iPm]);
++						wqp += 1/(EC_L[nP ][iPmPPm]*EC_C[n][iPm]) + 1/(EC_L[nP ][iPmPPm]*EC_C[n][iPmPPm]);
++
++						wt_4[0] = 1/(EC_L[nPP][ipos]*EC_C[nP ][ipos]);
++						wt_4[1] = 1/(EC_L[nPP][iPm] *EC_C[nP ][ipos]);
++						wt_4[2] = 1/(EC_L[nP ][ipos]*EC_C[nPP][ipos]);
++						wt_4[3] = 1/(EC_L[nP ][iPPm]*EC_C[nPP][ipos]);
++
++						wt1 = wt_4[0]+wt_4[1]+wt_4[2]+wt_4[3] - 2*min(wt_4,4);
++
++						wt_4[0] = 1/(EC_L[nPP][ipos]*EC_C[nP ][iN1]);
++						wt_4[1] = 1/(EC_L[nPP][iPm] *EC_C[nP ][iN1]);
++						wt_4[2] = 1/(EC_L[nP ][ipos]*EC_C[nPP][iN1]);
++						wt_4[3] = 1/(EC_L[nP ][iPPm]*EC_C[nPP][iN1]);
++
++						wt2 = wt_4[0]+wt_4[1]+wt_4[2]+wt_4[3] - 2*min(wt_4,4);
++
++						w_total = wqp + wt1 + wt2;
++						newT = 2/sqrt( w_total );
++						if ((newT<b.dT) && (newT>0.0))
++						{
++							b.dT=newT;
++							b.pos[0]=pos[0];b.pos[1]=pos[1];b.pos[2]=pos[2];
++							b.n = n;
++						}
+ 					}
+ 				}
+ 			}
+ 		}
+-	}
++	};
++	std::vector<std::thread> threads;
++	for (unsigned int t=1; t<nThreads; ++t)
++		threads.emplace_back(job, t);
++	job(0);
++	for (size_t t=0; t<threads.size(); ++t)
++		threads[t].join();
++	// combine in loop order: smaller dT wins, on a tie the smaller n, then the lower z-range (= lower t)
++	for (unsigned int t=0; t<nThreads; ++t)
++		if ((best[t].dT<dT) || ((best[t].dT==dT) && (best[t].dT<1e200) && (best[t].n<smallest_n)))
++		{
++			dT = best[t].dT;
++			smallest_n = best[t].n;
++			smallest_pos[0]=best[t].pos[0];smallest_pos[1]=best[t].pos[1];smallest_pos[2]=best[t].pos[2];
++		}
+ 	if (dT==0)
+ 	{
+ 		throw std::runtime_error("Operator::CalcTimestep: Timestep is zero... this is not supposed to happen!");
+@@ -2045,7 +2152,7 @@ void Operator::CalcPEC_Range(unsigned int startX, unsigned int stopX, unsigned i
+ 				for (int n=0; n<3; ++n)
+ 				{
+ 					GetYeeCoords(n,pos,coord,false);
+-					CSProperties* prop = CSX->GetPropertyByCoordPriority(coord, vPrims, true);
++					CSProperties* prop = CSX->FindPropertyByCoordPriority(coord, vPrims, true);
+ 					if (prop)
+ 					{
+ 						if (prop->GetType()==CSProperties::METAL) //set to PEC
+diff --git a/FDTD/operator.h b/FDTD/operator.h
+index 57e64c9..a5b6273 100644
+--- a/FDTD/operator.h
++++ b/FDTD/operator.h
+@@ -164,6 +164,8 @@ public:
+ 
+ 	//! Get the disc line delta in \a n direction (in drawing units)
+ 	virtual double GetDiscDelta(int n, unsigned int pos, bool dualMesh=false) const;
++	//! GetDiscDelta() without the per-axis table (the formula); Init_EC() fills m_DiscDelta from it
++	double CalcDiscDelta(int n, unsigned int pos, bool dualMesh) const;
+ 
+ 	//! Get the coordinates for a given node index and component, according to the yee-algorithm. Returns true if inside the FDTD domain.
+ 	virtual bool GetYeeCoords(int ny, unsigned int pos[3], double* coords, bool dualMesh) const;
+@@ -272,12 +274,14 @@ protected:
+ 
+ 	double CalcTimestep_Var1();
+ 	double CalcTimestep_Var3();
++	//! Number of threads for the setup loops (timestep search, Calc_ECOperatorPos); the multithreaded operator overrides this
++	virtual unsigned int GetNumSetupThreads() const {return 1;}
+ 
+ 	//! Calculate the FDTD equivalent circuit parameter for the given position and direction ny. \sa Calc_EffMat_Pos
+ 	virtual bool Calc_ECPos(
+ 		int ny,
+ 		const unsigned int* pos,
+-		double* EC, std::vector<CSPrimitives *> vPrims
++		double* EC, const std::vector<CSPrimitives*>& vPrims
+ 	) const;
+ 
+ 	//! Get the FDTD raw disc delta, needed by Calc_EffMatPos() \sa Calc_EffMatPos
+@@ -293,7 +297,7 @@ protected:
+ 		int ny,
+ 		const double coords[3],
+ 		int MatType,
+-		std::vector<CSPrimitives*> vPrims,
++		const std::vector<CSPrimitives*>& vPrims,
+ 		bool markAsUsed=true
+ 	) const;
+ 
+@@ -304,21 +308,21 @@ protected:
+ 		int ny,
+ 		const unsigned int* pos,
+ 		double* EffMat,
+-		std::vector<CSPrimitives*> vPrims
++		const std::vector<CSPrimitives*>& vPrims
+ 	) const;
+ 
+ 	virtual bool AverageMatCellCenter(
+ 		int ny,
+ 		const unsigned int* pos,
+ 		double* EffMat,
+-		std::vector<CSPrimitives*> vPrims
++		const std::vector<CSPrimitives*>& vPrims
+ 	) const;
+ 
+ 	virtual bool AverageMatQuarterCell(
+ 		int ny,
+ 		const unsigned int* pos,
+ 		double* EffMat,
+-		std::vector<CSPrimitives*> vPrims
++		const std::vector<CSPrimitives*>& vPrims
+ 	) const;
+ 
+ 	//! Calc operator at certain \a pos
+@@ -349,6 +353,7 @@ protected:
+ 	FDTD_FLOAT* EC_R[3];
+ 
+ 	AdrOp* MainOp;
++	std::vector<double> m_DiscDelta[3][2]; //!< GetDiscDelta() per axis and mesh (0: main, 1: dual), filled by Init_EC(), cleared by Reset()
+ 
+ 	std::vector<Operator_Extension*> m_Op_exts;
+ 
+diff --git a/FDTD/operator_cylinder.cpp b/FDTD/operator_cylinder.cpp
+index d47128f..f04a125 100644
+--- a/FDTD/operator_cylinder.cpp
++++ b/FDTD/operator_cylinder.cpp
+@@ -82,7 +82,7 @@ double Operator_Cylinder::GetMaterial(
+ 	int ny,
+ 	const double* coords,
+ 	int MatType,
+-	std::vector<CSPrimitives*> vPrims,
++	const std::vector<CSPrimitives*>& vPrims,
+ 	bool markAsUsed
+ ) const
+ {
+diff --git a/FDTD/operator_cylinder.h b/FDTD/operator_cylinder.h
+index 69e893c..f7acb3d 100644
+--- a/FDTD/operator_cylinder.h
++++ b/FDTD/operator_cylinder.h
+@@ -113,7 +113,7 @@ protected:
+ 		int ny,
+ 		const double coords[3],
+ 		int MatType,
+-		std::vector<CSPrimitives*> vPrims,
++		const std::vector<CSPrimitives*>& vPrims,
+ 		bool markAsUsed=true
+ 	) const;
+ 
+diff --git a/FDTD/operator_multithread.cpp b/FDTD/operator_multithread.cpp
+index 15d5f5c..407335a 100644
+--- a/FDTD/operator_multithread.cpp
++++ b/FDTD/operator_multithread.cpp
+@@ -115,8 +115,9 @@ void Operator_Multithread::CalcStartStopLines(
+ 
+ int Operator_Multithread::CalcECOperator( DebugFlags debugFlags )
+ {
+-	if ((m_numThreads == 0) || (m_numThreads > AvailableThreads()))
+-		m_numThreads = AvailableThreads();
++	// the setup pool (Calc_EC, CalcPEC, timestep search, Calc_ECOperatorPos) uses every core; the engine
++	// gets its own count (m_orig_numThreads) in CreateEngine()
++	m_numThreads = AvailableThreads();
+ 
+ 	std::vector<unsigned int> m_Start_Lines;
+ 	std::vector<unsigned int> m_Stop_Lines;
+diff --git a/FDTD/operator_multithread.h b/FDTD/operator_multithread.h
+index 0c2a37d..0105f37 100644
+--- a/FDTD/operator_multithread.h
++++ b/FDTD/operator_multithread.h
+@@ -47,6 +47,7 @@ protected:
+ 	virtual bool CalcPEC(); //this method is using multi-threading
+ 
+ 	virtual int CalcECOperator( DebugFlags debugFlags = None );
++	virtual unsigned int GetNumSetupThreads() const {return m_numThreads;}
+ 
+ 	//Calc_EC barrier
+ 	boost::barrier* m_CalcEC_Start;
+diff --git a/FDTD/operator_sse.h b/FDTD/operator_sse.h
+index aa58528..5f097e6 100644
+--- a/FDTD/operator_sse.h
++++ b/FDTD/operator_sse.h
+@@ -27,6 +27,7 @@ class Operator_sse : public Operator
+ public:
+ 	//! Create a new operator
+ 	static Operator_sse* New();
++	unsigned int GetNumVectors() const {return numVectors;}
+ 	virtual ~Operator_sse();
+ 
+ 	virtual Engine* CreateEngine();
+diff --git a/FDTD/operator_sse_compressed.cpp b/FDTD/operator_sse_compressed.cpp
+index fea14a8..c10501b 100644
+--- a/FDTD/operator_sse_compressed.cpp
++++ b/FDTD/operator_sse_compressed.cpp
+@@ -16,6 +16,9 @@
+ */
+ 
+ #include "operator_sse_compressed.h"
++#include <chrono>
++#include <cstdlib>
++#include <iostream>
+ #include "engine_sse_compressed.h"
+ #include "engine_sse.h"
+ 
+diff --git a/nf2ff/CMakeLists.txt b/nf2ff/CMakeLists.txt
+index 4735843..9772df2 100644
+--- a/nf2ff/CMakeLists.txt
++++ b/nf2ff/CMakeLists.txt
+@@ -47,6 +47,10 @@ TARGET_LINK_LIBRARIES( nf2ff
+   ${HDF5_LIBRARIES}
+   ${Boost_LIBRARIES}
+ )
++if (APPLE)
++  # cgemm for the separable far-field sum (nf2ff_calc.cpp)
++  TARGET_LINK_LIBRARIES( nf2ff "-framework Accelerate" )
++endif()
+ 
+ ADD_EXECUTABLE( nf2ff_bin main.cpp )
+ SET_TARGET_PROPERTIES(nf2ff_bin PROPERTIES OUTPUT_NAME nf2ff)
+diff --git a/nf2ff/nf2ff_calc.cpp b/nf2ff/nf2ff_calc.cpp
+index ebb313d..966f051 100644
+--- a/nf2ff/nf2ff_calc.cpp
++++ b/nf2ff/nf2ff_calc.cpp
+@@ -22,8 +22,14 @@
+ #include <vector>
+ #include <cmath>
+ #include <complex>
++#include <cstdlib>
+ #include <iostream>
+ 
++#ifdef __APPLE__
++#include <Accelerate/Accelerate.h>
++#define NF2FF_HAVE_CBLAS
++#endif
++
+ using namespace std;
+ 
+ nf2ff_calc_thread::nf2ff_calc_thread(nf2ff_calc* nfc, unsigned int start, unsigned int stop, unsigned int threadID, nf2ff_data &data)
+@@ -350,6 +356,118 @@ bool nf2ff_calc::AddPlane(float **lines, unsigned int* numLines, ArrayLib::Array
+ 	return true;
+ }
+ 
++/***********************************************************************/
++
++void nf2ff_calc::CalcPlaneSeparable(int ny, float **lines, unsigned int* numLines, const float* normDir, const float* edge_length_P, const float* edge_length_PP,
++									ArrayLib::ArrayNIJK<std::complex<float>> &E_field, ArrayLib::ArrayNIJK<std::complex<float>> &H_field,
++									ArrayLib::ArrayIJ<std::complex<float>> &Nt, ArrayLib::ArrayIJ<std::complex<float>> &Np, ArrayLib::ArrayIJ<std::complex<float>> &Lt, ArrayLib::ArrayIJ<std::complex<float>> &Lp)
++{
++	// On a Cartesian plane exp(jk r.cos(psi)) = exp(jk a (x_i-cx)) * exp(jk b (y_j-cy)) * exp(jk c (z0-cz)), so for every
++	// direction the surface integral of a current component is  sum_i Q_i  sum_j P_j F(i,j)  with per-line phasors P and Q
++	// (the cell areas folded in). The inner sum over all directions at once is one matrix product per plane:
++	//   G[d][c,i] = sum_j P[d][j] F[c,i][j]   (cgemm on Apple's Accelerate, a plain loop elsewhere), then S_c[d] = sum_i Q[d][i] G[d][c,i].
++	// The legacy loop (one complex exp per cell and direction) stays for cylindrical meshes and OPENEMS_NF2FF_LEGACY=1.
++	const int nP  = (ny+1)%3;
++	const int nPP = (ny+2)%3;
++	const unsigned int NP = numLines[nP], NPP = numLines[nPP];
++	const unsigned int numDir = m_numTheta*m_numPhi;
++	if (NP==0 || NPP==0 || numDir==0)
++		return;
++
++	// F[c][i][j]: Js_x,Js_y,Js_z,Ms_x,Ms_y,Ms_z at cell (i along nP, j along nPP); Js = n x H, Ms = -n x E (eq. 8.15a/b)
++	vector<complex<float>> F((size_t)6*NP*NPP);
++	unsigned int pos[3] = {0,0,0};
++	for (unsigned int i=0; i<NP; ++i)
++	{
++		pos[nP] = i;
++		for (unsigned int j=0; j<NPP; ++j)
++		{
++			pos[nPP] = j;
++			const complex<float> H0 = H_field(0, pos[0], pos[1], pos[2]), H1 = H_field(1, pos[0], pos[1], pos[2]), H2 = H_field(2, pos[0], pos[1], pos[2]);
++			const complex<float> E0 = E_field(0, pos[0], pos[1], pos[2]), E1 = E_field(1, pos[0], pos[1], pos[2]), E2 = E_field(2, pos[0], pos[1], pos[2]);
++			const size_t ij = (size_t)i*NPP + j;
++			F[(size_t)0*NP*NPP + ij] = normDir[1]*H2 - normDir[2]*H1;
++			F[(size_t)1*NP*NPP + ij] = normDir[2]*H0 - normDir[0]*H2;
++			F[(size_t)2*NP*NPP + ij] = normDir[0]*H1 - normDir[1]*H0;
++			F[(size_t)3*NP*NPP + ij] = normDir[2]*E1 - normDir[1]*E2;
++			F[(size_t)4*NP*NPP + ij] = normDir[0]*E2 - normDir[2]*E0;
++			F[(size_t)5*NP*NPP + ij] = normDir[1]*E0 - normDir[0]*E1;
++		}
++	}
++
++	const float k = 2*PI*m_freq/C0*sqrt(m_permittivity*m_permeability);
++	// direction cosines per axis: x: cosP*sinT, y: sinP*sinT, z: cosT; and the angle factors of eq. 8.23/8.24
++	vector<float> dcos((size_t)3*numDir), cosT_cosP(numDir), cosT_sinP(numDir), sinTv(numDir), cosPv(numDir), sinPv(numDir);
++	for (unsigned int tn=0, d=0; tn<m_numTheta; ++tn)
++		for (unsigned int pn=0; pn<m_numPhi; ++pn, ++d)
++		{
++			const float sinT = sin(m_theta[tn]), cosT = cos(m_theta[tn]);
++			const float sinP = sin(m_phi[pn]),   cosP = cos(m_phi[pn]);
++			dcos[3*d+0] = cosP*sinT;
++			dcos[3*d+1] = sinP*sinT;
++			dcos[3*d+2] = cosT;
++			cosT_cosP[d] = cosT*cosP; cosT_sinP[d] = cosT*sinP;
++			sinTv[d] = sinT; cosPv[d] = cosP; sinPv[d] = sinP;
++		}
++
++	const float x0 = lines[ny][0] - m_centerCoord[ny];
++	vector<float> xP(NP), xPP(NPP);
++	for (unsigned int i=0; i<NP; ++i)  xP[i]  = lines[nP][i]  - m_centerCoord[nP];
++	for (unsigned int j=0; j<NPP; ++j) xPP[j] = lines[nPP][j] - m_centerCoord[nPP];
++
++	// directions in blocks so that G (block x 6*NP) stays cache friendly
++	unsigned int block = (unsigned int)max<size_t>(16, min<size_t>(numDir, (1u<<21)/(6*NP)));
++	vector<complex<float>> P((size_t)block*NPP), Q((size_t)block*NP), G((size_t)block*6*NP);
++	const complex<float> _I_(0,1);
++	for (unsigned int d0=0; d0<numDir; d0+=block)
++	{
++		const unsigned int nd = min(block, numDir-d0);
++		for (unsigned int b=0; b<nd; ++b)
++		{
++			const float* dc = &dcos[3*(size_t)(d0+b)];
++			const complex<float> ez = exp(_I_*(k*dc[ny]*x0));
++			for (unsigned int j=0; j<NPP; ++j)
++				P[(size_t)b*NPP+j] = edge_length_PP[j]*exp(_I_*(k*dc[nPP]*xPP[j]));
++			for (unsigned int i=0; i<NP; ++i)
++				Q[(size_t)b*NP+i] = edge_length_P[i]*exp(_I_*(k*dc[nP]*xP[i]))*ez;
++		}
++#ifdef NF2FF_HAVE_CBLAS
++		const complex<float> one(1,0), zero(0,0);
++		cblas_cgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nd, 6*NP, NPP, &one, P.data(), NPP, F.data(), NPP, &zero, G.data(), 6*NP);
++#else
++		for (unsigned int b=0; b<nd; ++b)
++			for (unsigned int ci=0; ci<6*NP; ++ci)
++			{
++				complex<float> acc(0,0);
++				const complex<float>* f = &F[(size_t)ci*NPP];
++				const complex<float>* p = &P[(size_t)b*NPP];
++				for (unsigned int j=0; j<NPP; ++j)
++					acc += p[j]*f[j];
++				G[(size_t)b*6*NP+ci] = acc;
++			}
++#endif
++		for (unsigned int b=0; b<nd; ++b)
++		{
++			const unsigned int d = d0+b;
++			complex<double> S[6];
++			for (int c=0; c<6; ++c)
++			{
++				complex<double> acc(0,0);
++				const complex<float>* g = &G[(size_t)b*6*NP + (size_t)c*NP];
++				const complex<float>* q = &Q[(size_t)b*NP];
++				for (unsigned int i=0; i<NP; ++i)
++					acc += complex<double>(q[i]*g[i]);
++				S[c] = acc;
++			}
++			const unsigned int tn = d/m_numPhi, pn = d%m_numPhi;
++			Nt(tn, pn) += complex<float>(S[0]*(double)cosT_cosP[d] + S[1]*(double)cosT_sinP[d] - S[2]*(double)sinTv[d]);
++			Np(tn, pn) += complex<float>(S[1]*(double)cosPv[d] - S[0]*(double)sinPv[d]);
++			Lt(tn, pn) += complex<float>(S[3]*(double)cosT_cosP[d] + S[4]*(double)cosT_sinP[d] - S[5]*(double)sinTv[d]);
++			Lp(tn, pn) += complex<float>(S[4]*(double)cosPv[d] - S[3]*(double)sinPv[d]);
++		}
++	}
++}
++
+ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib::ArrayNIJK<std::complex<float>> &E_field, ArrayLib::ArrayNIJK<std::complex<float>> &H_field, int MeshType)
+ {
+ 	//find normal direction
+@@ -362,9 +480,6 @@ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib:
+ 	int nP  = (ny+1)%3;
+ 	int nPP = (ny+2)%3;
+ 
+-	ArrayLib::ArrayNIJK<std::complex<float>> Js("Js", numLines);
+-	ArrayLib::ArrayNIJK<std::complex<float>> Ms("Ms", numLines);
+-
+ 	float normDir[3]= {0,0,0};
+ 	if (lines[ny][0]>=m_centerCoord[ny])
+ 		normDir[ny]=1;
+@@ -415,6 +530,21 @@ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib:
+ 			}
+ 	unsigned int numAngles[2] = {m_numTheta, m_numPhi};
+ 
++	ArrayLib::ArrayIJ<complex<float>> Nt("l_Nt", numAngles);
++	ArrayLib::ArrayIJ<complex<float>> Np("l_Np", numAngles);
++	ArrayLib::ArrayIJ<complex<float>> Lt("l_Lt", numAngles);
++	ArrayLib::ArrayIJ<complex<float>> Lp("l_Lp", numAngles);
++
++	static const bool legacy = getenv("OPENEMS_NF2FF_LEGACY")!=NULL;
++	if (MeshType==0 && !legacy)
++	{
++		CalcPlaneSeparable(ny, lines, numLines, normDir, edge_length_P, edge_length_PP, E_field, H_field, Nt, Np, Lt, Lp);
++	}
++	else
++	{
++	ArrayLib::ArrayNIJK<std::complex<float>> Js("Js", numLines);
++	ArrayLib::ArrayNIJK<std::complex<float>> Ms("Ms", numLines);
++
+ 	// setup multi-threading jobs
+ 	vector<unsigned int> jpt = AssignJobs2Threads(numLines[nP], m_numThreads, true);
+ 	m_numThreads = jpt.size();
+@@ -457,11 +587,6 @@ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib:
+ 
+ 	m_Barrier->wait(); //combine all thread local Nt,Np,Lt and Lp
+ 
+-	ArrayLib::ArrayIJ<complex<float>> Nt("l_Nt", numAngles);
+-	ArrayLib::ArrayIJ<complex<float>> Np("l_Np", numAngles);
+-	ArrayLib::ArrayIJ<complex<float>> Lt("l_Lt", numAngles);
+-	ArrayLib::ArrayIJ<complex<float>> Lp("l_Lp", numAngles);
+-
+ 	for (unsigned int n=0; n<m_numThreads; n++)
+ 	{
+ 		for (unsigned int tn=0;tn<m_numTheta;++tn)
+@@ -482,10 +607,12 @@ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib:
+ 	m_thread_group.join_all(); // wait for termination
+ 	delete m_Barrier;
+ 	m_Barrier = NULL;
++	delete[] thread_data; thread_data=NULL;
+ 
+ 	//cleanup Js & Ms
+ 	Js.Reset();
+ 	Ms.Reset();
++	}
+ 
+ 	ArrayLib::ArrayIJ<std::complex<double>>& E_theta = *m_E_theta;
+ 	ArrayLib::ArrayIJ<std::complex<double>>& E_phi   = *m_E_phi;
+@@ -518,7 +645,6 @@ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib:
+ 	//cleanup Nx and Lx
+ 	delete[] edge_length_P; edge_length_P=NULL;
+ 	delete[] edge_length_PP; edge_length_PP=NULL;
+-	delete[] thread_data; thread_data=NULL;
+ 
+ 	// Maximum directivity (unitless) across sampled angles theta and phi
+ 	// P_max (W/m^2), m_radPower (W), m_radius (m)
+diff --git a/nf2ff/nf2ff_calc.h b/nf2ff/nf2ff_calc.h
+index b57ae7e..36c9e92 100644
+--- a/nf2ff/nf2ff_calc.h
++++ b/nf2ff/nf2ff_calc.h
+@@ -120,6 +120,10 @@ protected:
+ 
+ 	int GetNormalDir(unsigned int* numLines);
+ 	bool AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib::ArrayNIJK<std::complex<float>> &E_field, ArrayLib::ArrayNIJK<std::complex<float>> &H_field, int MeshType=0);
++	//! Cartesian plane: the phase factor separates per mesh line, so N and L become matrix products (no exp per cell and direction)
++	void CalcPlaneSeparable(int ny, float **lines, unsigned int* numLines, const float* normDir, const float* edge_length_P, const float* edge_length_PP,
++							ArrayLib::ArrayNIJK<std::complex<float>> &E_field, ArrayLib::ArrayNIJK<std::complex<float>> &H_field,
++							ArrayLib::ArrayIJ<std::complex<float>> &Nt, ArrayLib::ArrayIJ<std::complex<float>> &Np, ArrayLib::ArrayIJ<std::complex<float>> &Lt, ArrayLib::ArrayIJ<std::complex<float>> &Lp);
+ 	bool AddMirrorPlane(int n, float **lines, unsigned int* numLines, ArrayLib::ArrayNIJK<std::complex<float>> &E_field, ArrayLib::ArrayNIJK<std::complex<float>> &H_field, int MeshType=0);
+ 
+ 	//boost multi-threading
+diff --git a/openems.cpp b/openems.cpp
+index 2429f7f..d967ede 100644
+--- a/openems.cpp
++++ b/openems.cpp
+@@ -45,6 +45,9 @@
+ #include "Common/processmodematch.h"
+ #include "Common/processfields_td.h"
+ #include "Common/processfields_fd.h"
++#include "FDTD/operator_sse_compressed.h"
++#include "FDTD/engine_sse.h"
++#include <cstdlib>
+ #include "Common/processfields_sar.h"
+ #include <hdf5.h>            // only for H5get_libversion()
+ #include <boost/version.hpp> // only for BOOST_LIB_VERSION
+@@ -1195,6 +1198,117 @@ ContinuousStructure* openEMS::GetCSX() const
+ 	return m_CSX;
+ }
+ 
++
++/***********************************************************************************************************
++ Raw export for external engines (the Swift/Metal prototype in openems-metal/swift_engine):
++   OPENEMS_EXPORT_OPERATOR=dir  after the operator is built: compressed operator tables, index, excitation, signal
++   OPENEMS_EXPORT_FIELDS=dir    after the run: the engine's voltage and current arrays (scalar n,x,y,z order)
++ Plain little-endian binary files plus header.json; no HDF5 so that any language can read them.
++***********************************************************************************************************/
++static bool RawWrite(const std::string& fn, const void* data, size_t bytes)
++{
++	std::ofstream f(fn.c_str(), std::ios::binary);
++	if (!f)
++	{
++		cerr << "openEMS: raw export: cannot write " << fn << endl;
++		return false;
++	}
++	f.write((const char*)data, bytes);
++	return true;
++}
++
++static void ExportOperatorRaw(Operator* op, const std::string& dir)
++{
++	Operator_SSE_Compressed* cop = dynamic_cast<Operator_SSE_Compressed*>(op);
++	if ((cop==NULL) || (cop->f4_vv_Compressed[0].size()==0))
++	{
++		cerr << "openEMS: OPENEMS_EXPORT_OPERATOR needs the compressed SSE operator, nothing exported" << endl;
++		return;
++	}
++	unsigned int nl[3] = {op->GetNumberOfLines(0,true), op->GetNumberOfLines(1,true), op->GetNumberOfLines(2,true)};
++	const unsigned int nv = cop->GetNumVectors();
++	const size_t numOps = cop->f4_vv_Compressed[0].size();
++	// op_index.u32: [x][y][zv]
++	std::vector<unsigned int> idx((size_t)nl[0]*nl[1]*nv);
++	for (unsigned int x=0; x<nl[0]; ++x)
++		for (unsigned int y=0; y<nl[1]; ++y)
++			for (unsigned int zv=0; zv<nv; ++zv)
++				idx[((size_t)x*nl[1]+y)*nv+zv] = cop->m_Op_index(x,y,zv);
++	RawWrite(dir+"/op_index.u32", idx.data(), idx.size()*sizeof(unsigned int));
++	// tables: [3][numOps][4] floats
++	const std::vector<f4vector,aligned_allocator<f4vector> >* tabs[4] = {cop->f4_vv_Compressed, cop->f4_vi_Compressed, cop->f4_ii_Compressed, cop->f4_iv_Compressed};
++	const char* names[4] = {"vv", "vi", "ii", "iv"};
++	for (int t=0; t<4; ++t)
++	{
++		std::vector<float> buf((size_t)3*numOps*4);
++		for (int n=0; n<3; ++n)
++			for (size_t k=0; k<numOps; ++k)
++				for (int l=0; l<4; ++l)
++					buf[((size_t)n*numOps+k)*4+l] = tabs[t][n][k].f[l];
++		RawWrite(dir+"/"+names[t]+".f32", buf.data(), buf.size()*sizeof(float));
++	}
++	// excitation (voltage entries) and the signal
++	Operator_Ext_Excitation* exc = NULL;
++	std::string extNames;
++	for (size_t n=0; n<op->GetNumberOfExtentions(); ++n)
++	{
++		if (n) extNames += "\", \"";
++		extNames += op->GetExtension(n)->GetExtensionName();
++		if (exc==NULL)
++			exc = dynamic_cast<Operator_Ext_Excitation*>(op->GetExtension(n));
++	}
++	unsigned int voltCount = 0, currCount = 0;
++	if (exc)
++	{
++		voltCount = exc->GetVoltCount();
++		currCount = exc->GetCurrCount();
++		std::vector<unsigned int> vi((size_t)3*voltCount), vdir(voltCount), vdel(voltCount);
++		std::vector<float> vamp(voltCount);
++		for (unsigned int k=0; k<voltCount; ++k)
++		{
++			for (int c=0; c<3; ++c) vi[(size_t)c*voltCount+k] = exc->GetVoltIndex(c)[k];
++			vdir[k] = exc->GetVoltDir()[k]; vdel[k] = exc->GetVoltDelay()[k]; vamp[k] = exc->GetVoltAmp()[k];
++		}
++		RawWrite(dir+"/exc_index.u32", vi.data(), vi.size()*sizeof(unsigned int));
++		RawWrite(dir+"/exc_dir.u32", vdir.data(), vdir.size()*sizeof(unsigned int));
++		RawWrite(dir+"/exc_delay.u32", vdel.data(), vdel.size()*sizeof(unsigned int));
++		RawWrite(dir+"/exc_amp.f32", vamp.data(), vamp.size()*sizeof(float));
++	}
++	Excitation* sig = op->GetExcitationSignal();
++	unsigned int sigLen = sig ? sig->GetLength() : 0;
++	if (sig && sigLen)
++		RawWrite(dir+"/exc_signal.f32", sig->GetVoltageSignal(), sigLen*sizeof(float));
++	std::ofstream h((dir+"/header.json").c_str());
++	h << std::setprecision(17) << "{\n \"numLines\": [" << nl[0] << ", " << nl[1] << ", " << nl[2] << "],\n \"numVectors\": " << nv
++	  << ",\n \"numOps\": " << numOps << ",\n \"dT\": " << op->GetTimestep() << ",\n \"voltCount\": " << voltCount
++	  << ",\n \"currCount\": " << currCount << ",\n \"signalLength\": " << sigLen << ",\n \"signalPeriod\": " << (sig ? sig->GetSignalPeriod() : 0.0)
++	  << ",\n \"extensions\": [\"" << extNames << "\"],\n \"layout\": \"op_index[x][y][zv]; tables [n][op][lane], cell z = lane*numVectors + zv; exc_index [3][count]\"\n}\n";
++	cout << "openEMS: raw operator exported to " << dir << " (" << numOps << " operators, " << voltCount << " voltage excitations)" << endl;
++}
++
++static void ExportFieldsRaw(Operator* op, Engine* eng, const std::string& dir)
++{
++	unsigned int nl[3] = {op->GetNumberOfLines(0,true), op->GetNumberOfLines(1,true), op->GetNumberOfLines(2,true)};
++	const size_t N = (size_t)3*nl[0]*nl[1]*nl[2];
++	std::vector<float> volt(N), curr(N);
++	unsigned int pos[3];
++	size_t k=0;
++	for (int n=0; n<3; ++n)
++		for (pos[0]=0; pos[0]<nl[0]; ++pos[0])
++			for (pos[1]=0; pos[1]<nl[1]; ++pos[1])
++				for (pos[2]=0; pos[2]<nl[2]; ++pos[2], ++k)
++				{
++					volt[k] = eng->GetVolt(n,pos);
++					curr[k] = eng->GetCurr(n,pos);
++				}
++	RawWrite(dir+"/volt.f32", volt.data(), N*sizeof(float));
++	RawWrite(dir+"/curr.f32", curr.data(), N*sizeof(float));
++	std::ofstream h((dir+"/fields.json").c_str());
++	h << "{\n \"numLines\": [" << nl[0] << ", " << nl[1] << ", " << nl[2] << "],\n \"numTS\": " << eng->GetNumberOfTimesteps()
++	  << ",\n \"layout\": \"volt.f32 / curr.f32 [3][x][y][z] float32\"\n}\n";
++	cout << "openEMS: raw fields after " << eng->GetNumberOfTimesteps() << " timesteps exported to " << dir << endl;
++}
++
+ int openEMS::SetupFDTD()
+ {
+ 	// of a previous setup that was not run
+@@ -1390,6 +1504,8 @@ int openEMS::SetupFDTD()
+ 	}
+ 
+ 	//create FDTD engine
++	if (getenv("OPENEMS_EXPORT_OPERATOR")) // operator, extensions and the excitation signal are complete here
++		ExportOperatorRaw(FDTD_Op, getenv("OPENEMS_EXPORT_OPERATOR"));
+ 	FDTD_Eng = FDTD_Op->CreateEngine();
+ 
+ 	if (Op_Ext_SSD)
+@@ -1611,6 +1727,8 @@ void openEMS::RunFDTD()
+ 
+ 	if (m_DumpStats)
+ 		DumpStatistics(OPENEMS_STAT_FILE, t_diff);
++	if (getenv("OPENEMS_EXPORT_FIELDS"))
++		ExportFieldsRaw(FDTD_Op, FDTD_Eng, getenv("OPENEMS_EXPORT_FIELDS"));
+ 
+ 	//*************** postproc ************//
+ 	PA->PostProcess();
+diff --git a/tools/denormal.h b/tools/denormal.h
+index ed218d2..546faa1 100644
+--- a/tools/denormal.h
++++ b/tools/denormal.h
+@@ -6,6 +6,10 @@
+ #if BOOST_ARCH_X86
+ #include <xmmintrin.h>
+ #endif
++#if defined(__aarch64__)
++#include <cstdint>
++#include <cstdlib>
++#endif
+ 
+ // Disable denormal (subnormal) floating point numbers. These exceedingly
+ // small numbers may create a substantial overhead depending on the CPU
+@@ -36,6 +40,17 @@ inline void Denormal::Disable()
+ 
+ 	// write the new MXCSR setting to the MXCSR
+ 	_mm_setcsr( newMXCSR );
++#elif defined(__aarch64__)
++	// Apple cores have no subnormal penalty, so the default keeps them (bit-identical to upstream).
++	// OPENEMS_FTZ=1 sets FPCR.FZ, which makes the CPU engines match a GPU that flushes subnormals.
++	static const bool on = getenv("OPENEMS_FTZ")!=NULL;
++	if (on)
++	{
++		uint64_t fpcr;
++		__asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
++		fpcr |= (1ull<<24);
++		__asm__ volatile("msr fpcr, %0" : : "r"(fpcr));
++	}
+ #endif
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

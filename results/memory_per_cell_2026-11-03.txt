@@ -1,0 +1,31 @@
+# memory_per_cell_2026-11-03.txt: heap use of openEMS per mesh node, the operator-setup peak against the time loop.
+# scripts/memory/memcheck.py N 2000 VARIANT OUTDIR for N = 40, 52, 64, one run each, on the final build (snapshot
+# cg18 = patches 0001-0006, v0.37.0-24-g087ce9e), Apple M5, macOS 27.0.1, 2026-11-03 13:57.
+# Model: N x N x N mesh lines (N^3 nodes = openEMS's FDTD cell count; N is a multiple of 4, so no f4vector padding),
+# PEC box, soft E excitation, multithreaded engine, 2 threads, 2000 timesteps. plain = dumps disabled; dump = one
+# 2 x 2 x 2 E-field time-domain dump box with dumps enabled.
+# FDTD.Run runs in a worker thread; the main thread samples malloc_zone_statistics(NULL) size_in_use every ~0.5 ms.
+# base = heap before the run, peak = largest sample (during the operator setup), loop = median of the last 40 % of the
+# samples (the time loop), after = heap after the run, all in bytes; maxrss = the process's peak resident set (bytes,
+# with Python, numpy and the libraries). Per node = the slope between two mesh sizes, which removes the fixed part.
+#  N    nodes  variant  samples  wall_s      base      peak      loop     after     maxrss
+ 40    64000  plain        106   0.087   9026400  15888976  11208208   9349840   81297408
+ 52   140608  plain        226   0.190   9026528  23607824  13373328   9351120   89030656
+ 64   262144  plain        426   0.354   9026592  35650800  16783440   9353232  101629952
+ 40    64000  dump         108   0.090   9028320  17463888  12593008  10012000   84803584
+ 52   140608  dump         227   0.192   9028448  27034128  14772032  10013280   94945280
+ 64   262144  dump         428   0.358   9028512  41977072  18176352  10015392  110018560
+
+# bytes per node (slope)        40->52   52->64   40->64
+plain setup peak                100.8     99.1     99.7
+plain time loop                  28.3     28.1     28.1
+dump  setup peak                124.9    123.0    123.7
+dump  time loop                  28.4     28.0     28.2
+
+# Reading: during the time loop a node holds 28 B (six float field components, 24 B, and the 4-byte operator index
+# entry per node it is allocated with); the setup peaks at about 100 B per node, about 124 B with a dump box (the
+# time loop is the same 28 B with or without it). The peak comes in the first 6-9 % of each run's wall time (peak_t),
+# during the operator and engine setup.
+# The same script on snapshot cg17 (2026-11-03 10:12, the run the paper's figures were first taken from): 40->64
+# slopes plain peak / loop 99.7 / 28.1, dump peak / loop 123.7 / 28.1 B per node; its absolute values sit
+# about 10 kB above cg18's at every size (fixed part only).

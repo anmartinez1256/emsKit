@@ -1,0 +1,257 @@
+\section{Method: how speed was measured and correctness enforced}\label{sec:method}
+
+\subsection{Models}
+Six models span the sizes and features that matter (Table~\ref{tab:models}). Four are the openEMS Python tutorials,
+two of them with the mesh refined (``x5'', ``x3'') to a size that is clearly bandwidth-bound; two are the author's
+real boards, built by the author's toolkit. Every feature in daily use is covered: Mur and PML boundaries (full-z slabs
+and a z-only slab), lumped, microstrip-line (MSL) and coaxial ports, conducting sheets (the dispersive-material
+extension), near-field-to-far-field (nf2ff) dumps, frequency-domain field dumps. The cylindrical multigrid was checked
+separately on openEMS's CylindricalWave\_CC tutorial.
+
+\begin{table}[H]\centering\small
+\resizebox{\textwidth}{!}{\begin{tabular}{@{}llrl@{}}
+\toprule
+model & origin & cells & features exercised \\
+\midrule
+patch tutorial & Simple\_Patch\_Antenna.py & 0.104\,M & lumped port, 6$\times$ MUR, nf2ff box (12 time-domain dumps) \\
+notch tutorial & MSL\_NotchFilter.py & 0.270\,M & MSL ports, PML\_8 at both x ends, PEC at $z_{\min}$, MUR elsewhere \\
+patch x5 & patch, mesh $\times$5 & 7.86\,M & bandwidth-bound size, MUR \\
+notch x3 & notch, mesh $\times$3 & 5.25\,M & bandwidth-bound size, PML slabs \\
+GCPW line (kgcpw) & rfsim gcpw\_line & 0.242\,M & conducting sheets (dispersive extension), MSL ports, MUR, 17 z lines \\
+SMA launch (ksma) & rfsim sma\_launch & 1.071 / 0.871\,M & coaxial port, z-only PML\_8, 69\,500 / 64\,410 distinct operators, FD dumps \\
+\bottomrule
+\end{tabular}}
+\caption{Benchmark models. ``M'' = million Yee cells. The SMA launch has two meshes: 1.071\,M cells with the
+toolkit's former 0.02\,mm mesh floor, the mesh of the benchmark tables up to snapshot cg18, and 0.871\,M with the
+0.05\,mm floor that is the toolkit's default since 2026-11-04 (toolkit commit 4a7e20e, Section~\ref{sec:meshfloor}),
+on which the benchmark model has been built since then: the GPU engine's
+measurements (Section~\ref{sec:gpu}), the other engines' runs (Section~\ref{sec:positioning}), the checks of cg29 and
+its comparison with cg18 (\code{results/cpu\_items\_cg29\_2026-11-05.txt}) use it. Tables that use the 1.071\,M mesh
+say so. Rates on the two meshes do not compare directly. Operator counts: 69\,500 on the 1.071\,M mesh (project log,
+not in \code{results/}), 64\,410 on the 0.871\,M mesh
+(\code{results/diamond\_engine\_cg24\_cg27\_2026-11-04.txt}).}\label{tab:models}
+\end{table}
+
+\subsection{The harness}
+\code{bench.py MODEL --configs CFG...} builds the model in a fresh Python process per run (\code{runner.py}) and calls
+\code{FDTD.Run()} with a fixed number of time steps (\code{EndCriteria=0}), so every engine performs identical work. A
+configuration names the library to load (\code{SNAP@}, a saved set of \code{libopenEMS}, \code{libCSXCAD},
+\code{libnf2ff} dylibs picked up through \code{DYLD\_LIBRARY\_PATH}), the engine, the thread count, and environment
+variables for individual knobs (\code{\#NAME=VAL}). The first configuration is the reference; for every other run the
+harness reports the maximum relative difference of the port probe files and the largest difference of
+$S_{11}$/$S_{21}$ (linear and dB, over the frequencies where $|S_{\rm ref}|>-40$\,dB), the engine speed in \MC\ parsed
+from openEMS's own output, and the CPU load of \emph{other} processes in the second before the run (\code{others NN\%},
+from \code{top}). A probe file whose reference is all zero, and an $S$-parameter that stays below $-40$\,dB, cannot be
+compared that way, and the published tables leave them out without a note: the notch x3 check ends before the pulse
+reaches port 2, so its tables compare neither the port-2 probes nor $S_{21}$, and the GCPW tables do not compare
+$S_{11}$. \code{--quiet 60} waits until other processes use less than 60\,\% of a core, for at most \code{--quiet-max}
+seconds; \code{--repeat 2} runs each configuration twice and reports the faster run (both speeds are listed), and in
+the tables in \code{results/} only each configuration's last run was compared. The harness now compares every probe
+file and $S$-parameter exactly, over all frequencies, and names those without a figure in its output; it also compares
+every run with the reference configuration's first run and flags the reported run when its quiet wait timed out.
+Since 2026-11-04 the two GPU engines (\code{gpu}, \code{metal-diamond}) and any configuration with
+\code{OPENEMS\_FTZ} set count as tolerant: their differences from a stock reference are printed but do not fail the
+run, since neither is bit-identical to a run that keeps subnormal floats (the GPU engines' reference is the CPU
+engine run with \code{OPENEMS\_FTZ=1}; Section~\ref{sec:policy}). From the cg27 tables of the same day on, each line
+also gives the CPU and GPU use of the other processes during the run (\code{bench/usage.py}), following the author's
+rule of that day that every benchmark line carries both. A knob's value cannot contain a comma, because the harness
+splits its settings on commas; a tile setting \code{M,V} of the GPU engine was once silently dropped that way (the
+engine now also reads \code{M:V}). From cg24 (2026-11-04) most speed comparisons are paired and interleaved (\code{bench/abtest.py}):
+the configurations run in turn, round after round, and a ratio is the median over the rounds of the per-round ratio
+of two configurations, given with its range, so that a slow phase of the shared machine hits both configurations of
+a round alike. The unpaired runs of 2026-11-04 and 2026-11-05 (the faster of two runs, or one run each: the tile
+sweep of cg23, the other engines, the Swift diamond mode, part B of the $K=1$ file, the GPU end-to-end runs of cg23
+and the check tables) say so where they are quoted.
+Runs go through
+\code{FDTD.Run()} rather than \code{Write2XML} plus the binary because in v0.37.0 (with CSXCAD v0.7.0), and so in this
+fork, \code{Write2XML} writes primitive coordinates with 7 significant digits but mesh lines with 15, so
+zero-thickness boxes (an MSL port's excitation plane) fall off their mesh line and are dropped, reported only as
+unused primitives. Upstream master has since added a drawing tolerance taken from the mesh (commit db68e62,
+2026-10-21) that covers this case.
+
+\code{check.sh TAG SNAP} is the acceptance test: the six models at 1, 4, 8 and 10 threads and with the automatic
+thread count, against the stock snapshot, two repeats, results in the top-level \code{results/} folder as
+\code{MODEL\_sS\_nN\_TAG.txt}. A snapshot was accepted only when every comparison printed \code{probes rel=0.0e+00} and
+\code{max|dS|=0.0e+00}; \code{bench.py} and \code{check.sh} now also exit with an error status when a comparison
+differs or a file is missing. cg18 (patches 0001--0006, the build installed on the author's Mac from 2026-11-04 to
+2026-11-06) passed the full check on a quiet machine on 2026-11-03 (\code{results/*\_cg18.txt},
+Section~\ref{sec:results}). The current build, cg29 (patches 0001--0027, installed in cg18's place on 2026-11-06),
+passed it on 2026-11-05 with three more configurations, the geometry coefficient tables
+forced at 4 threads, the packed ones at 8 and the barriers instead of the neighbour flags at 8
+(\code{results/*\_cg29.txt}; the speeds in those tables are the faster of two unpaired runs under the check's load,
+not comparisons).
+Its other checks (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 3): \code{scripts/checks/debye\_check.sh};
+the validation suite, 15 of 15 with the multithreaded engine at 4 threads and with the fastest engine; the cylindrical
+multigrid, 34 datasets equal to stock's; box models with conducting sheets, Drude/Lorentz blocks, UPML, Mur faces and
+the steady-state detection against the basic or sse-compressed engine of the same build, whose extension code is
+stock's; and a matrix of 45 small models in up to 11 run modes, 461 comparisons identical and 10 that differ only in
+the stop step of one model, for the reason given under ``Energy end criterion'' below. The Metal engine of
+Section~\ref{sec:gpu} has its own acceptance test, against the multithreaded engine run with \code{OPENEMS\_FTZ=1}
+instead of stock (Section~\ref{sec:policy}): \code{scripts/checks/diamond\_check.sh} compares every exported field
+value of box models (PEC, Mur and PML faces, delayed and soft excitations, lumped RLC elements, conducting sheets,
+Drude/Lorentz and Debye blocks) at $K=1$, 2, 3, 4 and 8 time steps per tile and with an odd tile, threadgroup and
+batch size, 72 of 72 comparisons identical on cg28 and cg29, and \code{bench.py} compares the port probes and
+$S$-parameters of the six models, identical on cg29 (\code{results/*\_cg29gpu.txt}) as on the earlier GPU snapshots.
+The cg29 runs set \code{OPENEMS\_FTZ=1} for the whole call (\code{results/cpu\_items\_cg29\_2026-11-05.txt},
+section 3), so the reference is tolerant too, and a tolerant reference makes every configuration tolerant: the files
+end with \code{NOTHING REQUIRED TO MATCH}, and the identity is in each line's \code{probes rel=0.0e+00} and
+\code{max|dS|=0.0e+00}.
+When cg29 was installed on 2026-11-06 (its openEMS library and \code{openems.h} replaced cg18's; the install's CSXCAD
+and nf2ff libraries already had cg29's bytes; the Python modules stayed the v0.37.0 binding, which affects SAR but
+not FDTD runs or nf2ff, \code{BUILD.md} section 6), it was checked from the install with the command line of
+Section~\ref{sec:repro}: the reduced check (\code{check.sh} with \code{LITE=1}: 4 and 8 threads and the automatic
+count, one run each) identical to stock on all six models, \code{debye\_check.sh} passed (with the same fields as the
+cg29 snapshot), \code{diamond\_check.sh} 72 of 72, the validation suite 15 of 15 with the fastest engine and with the
+multithreaded engine at 4 threads, and the GCPW end-to-end run with the toolkit's defaults stopped at step 34\,300, as
+on cg18 (Table~\ref{tab:e2e}). Other processes used 4.6--8.5 cores during these runs, so their speeds are not quoted,
+and their tables are not in \code{results/}; \code{Docs/fdtdKit/PLAN.md}, section 16, logs the runs.
+On 2026-11-07 the 27 published patches were built from a fresh clone of upstream's superproject into an empty prefix
+(\code{BUILD.md}, sections 1, 4 and 5; snapshot pub29), and that build passed \code{check.sh} (every run identical
+to stock on all six models, \code{results/*\_pub29.txt}), \code{debye\_check.sh}, \code{diamond\_check.sh} 72 of
+72, the six models on the Metal engine, the validation suite 15 of 15 with the multithreaded engine at 4 threads and
+with the fastest engine, and the cylindrical multigrid (\code{results/fresh\_build\_pub29\_2026-11-07.txt}); other
+programs used up to 8.9 cores during \code{check.sh}, so here too only the verdicts count.
+
+\subsection{Verification policy}\label{sec:policy}
+\begin{itemize}
+\item \textbf{Bit identity, not tolerance.} Floating-point FDTD is sensitive enough to rounding that a reordered sum
+  shows up at $10^{-7}$ after a few thousand steps and grows. Every CPU change keeps the \emph{same} float operations
+  in the \emph{same} order per cell; only who executes them, when, and from which copy of the coefficients changes.
+  Hence the comparison is exact, and it caught a real bug: a hook plan built before the cylindrical multigrid
+  extension registered, which made two snapshots wrong on that example only. The Metal engine of
+  Section~\ref{sec:gpu} is held to the same rule where the arithmetic can match: its kernels give every cell the CPU
+  engines' operations in the same order, with \code{fma()} exactly where clang fuses on arm64 and Metal's fast math
+  off, so its fields must equal those of the multithreaded engine run with \code{OPENEMS\_FTZ=1}, which flushes
+  subnormal floats to zero as Apple's GPU does. Where the arithmetic cannot match (a GPU engine against a CPU run that
+  keeps subnormals, stock included, or another implementation), the harness reports the largest relative difference
+  of the port probes and the largest $S$-parameter difference in dB, and these are measurements, not acceptance
+  criteria (``Named exceptions'' below).
+\item \textbf{Field dumps too.} HDF5 time- and frequency-domain dumps are compared dataset by dataset with
+  \code{scripts/checks/h5cmp.py}, run by hand rather than by the harness. On the cylindrical example the earlier
+  checks compared 18 datasets (project log); the check of cg18, a run of 1\,500 steps with a frequency- and a
+  time-domain dump, compared 34, all equal to stock's (\code{results/correctness\_cg18\_2026-11-03.txt}), and so did
+  that of cg29 (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 3).
+\item \textbf{Named exceptions.} No GPU engine measured here is bit-identical to stock. Upstream's GPU engine in the
+  fork's base (\code{--engine=gpu}, the pre-merge \code{gpu-engine} branch, commit 7bb294f) differs from the CPU
+  engines by up to $2.3\times10^{-4}$\,dB in $S_{11}$ (notch tutorial, \code{results/notch\_s1\_n16000\_cg2.txt}).
+  The cause is not the order of operations, which the Metal kernels follow operation by operation, but that Apple's
+  GPU flushes subnormal floats to zero while the CPU cores keep them (Section~\ref{sec:beyond}): in a 3\,000-step
+  check on the notch tutorial (snapshot cg17, run in the final review of 2026-11-03,
+  \code{results/notch\_s1\_n3000\_ftzgpu.txt}), the multithreaded engine at 2 threads and the sse-compressed engine,
+  both with \code{OPENEMS\_FTZ=1}, gave port probes and $S_{11}$ identical to the GPU engine's, while the
+  multithreaded engine without it differed by $3.2\times10^{-7}$ relative in the probes and $9.3\times10^{-6}$\,dB in
+  $S_{11}$; field dumps were not compared in that check. On 2026-11-04 the same held on all six models: with
+  \code{OPENEMS\_FTZ=1} on the CPU, the base's GPU engine and the Metal diamond engine both gave port probes and
+  $S$-parameters identical to the multithreaded engine's (\code{results/*\_cg22gpu.txt},
+  \code{results/diamond\_engine\_cg22\_cg23\_2026-11-04.txt}). Against stock without the flush the diamond engine
+  differs by $1.7\times10^{-7}$ to $9.4\times10^{-7}$ relative in the port probes, by at most
+  $2.3\times10^{-4}$\,dB in $S_{11}$ (notch tutorial; at most $2.3\times10^{-5}$\,dB on the other models) and by at
+  most $9.4\times10^{-5}$\,dB in $S_{21}$ (\code{results/*\_cg22.txt}; its results have not changed since). Its nf2ff
+  time-domain dumps were compared too: identical on the patch tutorial (984 datasets) and patch x5 (120) when both
+  runs set \code{OPENEMS\_FTZ=1}, because the dumps are computed on the creating thread, which the switch also
+  flushes; with the flush in the CPU run only, 27 of the tutorial's 984 datasets differed while the fields were
+  identical (\code{results/diamond\_engine\_cg20\_2026-11-04.txt}). Upstream master's reworked GPU engine (merged as
+  c3a956b on 2026-10-17) was measured on 2026-11-04 in a build of master 5fecbb5 (\code{results/others\_2026-11-04/},
+  Section~\ref{sec:positioning}): on five of the six models its differences from stock are, to the printed digits,
+  those of the diamond engine above; on the SMA launch master's CPU engine differs from stock as well
+  ($1.5\times10^{-4}$ relative in the probes, $3.4\times10^{-3}$\,dB in $S_{11}$), a change in master since v0.37.0
+  that its GPU engine shows too. It was not compared with a CPU run with \code{OPENEMS\_FTZ=1}. The new nf2ff path
+  accumulates in BLAS order and differs from the legacy loop by up to $7\times10^{-7}$ of the pattern maximum in the
+  project log, and by $4.5$--$6.8\times10^{-7}$ on the patch tutorial with cg18
+  (\code{results/correctness\_cg18\_2026-11-03.txt}); a weak cross-polar component can differ more relative to its own
+  peak. The legacy loop is kept behind \code{OPENEMS\_NF2FF\_LEGACY=1} and is itself bit-identical (also checked in
+  that file).
+\item \textbf{Energy end criterion.} The fork's base checks the energy end criterion every Nyquist period during the
+  first minute of a run (upstream commit eb1c5ee, in the \code{gpu-engine} base, not in v0.37.0); v0.37.0 checks it,
+  unless run with \code{--exact-endcriteria}, only at its progress report every 4\,s of wall time, so its stop step
+  depends on the machine's speed. A run that ends on the energy criterion can therefore stop at a different step than
+  stock v0.37.0. For the same number of time steps the results are identical, which is why every comparison here uses
+  a fixed step count. In the run-mode matrix of the cg29 check this was the only difference: on a 0.7\,s model that
+  ends on the energy criterion, stock ran to its step limit of 1\,496 steps and every cg29 configuration stopped at
+  step 255, with its 64 probe lines equal to the first 64 of stock's 375
+  (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 3).
+\item \textbf{Every number has a load figure next to it.} The machine was shared with other sessions; a speed quoted
+  without its \code{others} percentage was not trusted, and comparisons across snapshots were re-run when loads
+  differed. Up to the cg23 tables of 2026-11-04 the figure was a one-second sample taken just before each run, not
+  during it, and it failed once: the snapshot-A row at 8 threads in \code{results/patch\_s5\_n1200\_AB.txt} reads
+  \code{others -15493379\%}, so the load during that run is unknown. From the cg27 tables of 2026-11-04 on
+  (\code{bench/usage.py}) the lines also give the other processes' CPU and GPU use during the run, and from cg24 on
+  most speed comparisons are paired and interleaved (the harness, above); the unpaired ones say so where they are
+  quoted.
+\item \textbf{Nothing is accepted on speed alone.} Several items can be switched off by an environment variable that
+  restores the previous path (listed in \code{BUILD.md}): \code{OPENEMS\_FUSED=0} (fused sweep),
+  \code{OPENEMS\_BALANCE=0} (slab balancing), \code{OPENEMS\_QOS=0} (thread QoS), \code{OPENEMS\_NO\_STAGGER}
+  (allocator), \code{OPENEMS\_NO\_PML\_TABLE} (PML tables), \code{OPENEMS\_NF2FF\_LEGACY} (far-field product) and
+  \code{OPENEMS\_NO\_PACKED\_COEFF}, which turns off three items at once (Section~\ref{sec:engine} says which). cg29
+  adds \code{OPENEMS\_OP\_INDEX\_PER\_CELL} (the former operator index per cell), \code{OPENEMS\_ADE\_MERGED=0} (the
+  ADE orders of a conducting sheet one after the other), \code{OPENEMS\_PML\_YVEC=0} (the scalar UPML rows one at a
+  time), \code{OPENEMS\_COEF} (\code{packed} or \code{geom}: the coefficient layout), \code{OPENEMS\_FLAGS=0} (the
+  two barriers instead of the neighbour flags) and \code{OPENEMS\_FLAGS\_SPIN\_US} (the flag spin at any thread
+  count; Section~\ref{sec:cg29}). The \code{OPENEMS\_NO\_*}, \code{OPENEMS\_NF2FF\_LEGACY},
+  \code{OPENEMS\_OP\_INDEX\_PER\_CELL} and \code{OPENEMS\_FTZ} switches act when set to any value other than empty or
+  0; \code{OPENEMS\_FTZ} and the probe end criterion are off unless set. The other items (the spin barriers and the
+  hook plan, work stealing and the thread search, the Mur and UPML fast paths, the dispersive-material line hooks, the
+  dump gather, the setup changes and the CSXCAD changes, and from cg29 the threaded UPML coefficient setup and the
+  line hooks of the steady-state detection and the Debye materials) have no switch: they rest on the bit-identity
+  checks and are bisected through the snapshots and commits. The Metal engine is opt-in
+  (\code{--engine=metal-diamond}); \code{OPENEMS\_DIAMOND\_TUNE=0} turns off its run-time choice of the tiling, and
+  \code{OPENEMS\_DIAMOND\_K}, \code{OPENEMS\_DIAMOND\_TILE} and \code{OPENEMS\_DIAMOND\_COEF} fix the tiling and the
+  coefficient layout (Section~\ref{sec:gpu}).
+\item \textbf{What ``bit-identical'' rests on.} Three rewrites depend on the compiler fusing a multiply-add the same
+  way in the old and the new expression; this was verified by comparison on every model with Apple clang builds, not
+  forced in the source (Section~\ref{sec:contract}). In the standalone kernel the rewritten inner loop matches the stock
+  loop bit for bit under Apple clang but not under GCC~16 (\code{results/kernel\_gcc\_vs\_clang\_2026-11-03.txt}).
+  The Metal kernels write \code{fma()} where Apple clang fuses the CPU expressions, so the GPU engine's identity rests
+  on the same compiler's choices.
+\item \textbf{The policy has a known hole:} a bit-identical test only covers the features the test models exercise;
+  the Debye material of Section~\ref{sec:reviewfixes} was not in them and its bug surfaced only in the
+  pre-publication review.
+\end{itemize}
+
+\subsection{Baseline: stock openEMS v0.37.0}\label{sec:baseline}
+Table~\ref{tab:step1} is the first measurement. Class and engine names in this paper are those of v0.37.0 and of the
+fork's base, upstream's \code{gpu-engine} branch at 7bb294f. Upstream master has since reorganised them (commit
+c0816a2, 2026-11-02): \code{Operator\_SSE\_Compressed} became \code{Coeffs\_SSE\_Compressed},
+\code{Engine\_SSE\_Compressed} and \code{Engine\_Multithread} gave way to \code{Engine\_sse} running on an
+\code{Engine\_ThreadPool}, and \code{--engine=sse}, \code{sse-compressed} and \code{multithreaded} now all select that
+engine. Three observations shaped the work:
+\begin{enumerate}
+\item The multithreaded engine's best thread count is 8 on the big models but 2--4 on the small ones, and the small
+  ones get \emph{slower} with every thread past that. The per-time-step synchronisation is the reason. Stock runs
+  $2+6N$ barriers per step for $N$ extensions: 50 on the patch model (one excitation, six Mur faces, and a lumped-RLC
+  extension without active cells that the port's feed resistor creates) and 38 on the notch. The initial review
+  (below; it counted 44 for the patch, missing that extension) measured 42 such barriers at 0.21\,ms per step on 4
+  threads and 0.66\,ms on 8 on the tutorial grid, where a step is 0.09\,ms of work, and at 0.36 and 1.0\,ms on the
+  7.9-million-cell grid.
+\item The default \code{numThreads=0} starts with one thread and adds one every $\sim$4\,s of run time, so a 10--20\,s
+  run spends most of its life under-threaded. The ``fastest'' column is 41\,\% and 37\,\% slower than the best fixed
+  count on the two large models (15.3\,s and 19.6\,s runs), 22\,\% on the notch tutorial (17.5\,s) and 8\,\% on the
+  patch tutorial (4.3\,s).
+\item PML slabs at both x ends load the first and last thread's slab; the notch x3 model is flat at 671--693\,\MC\ for
+  3--6 threads and only reaches 845 at 8.
+\end{enumerate}
+
+\begin{table}[H]\centering\small
+\resizebox{\textwidth}{!}{\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+model & basic & sse & sse-compressed & multithreaded best (thr) & multithreaded 4 & default (``fastest'') \\
+\midrule
+patch x5 (7.86\,M)    & 157 & 265 & 394 & 1041 (8) & 1006 & 615 \\
+notch x3 (5.25\,M)    & 147 & 204 & 290 &  845 (8) &  693 & 534 \\
+patch tutorial (0.10\,M) & 162 & 195 & 255 & 277 (2) & 205 & 254 \\
+notch tutorial (0.27\,M) &  51 & 117 & 133 & 318 (4) & 318 & 247 \\
+\bottomrule
+\end{tabular}}
+\caption{Stock v0.37.0, \MC. Every engine's port probes and $S$-parameters were bit-identical to the basic engine's
+(patch x5: $S_{11}$ only; notch x3: port~1 only, since the pulse has not reached port~2 by the end of the run).}
+\label{tab:step1}
+\end{table}
+
+An initial read-only review of the source (kept as \code{results/fable\_optimization\_review.md}) ranked the
+candidates by expected gain per effort, using two micro-benchmarks it wrote for the purpose (\code{barrier\_bench.cpp}
+and \code{kernel\_bench.cpp}, named there; the later standalone kernels are \code{scripts/kernel/kb\_idx.cpp} and
+\code{kb\_tb.cpp}): a barrier diet, the inner loop, dynamic work distribution, the boundary paths, and, further out, a
+fused E/H sweep. That order was followed, and the estimates held up within their stated error except that the fused
+sweep mattered more and an unfused GPU engine less than predicted. The review's remark that a Metal engine would pay
+only with fp16 storage or with temporal blocking was borne out later by the diamond-blocked engine of
+Section~\ref{sec:gpu}, which runs the two large models faster than the CPU engine.

@@ -1,0 +1,5 @@
+# patch_s1_n300  2026-11-06 09:12
+cg29@multithreaded:4           1702.4 MC/s      0.18 s  300 TS x 0.102 MC  others  40%  runs 1650/1702  during 1.2 s: self cpu 380% gpu>=0.00 s, others cpu 41% gpu 2%, gpu dev 2%  [ref]  probes rel=0.0e+00 (2 of 4 files all zero in the reference, compared exactly)  S-params skipped: 1 probe sample, raise --nrts  openEMS v0.37.0-44-g074a687
+cg29@multithreaded:8           1811.0 MC/s      0.17 s  300 TS x 0.102 MC  others  38%  runs 1811/1790  during 1.1 s: self cpu 610% gpu>=0.00 s, others cpu 40% gpu 2%, gpu dev 2%  probes rel=0.0e+00 (2 of 4 files all zero in the reference, compared exactly)  S-params skipped: 1 probe sample, raise --nrts  openEMS v0.37.0-44-g074a687
+cg29@sse:1                      650.8 MC/s      0.47 s  300 TS x 0.102 MC  others  39%  runs 651/640  during 1.6 s: self cpu 99% gpu>=0.00 s, others cpu 40% gpu 2%, gpu dev 2%  probes rel=0.0e+00  S-params not computed (--no-sparams)  openEMS v0.37.0-44-g074a687
+# IDENTICAL: every run of 3 configs equals the reference

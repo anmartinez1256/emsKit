@@ -1,0 +1,7 @@
+# kgcpw_s1_n30000  2026-10-29 05:11
+stock@multithreaded:4           230.1 MC/s     31.55 s  30000 TS x 0.242 MC  others  32%  runs 230/228  [ref]
+cg12@multithreaded:1            467.8 MC/s     15.52 s  30000 TS x 0.242 MC  others 109%  runs 455/468  busy swift-frontend:87  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:4            871.5 MC/s      8.33 s  30000 TS x 0.242 MC  others 106%  runs 872/859  busy swift-frontend:87  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@multithreaded:8           1241.0 MC/s      5.85 s  30000 TS x 0.242 MC  others 100%  runs 1241/1233  busy swift-frontend:85  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@fastest                   1154.2 MC/s      6.29 s  30000 TS x 0.242 MC  others 141%  runs 1154/1000  busy Python:90,KirchhoffStudio:24  (auto-picked 4 threads)  probes rel=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg12@gpu                       1337.0 MC/s      5.43 s  30000 TS x 0.242 MC  others  85%  runs 1315/1337  busy KirchhoffStudio:40,Python:24  probes rel=4.7e-07  S21: max|dS|=3.7e-07 max dB=3.0e-06

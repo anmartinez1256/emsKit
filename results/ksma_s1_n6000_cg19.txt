@@ -1,0 +1,7 @@
+# ksma_s1_n6000  2026-11-04 06:14
+stock@multithreaded:4           358.8 MC/s     14.57 s  6000 TS x 0.871 MC  others  63%  busy mediaanalysisd:21  [ref]  openEMS v0.37.0
+cg19@multithreaded:4           1091.3 MC/s      4.79 s  6000 TS x 0.871 MC  others  61%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@multithreaded:8           1238.7 MC/s      4.22 s  6000 TS x 0.871 MC  others  40%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@fastest                   1091.3 MC/s      4.79 s  6000 TS x 0.871 MC  others  42%  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@metal-diamond:0            156.8 MC/s     33.34 s  6000 TS x 0.871 MC  others  35%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 4 configs equals the reference

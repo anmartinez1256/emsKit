@@ -1,0 +1,8 @@
+# notch_s3_n2000  2026-10-28 23:05
+multithreaded:8                 850.5 MC/s     12.34 s  2000 TS x 5.247 MC  others  32%  runs 850/839  [ref]
+cg9@multithreaded:1             641.9 MC/s     16.35 s  2000 TS x 5.247 MC  others  31%  runs 642/571  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@multithreaded:4            1717.7 MC/s      6.11 s  2000 TS x 5.247 MC  others  37%  runs 1422/1718  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@multithreaded:8            1969.0 MC/s      5.33 s  2000 TS x 5.247 MC  others  29%  runs 1965/1969  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@multithreaded:10           1947.1 MC/s      5.39 s  2000 TS x 5.247 MC  others  31%  runs 1947/1297  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@fastest                    1936.3 MC/s      5.42 s  2000 TS x 5.247 MC  others  48%  runs 1936/1905  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@gpu                        1354.2 MC/s      7.75 s  2000 TS x 5.247 MC  others  57%  runs 1354/1300  probes rel=2.3e-07  S11: max|dS|=4.0e-08 max dB=2.8e-06

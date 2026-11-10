@@ -1,0 +1,8 @@
+# notch_s1_n16000  2026-10-28 12:18
+multithreaded:4                 328.5 MC/s     13.14 s  16000 TS x 0.270 MC  others  47%  runs 328/321  [ref]
+cg2@multithreaded:1             190.8 MC/s     22.62 s  16000 TS x 0.270 MC  others  46%  runs 189/191  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg2@multithreaded:4             703.0 MC/s      6.14 s  16000 TS x 0.270 MC  others  43%  runs 703/673  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg2@multithreaded:8            1296.0 MC/s      3.33 s  16000 TS x 0.270 MC  others  49%  runs 1296/1294  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg2@multithreaded:10           1376.0 MC/s      3.14 s  16000 TS x 0.270 MC  others  43%  runs 1376/1367  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg2@fastest                    1260.3 MC/s      3.42 s  16000 TS x 0.270 MC  others  46%  runs 1206/1260  (auto-picked 9 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg2@gpu                        1622.3 MC/s      2.66 s  16000 TS x 0.270 MC  others  46%  runs 1622/1621  probes rel=9.4e-07  S11: max|dS|=2.6e-06 max dB=2.3e-04  S21: max|dS|=2.0e-06 max dB=9.4e-05

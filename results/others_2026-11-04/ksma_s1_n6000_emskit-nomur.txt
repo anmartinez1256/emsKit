@@ -1,0 +1,5 @@
+# ksma_s1_n6000  2026-11-04 06:23
+stock@multithreaded:4           292.2 MC/s     17.89 s  6000 TS x 0.871 MC  others  86%  runs 292/288  busy WindowServer:21  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4            767.6 MC/s      6.81 s  6000 TS x 0.871 MC  others  47%  runs 768/762  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1207.2 MC/s      4.33 s  6000 TS x 0.871 MC  others  50%  runs 1196/1207  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 3 configs equals the reference

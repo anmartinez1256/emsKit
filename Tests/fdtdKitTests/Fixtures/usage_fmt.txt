@@ -1,0 +1,4 @@
+during 17.4 s: self cpu 396% gpu>=0.00 s, others cpu 218% gpu 5%, gpu dev 5%
+during 6.3 s: self cpu 639% gpu>=0.00 s, others cpu 122% gpu 5%, gpu dev 5% [swiftpm-testing-:68/0]
+during 3.0 s: self cpu 98% gpu>=2.13 s, others cpu 52% gpu 2%
+during 2.0 s: self cpu 0% gpu>=0.00 s, others cpu 61% gpu 12% [Google Chrome He:41/0,Code Helper (Ren:3/12]

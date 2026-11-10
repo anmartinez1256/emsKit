@@ -1,0 +1,13 @@
+fdtdKit: taking openEMS towards the memory ceiling of an Apple M5 (the technical report in this directory: its text in
+emskit.tex, sec_*.tex and figures/tab_*.tex, the compiled PDF and the figures)
+
+This work is licensed under the Creative Commons Attribution 4.0 International License.
+To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/
+
+This notice does not cover the code of the emsKit repository, including the figure scripts in figures/ and
+code_notes.md (which quotes the fork's code). The openEMS patches, the harness, the scripts, the figure scripts,
+code_notes.md, swift_engine/, the Swift package of the command line (Package.swift, Sources/, Tests/) and the result
+files are released under the GNU General Public License, version 3 or later (GPL-3.0-or-later, see ../LICENSE); files
+copied from or based on openEMS keep their upstream copyright and licence notice. The CSXCAD patch (../patches/csxcad/)
+is released under the GNU Lesser General Public License, version 3 or later (LGPL-3.0-or-later), like CSXCAD (see
+../patches/csxcad/COPYING.LESSER).

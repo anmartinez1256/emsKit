@@ -1,0 +1,94 @@
+{
+  "exit" : 0,
+  "invocations" : [
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-u",
+        "-B",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-diamond-check-4242\/fdtdkit_run.py",
+        "--repo",
+        "\/work\/emsKit",
+        "--control-fd",
+        "3",
+        "--report",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-diamond-check-4242\/launcher-diamond.json",
+        "--load",
+        "exec",
+        "--",
+        "\/bin\/zsh",
+        "-f",
+        "\/work\/emsKit\/scripts\/checks\/diamond_check.sh",
+        "\/Users\/tester\/opt\/openEMS-dev\/snap\/cg29"
+      ],
+      "cwd" : "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-diamond-check-4242",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1",
+        "TMPDIR" : "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-diamond-check-4242\/tmp"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : "diamond-1",
+      "ran" : false,
+      "role" : "diamond",
+      "seconds" : null
+    }
+  ],
+  "jobs" : [
+    {
+      "configs" : [
+        {
+          "cfg" : "cg29",
+          "engine" : "metal-diamond",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "87a1d5a960dd353ca97c0ef8704d15e9767eb2c8fbb990eefb4bd162c956a694",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "34e1115017d50f5e0c0aa00320c2946e9956ee551208a51b995e363cdcb4e6e7",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "90a25d09f860f722dac73e998a82aa6d5898e54fa4201a1f86c9ea80ad8b0495",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "cg29"
+          },
+          "nodumps" : false
+        }
+      ],
+      "id" : "diamond-1",
+      "inputs" : [
+
+      ],
+      "knobs" : {
+
+      },
+      "options" : {
+
+      },
+      "outputs" : [
+
+      ],
+      "role" : "diamond",
+      "tool" : "diamond"
+    }
+  ],
+  "status" : "ok"
+}

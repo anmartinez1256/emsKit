@@ -1,0 +1,8 @@
+# notch_s3_n2000  reference /Users/anmar/opt/src/emskit-compare/runs/emskit/notch_s3_n2000/stock_multithreaded_t8/rep0
+emskit/notch_s3_n2000/cg18_multithreaded_t4/rep0             probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+emskit/notch_s3_n2000/cg18_fastest/rep0                      probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+master/notch_s3_n2000/multithreaded_t4/rep0                  probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+master/notch_s3_n2000/gpu/rep0                               probes rel=2.3e-07 (5 files all zero in the reference)  S11: max|dS|=4.0e-08 max dB=2.8e-06  S21: identical
+luikore-metal/notch_s3_n2000/multithreaded_t4/rep0           probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+luikore-metal/notch_s3_n2000/metal_t4/rep0                   probes rel=0.0e+00  PROBLEM: missing port_it_1A; missing port_it_1B; missing port_it_2A; missing port_it_2B; missing port_ut_1A; missing port_ut_1B; missing port_ut_1C; missing port_ut_2A; missing port_ut_2B; missing port_ut_2C
+luikore-legacy/notch_s3_n2000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=3.1e-07 (5 files all zero in the reference)  S11: max|dS|=4.3e-08 max dB=1.1e-05  S21: identical

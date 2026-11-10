@@ -1,0 +1,8 @@
+# patch_s1_n10500  reference /Users/anmar/opt/src/emskit-compare/runs/emskit/patch_s1_n10500/stock_multithreaded_t2/rep0
+emskit/patch_s1_n10500/cg18_multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical
+emskit/patch_s1_n10500/cg18_fastest/rep0                     probes rel=0.0e+00  S11: identical
+master/patch_s1_n10500/multithreaded_t4/rep0                 probes rel=0.0e+00  S11: identical
+master/patch_s1_n10500/gpu/rep0                              probes rel=3.8e-07  S11: max|dS|=2.5e-07 max dB=2.3e-05
+luikore-metal/patch_s1_n10500/multithreaded_t4/rep0          probes rel=0.0e+00  S11: identical
+luikore-metal/patch_s1_n10500/metal_t4/rep0                  probes rel=0.0e+00  PROBLEM: missing port_it_1; missing port_ut_1
+luikore-legacy/patch_s1_n10500/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=2.7e-07  S11: max|dS|=2.2e-07 max dB=2.6e-05

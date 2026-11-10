@@ -1,0 +1,72 @@
+{
+ "meta": {
+  "tag": "cg29_nan",
+  "date": "2026-11-03T13:54:25",
+  "machine": "arm64",
+  "system": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "engine": "multithreaded",
+  "threads": "4",
+  "openems_module": "~/Library/Python/3.14/lib/python/site-packages/openEMS/__init__.py",
+  "libraries": [
+   "~/opt/openEMS-dev/snap/cg29/libCSXCAD.0.dylib",
+   "~/opt/openEMS-dev/snap/cg29/libopenEMS.0.dylib",
+   "~/opt/openEMS-dev/snap/cg29/libnf2ff.0.dylib"
+  ],
+  "lib_path": "~/opt/openEMS-dev/snap/cg29",
+  "quick": false
+ },
+ "timings": {
+  "slab": 1.7,
+  "cavity": 0.4
+ },
+ "runs": {
+  "slab": [
+   {
+    "run": "slab_ref",
+    "engine": "compressed SSE + multi-threading",
+    "threads": "4 (fixed)"
+   },
+   {
+    "run": "slab_debye",
+    "engine": "compressed SSE + multi-threading",
+    "threads": "4 (fixed)"
+   }
+  ],
+  "cavity": []
+ },
+ "results": [
+  {
+   "case": "slab_debye",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.0104032511290079,
+   "reference": 0.0,
+   "error": 0.0104032511290079,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0063; distance from non-dispersive answer 0.43"
+  },
+  {
+   "case": "slab_debye",
+   "quantity": "max |v - v_basic| / max |v_basic| (multithreaded vs basic engine)",
+   "value": 0.0,
+   "reference": 0.0,
+   "error": 0.0,
+   "tol": 0.0,
+   "kind": "abs",
+   "passed": true,
+   "note": "same build; must be 0"
+  },
+  {
+   "case": "cavity",
+   "quantity": "ran without error",
+   "value": null,
+   "reference": null,
+   "error": NaN,
+   "tol": 0,
+   "kind": "-",
+   "passed": false,
+   "note": "RuntimeError('openEMS: FDTD.Run failed')"
+  }
+ ]
+}

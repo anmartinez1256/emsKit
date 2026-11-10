@@ -1,0 +1,288 @@
+From e57d3fc38fb866024039e95cd046d2258203d8b4 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 01:51:08 -0600
+Subject: [PATCH 18/27] Dispersive line hooks: the orders of a position back to
+ back, four positions at a time
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A conducting sheet is a two-order ADE on one set of positions, already in x order; the line hooks of the
+fused sweep ran each order over all positions, one position and one float at a time. When every order with
+voltage (current) ADE has the same positions in x order, the pre-update (Engine_Ext_LorentzMaterial::
+PreMerged) and the apply (Engine_Ext_Dispersive::ApplyMerged) now run these orders back to back per
+position, four positions at a time as f4vectors (field values gathered and scattered lane by lane), with
+the same operations per float in the same order: the ADE states of different orders are independent, and
+the apply still subtracts order 0 before order 1 from each field value. OPENEMS_ADE_MERGED=0: one order
+after the other, as before; verbose > 1 prints the merged orders.
+
+The merged apply gathers and scatters four positions at a time, so a position listed twice in one group of
+four would lose one of its updates: MergeOrders() also requires every position to appear once (the builders
+list each cell once, so this never fails today). The check follows the strict-order check of upstream PR #245
+by Roel Budé (unsettledroell404); the rest of that PR (the unfused hooks split over the threads) is not
+needed here, the line hooks of the fused sweep already run on every thread.
+
+Verified bit-identical against the template hooks of the single-threaded engine on boxes with conducting
+sheets, Drude/Lorentz blocks (with and without the Lorentz pole) and both, at 1, 3 and 4 threads, and on
+the six benchmark models against stock (bench/check.sh). Paired A/B on the GCPW line (6624 sheet
+positions, 8 rounds): x1.041 at 4 threads, x1.031 at 8; no effect on the models without sheets.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/engine_ext_dispersive.cpp     | 73 +++++++++++++++++++
+ FDTD/extensions/engine_ext_dispersive.h       | 16 ++++
+ .../extensions/engine_ext_lorentzmaterial.cpp | 64 ++++++++++++++++
+ FDTD/extensions/engine_ext_lorentzmaterial.h  |  4 +
+ 4 files changed, 157 insertions(+)
+
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index c457da6..6733783 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -18,13 +18,17 @@
+ #include "engine_ext_dispersive.h"
+ #include "operator_ext_dispersive.h"
+ #include "FDTD/engine_sse.h"
++#include "tools/global.h"
+ #include <algorithm>
++#include <cstdlib>
++#include <iostream>
+ 
+ Engine_Ext_Dispersive::Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_disp) : Engine_Extension(op_ext_disp)
+ {
+ 	m_Op_Ext_Disp = op_ext_disp;
+ 	m_LinesReady = false;
+ 	m_LinesChecked = false;
++	m_VoltMerged = m_CurrMerged = false;
+ 	int order = m_Op_Ext_Disp->m_Order;
+ 	curr_ADE = new FDTD_FLOAT**[order];
+ 	volt_ADE = new FDTD_FLOAT**[order];
+@@ -148,6 +152,71 @@ void Engine_Ext_Dispersive::SetupLines()
+ 		}
+ 	}
+ 	m_LinesReady = true;
++	const char* env = getenv("OPENEMS_ADE_MERGED");
++	const bool merge = !(env && *env && (atoi(env)==0));
++	m_VoltMerged = merge && MergeOrders(m_Op_Ext_Disp->m_volt_ADE_On, m_VoltOrders);
++	m_CurrMerged = merge && MergeOrders(m_Op_Ext_Disp->m_curr_ADE_On, m_CurrOrders);
++	if (g_settings.GetVerboseLevel()>1)
++		std::cout << GetExtensionName() << ": line hooks, " << (m_Op_Ext_Disp->m_Order>0 ? m_Op_Ext_Disp->m_LM_Count.at(0) : 0) << " positions of order 0, orders merged: voltages "
++				  << (m_VoltMerged ? m_VoltOrders.size() : 0) << ", currents " << (m_CurrMerged ? m_CurrOrders.size() : 0) << std::endl;
++}
++
++bool Engine_Ext_Dispersive::MergeOrders(const bool* on, std::vector<int>& orders) const
++{
++	orders.clear();
++	for (int o=0; o<m_Op_Ext_Disp->m_Order; ++o)
++		if (on[o])
++			orders.push_back(o);
++	if (orders.empty())
++		return false;
++	for (int o : orders)
++	{
++		const std::vector<unsigned int>& idx = m_SortedIdx[o];
++		for (size_t k=0; k<idx.size(); ++k)
++			if (idx[k]!=k)
++				return false;
++		if (m_FloatIdx[o]!=m_FloatIdx[orders[0]])
++			return false;
++	}
++	// the merged apply gathers and scatters four positions at a time, so a position listed twice would lose
++	// one of its updates there: every position must appear once (the builders list each cell once)
++	const std::vector<unsigned int>& fi = m_FloatIdx[orders[0]];
++	std::vector<unsigned int> f(fi.size()/3);
++	for (size_t k=0; k<f.size(); ++k)
++		f[k] = fi[3*k];
++	std::sort(f.begin(), f.end());
++	return std::adjacent_find(f.begin(), f.end())==f.end();
++}
++
++void Engine_Ext_Dispersive::ApplyMerged(float* __restrict field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int x0, unsigned int x1)
++{
++	unsigned int k0, k1;
++	LineRange(orders[0], x0, x1, k0, k1);
++	const unsigned int* __restrict fi = m_FloatIdx[orders[0]].data();
++	const size_t no = orders.size();
++	unsigned int k = k0;
++#if defined(__GNUC__) || defined(__clang__)
++	for (; k+4<=k1; k+=4)
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const unsigned int* f = fi + 3*(size_t)k + n;
++			v4sf v = {field[f[0]], field[f[3]], field[f[6]], field[f[9]]};
++			for (size_t m=0; m<no; ++m)
++				v = v - Load4(ade[orders[m]][n] + k);
++			field[f[0]] = v[0];
++			field[f[3]] = v[1];
++			field[f[6]] = v[2];
++			field[f[9]] = v[3];
++		}
++#endif
++	for (; k<k1; ++k)
++		for (unsigned int n=0; n<3; ++n)
++		{
++			float v = field[fi[3*k+n]];
++			for (size_t m=0; m<no; ++m)
++				v = v - ade[orders[m]][n][k];
++			field[fi[3*k+n]] = v;
++		}
+ }
+ 
+ void Engine_Ext_Dispersive::LineRange(int o, unsigned int x0, unsigned int x1, unsigned int& k0, unsigned int& k1) const
+@@ -160,6 +229,8 @@ void Engine_Ext_Dispersive::LineRange(int o, unsigned int x0, unsigned int x1, u
+ void Engine_Ext_Dispersive::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
+ {
+ 	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	if (m_VoltMerged)
++		return ApplyMerged(volt, volt_ADE, m_VoltOrders, x0, x1);
+ 	for (int o=0; o<m_Op_Ext_Disp->m_Order; ++o)
+ 	{
+ 		if (m_Op_Ext_Disp->m_volt_ADE_On[o]==false) continue;
+@@ -183,6 +254,8 @@ void Engine_Ext_Dispersive::Apply2VoltagesLines(unsigned int x0, unsigned int x1
+ void Engine_Ext_Dispersive::Apply2CurrentLines(unsigned int x0, unsigned int x1)
+ {
+ 	float* __restrict curr = (float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data();
++	if (m_CurrMerged)
++		return ApplyMerged(curr, curr_ADE, m_CurrOrders, x0, x1);
+ 	for (int o=0; o<m_Op_Ext_Disp->m_Order; ++o)
+ 	{
+ 		if (m_Op_Ext_Disp->m_curr_ADE_On[o]==false) continue;
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index f2dd1ed..06cc8ac 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -23,6 +23,14 @@
+ #include "FDTD/engine.h"
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
++#include "tools/array_ops.h"
++#include <cstring>
++
++#if defined(__GNUC__) || defined(__clang__)
++//! four consecutive floats at any float address, for the merged ADE line hooks
++inline v4sf Load4(const float* p) {v4sf v; memcpy(&v, p, sizeof(v)); return v;}
++inline void Store4(float* p, v4sf v) {memcpy(p, &v, sizeof(v));}
++#endif
+ 
+ class Operator_Ext_Dispersive;
+ 
+@@ -51,6 +59,14 @@ protected:
+ 	std::vector<std::vector<unsigned int> > m_SortedIdx; //!< [order][k]: original position index, sorted by x
+ 	std::vector<std::vector<unsigned int> > m_SortedX;   //!< [order][k]: its x
+ 	std::vector<std::vector<unsigned int> > m_FloatIdx;  //!< [order][3*k+n]: float index of component n
++	//! All orders with voltage (current) ADE have the same positions, already in x order (e.g. the two orders of a
++	//! conducting sheet): the line hooks then run these orders back to back per position, four positions at a time,
++	//! with the same operations per float in the same order (OPENEMS_ADE_MERGED=0: one order after the other)
++	bool m_VoltMerged, m_CurrMerged;
++	std::vector<int> m_VoltOrders, m_CurrOrders; //!< those orders
++	bool MergeOrders(const bool* on, std::vector<int>& orders) const;
++	//! the merged Apply2*Lines(): field[float index] -= ADE of every order, in order
++	void ApplyMerged(float* field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
+ 	void SetupLines();
+ 	void LineRange(int o, unsigned int x0, unsigned int x1, unsigned int& k0, unsigned int& k1) const;
+ 	bool AnyVoltADE() const;
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index 2bc7dd3..c1c0650 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -82,10 +82,71 @@ unsigned int Engine_Ext_LorentzMaterial::GetUsedHooks() const
+ 	return DispersiveHooks() | (AnyVoltADE() ? PRE_VOLT : 0) | (AnyCurrADE() ? PRE_CURR : 0);
+ }
+ 
++void Engine_Ext_LorentzMaterial::PreMerged(const float* __restrict field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor,
++	FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders,
++	unsigned int x0, unsigned int x1)
++{
++	unsigned int k0, k1;
++	LineRange(orders[0], x0, x1, k0, k1);
++	const unsigned int* __restrict fi = m_FloatIdx[orders[0]].data();
++	const size_t no = orders.size();
++	unsigned int k = k0;
++#if defined(__GNUC__) || defined(__clang__)
++	for (; k+4<=k1; k+=4)
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const unsigned int* f = fi + 3*(size_t)k + n;
++			const v4sf v = {field[f[0]], field[f[3]], field[f[6]], field[f[9]]};
++			for (size_t m=0; m<no; ++m)
++			{
++				const int o = orders[m];
++				v4sf a = Load4(ade[o][n]+k);
++				if (lor_on[o])
++				{
++					v4sf l = Load4(lor[o][n]+k);
++					l += Load4(c_lor[o][n]+k)*a;
++					a *= Load4(c_int[o][n]+k);
++					a += Load4(c_ext[o][n]+k)*(v-l);
++					Store4(lor[o][n]+k, l);
++				}
++				else
++				{
++					a *= Load4(c_int[o][n]+k);
++					a += Load4(c_ext[o][n]+k)*v;
++				}
++				Store4(ade[o][n]+k, a);
++			}
++		}
++#endif
++	for (; k<k1; ++k)
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const float v = field[fi[3*k+n]];
++			for (size_t m=0; m<no; ++m)
++			{
++				const int o = orders[m];
++				if (lor_on[o])
++				{
++					lor[o][n][k]+=c_lor[o][n][k]*ade[o][n][k];
++					ade[o][n][k] *= c_int[o][n][k];
++					ade[o][n][k] += c_ext[o][n][k] * (v-lor[o][n][k]);
++				}
++				else
++				{
++					ade[o][n][k] *= c_int[o][n][k];
++					ade[o][n][k] += c_ext[o][n][k] * v;
++				}
++			}
++		}
++}
++
+ // the same per-position operations as DoPreVoltageUpdatesImpl, for the positions on x-lines [x0,x1)
+ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	if (m_VoltMerged)
++		return PreMerged(volt, volt_ADE, volt_Lor_ADE, m_Op_Ext_Lor->v_int_ADE, m_Op_Ext_Lor->v_ext_ADE,
++						 m_Op_Ext_Lor->v_Lor_ADE, m_Op_Ext_Lor->m_volt_Lor_ADE_On, m_VoltOrders, x0, x1);
+ 	for (int o=0;o<m_Order;++o)
+ 	{
+ 		if (m_Op_Ext_Lor->m_volt_ADE_On[o]==false) continue;
+@@ -129,6 +190,9 @@ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsig
+ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	const float* __restrict curr = (const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data();
++	if (m_CurrMerged)
++		return PreMerged(curr, curr_ADE, curr_Lor_ADE, m_Op_Ext_Lor->i_int_ADE, m_Op_Ext_Lor->i_ext_ADE,
++						 m_Op_Ext_Lor->i_Lor_ADE, m_Op_Ext_Lor->m_curr_Lor_ADE_On, m_CurrOrders, x0, x1);
+ 	for (int o=0;o<m_Order;++o)
+ 	{
+ 		if (m_Op_Ext_Lor->m_curr_ADE_On[o]==false) continue;
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.h b/FDTD/extensions/engine_ext_lorentzmaterial.h
+index 540db53..b26c1e3 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.h
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.h
+@@ -38,6 +38,10 @@ public:
+ 	virtual void DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1);
+ 
+ protected:
++	//! the merged DoPre*UpdatesLines() (see m_VoltMerged): per position the ADE update of every order
++	void PreMerged(const float* field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext,
++				   FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
++
+ 	template <typename EngType>
+ 	void DoPreVoltageUpdatesImpl(EngType* eng);
+ 
+-- 
+2.54.0 (Apple Git-157)
+

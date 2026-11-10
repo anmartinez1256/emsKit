@@ -1,0 +1,24 @@
+# ---- cpu48.txt
+# final table: c0 stock 4 thr, c1 stock 2, c2 stock 8, c3 cg29 4, c4 cg29 8, c5 cg29 fastest, c6 cg29 metal-diamond
+# kgcpw_s1_n15000  2026-11-05 03:51  load avg 5.05  4 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0    282.0 MC/s  others cpu   67% gpu   2%  reference
+r0 c3   1584.3 MC/s  others cpu   51% gpu   2%  identical
+r0 c6   2102.1 MC/s  others cpu   80% gpu   3%  probes rel 4.5e-07
+r1 c0    287.0 MC/s  others cpu   -1% gpu  -1%  identical
+r1 c3   1504.2 MC/s  others cpu   79% gpu   4%  identical
+r1 c6   2111.8 MC/s  others cpu   73% gpu   3%  probes rel inf
+r2 c0    286.0 MC/s  others cpu   48% gpu   3%  identical
+r2 c3   1550.7 MC/s  others cpu   56% gpu   3%  identical
+r2 c6   2113.5 MC/s  others cpu   58% gpu   2%  probes rel 4.5e-07
+# redo r3 c0    236.8 MC/s  others cpu  173% gpu   4%  identical
+# redo r3 c3   1516.0 MC/s  others cpu   57% gpu   3%  identical
+# redo r3 c6   2113.0 MC/s  others cpu   57% gpu   2%  probes rel 4.5e-07
+# r3: redo 1 of 3 (a run saw the others at 173 % CPU, 4 % GPU)
+r3 c0    285.6 MC/s  others cpu   45% gpu   3%  identical
+r3 c3   1544.7 MC/s  others cpu   53% gpu   2%  identical
+r3 c6   2117.3 MC/s  others cpu   54% gpu   1%  probes rel 4.5e-07
+# summary kgcpw_s1_n15000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 stock@multithreaded:4                                           285.8 [282-287]  x1.000 [1.000-1.000]  others 49%/3%  identical,reference
+c3 cg29@multithreaded:4                                           1547.7 [1504-1584]  x5.415 [5.242-5.617]  others 54%/2%  identical
+c6 cg29@metal-diamond:0                                           2112.7 [2102-2117]  x7.401 [7.360-7.453]  others 66%/2%  probes rel 4.5e-07
+# r2 c3: redo 1 of 2 (the others at 171 % CPU, 4 % GPU during the run)

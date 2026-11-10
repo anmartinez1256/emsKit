@@ -1,0 +1,5 @@
+# notch_s3_n2000  2026-11-04 08:50
+cg21@multithreaded:4#OPENEMS_FTZ=1   1009.1 MC/s     10.40 s  2000 TS x 5.247 MC  others 336%  busy emskit-phase1:83,swiftpm-testing-:83,emskit-phase1:83,mediaanalysisd:32  [ref]  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0#OPENEMS_FTZ=1   2965.7 MC/s      3.54 s  2000 TS x 5.247 MC  others 290%  busy emskit-phase1:84,swiftpm-testing-:84,emskit-phase1:84  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+cg21@gpu                       1347.2 MC/s      7.79 s  2000 TS x 5.247 MC  others 300%  busy swiftpm-testing-:83,emskit-phase1:82,emskit-phase1:82  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg21@metal-diamond:0#OPENEMS_FTZ=1, cg21@gpu)

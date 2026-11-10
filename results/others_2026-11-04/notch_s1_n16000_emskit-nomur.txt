@@ -1,0 +1,5 @@
+# notch_s1_n16000  2026-11-04 06:08
+stock@multithreaded:4           395.3 MC/s     10.92 s  16000 TS x 0.270 MC  others  62%  runs 395/392  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0
+cg18@multithreaded:4           2053.1 MC/s      2.10 s  16000 TS x 0.270 MC  others  52%  runs 1964/2053  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1810.5 MC/s      2.38 s  16000 TS x 0.270 MC  others  58%  runs 1810/1810  (auto-picked 4 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 3 configs equals the reference

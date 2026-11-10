@@ -1,0 +1,7 @@
+# notch_s3_n2000  2026-10-28 11:22
+multithreaded:8                 838.2 MC/s     12.52 s  2000 TS x 5.247 MC  others  55%  runs 838/836  [ref]
+ABCDEG@multithreaded:1          615.9 MC/s     17.04 s  2000 TS x 5.247 MC  others  50%  runs 607/616  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+ABCDEG@multithreaded:4         1698.2 MC/s      6.18 s  2000 TS x 5.247 MC  others  52%  runs 1698/1666  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+ABCDEG@multithreaded:8         1874.1 MC/s      5.60 s  2000 TS x 5.247 MC  others  55%  runs 1874/1857  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+ABCDEG@multithreaded:10        1904.7 MC/s      5.51 s  2000 TS x 5.247 MC  others  53%  runs 1871/1905  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+ABCDEG@fastest                 1619.6 MC/s      6.48 s  2000 TS x 5.247 MC  others  49%  runs 1620/1597  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00

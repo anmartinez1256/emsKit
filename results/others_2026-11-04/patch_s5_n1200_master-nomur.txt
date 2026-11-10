@@ -1,0 +1,4 @@
+# patch_s5_n1200  2026-11-04 05:47
+multithreaded:4                 866.4 MC/s     10.89 s  1200 TS x 7.863 MC  others  21%  runs 866/682  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            1635.2 MC/s      5.77 s  1200 TS x 7.863 MC  others  55%  runs 1578/1635  probes rel=1.7e-07  S11: max|dS|=5.3e-08 max dB=7.7e-07  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)

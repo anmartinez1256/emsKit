@@ -1,0 +1,12 @@
+# notch_s3_n2000  2026-11-03 12:55
+# note (2026-11-03, final review): the full check of the final build (cg18 = patches 0001-0006,
+# v0.37.0-24-g087ce9e) against stock v0.37.0: bench/check.sh cg18 cg18 (1, 4, 8 and 10 threads and the automatic
+# choice 'fastest', --repeat 2 --quiet 60) on a quiet Mac ('others' = the other processes' CPU during the run,
+# 100 % = one core). 'fastest' names the thread count it picked when its search ended within the run.
+stock@multithreaded:8           833.6 MC/s     12.59 s  2000 TS x 5.247 MC  others  53%  runs 830/834  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0
+cg18@multithreaded:1            668.0 MC/s     15.71 s  2000 TS x 5.247 MC  others  56%  runs 665/668  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:4           1860.8 MC/s      5.64 s  2000 TS x 5.247 MC  others  48%  runs 1861/1822  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:8           2045.8 MC/s      5.13 s  2000 TS x 5.247 MC  others  55%  runs 1999/2046  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg18@multithreaded:10          2006.7 MC/s      5.23 s  2000 TS x 5.247 MC  others  59%  runs 2007/1995  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   1980.2 MC/s      5.30 s  2000 TS x 5.247 MC  others  57%  runs 1980/1969  (auto-picked 8 threads)  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 6 configs equals the reference

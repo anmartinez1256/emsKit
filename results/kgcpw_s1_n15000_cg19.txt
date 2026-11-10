@@ -1,0 +1,7 @@
+# kgcpw_s1_n15000  2026-11-04 06:13
+stock@multithreaded:4           296.8 MC/s     12.23 s  15000 TS x 0.242 MC  others  69%  [ref]  openEMS v0.37.0
+cg19@multithreaded:4           1596.9 MC/s      2.27 s  15000 TS x 0.242 MC  others  35%  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@multithreaded:8           1314.1 MC/s      2.76 s  15000 TS x 0.242 MC  others  40%  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@fastest                   1284.0 MC/s      2.83 s  15000 TS x 0.242 MC  others  51%  (auto-picked 4 threads)  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+cg19@metal-diamond:0            220.8 MC/s     16.44 s  15000 TS x 0.242 MC  others  24%  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 4 configs equals the reference

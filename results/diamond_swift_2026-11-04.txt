@@ -1,0 +1,33 @@
+# Diamond-blocked Swift/Metal sweep (swift_engine/fdtd.swift --diamond K), step 1A of the next phase, 2026-11-04 04:55-04:58
+# Model: swift_engine/model.py (PEC box, dielectric slab + metal patch, soft voltage excitation; the only extension is
+# the excitation). CPU reference: the installed emsKit cg18, multithreaded engine, 4 threads, OPENEMS_FTZ=1 for 121^3 and
+# 201^3 (Apple's GPU flushes subnormals), exported with OPENEMS_EXPORT_OPERATOR / OPENEMS_EXPORT_FIELDS; compare.py
+# compares all volt/curr values after the run. Schedule after luikore's Metal engine (openEMS PR #228).
+# SPEEDS ARE ROUGH: the Mac was shared (load averages 6-12 during the runs; a KiCad render and other sessions); one run each.
+#
+# Bit identity (every value of volt and curr after the run):
+# box     steps  unblocked vs CPU  K=1  K=2  K=4  K=8 (each vs the unblocked kernel and vs the CPU)
+# 41^3    600    identical         identical identical identical -
+# 121^3   600    identical (FTZ)   identical identical identical identical
+# 201^3   400    identical (FTZ)   -    identical identical identical
+#
+# Cell rate, MC/s (default tiles M,V = 2K,2K, 1024 threads per threadgroup unless given)
+# box     unblocked  K=1    K=2    K=4    K=8
+# 41^3    1956.5     936.3  1599.9 1665.8 -
+# 121^3   986.0      937.3  1582.1 2372.0 2572.3
+# 201^3   1540.0     -      1758.3 2445.7 1988.2
+#
+# 201^3, 400 steps, tile and threadgroup sweep (MC/s)
+# K=4 tile 8,8 tg 1024    2411.5
+# K=4 tile 8,4 tg 1024    2391.2
+# K=4 tile 8,2 tg 1024    2290.4
+# K=4 tile 7,1 tg 1024    1843.8
+# K=4 tile 12,4 tg 1024   2560.3
+# K=4 tile 16,8 tg 1024   2393.5
+# K=4 tile 8,8 tg 512     2574.8
+# K=4 tile 8,8 tg 256     2256.5
+# K=3 tile 6,6 tg 1024    2287.2
+# K=6 tile 12,12 tg 1024  2238.6
+# K=2 tile 4,2 tg 1024    1258.7
+# For scale (results/*_cg18.txt, quiet Mac, other models): cg18 best 1715.5 MC/s on patch x5 (7.9 M cells), 2045.8 on
+# notch x3 (5.2 M). The bound of paper/sec_beyond.tex for a fused, unblocked GPU sweep is about 2470-2590 MC/s.

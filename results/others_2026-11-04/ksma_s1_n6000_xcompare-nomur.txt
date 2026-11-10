@@ -1,0 +1,8 @@
+# ksma_s1_n6000  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/ksma_s1_n6000/stock_multithreaded_t4/rep0
+emskit/ksma_s1_n6000/cg18_multithreaded_t4/rep0              probes rel=0.0e+00  S11: identical  S21: identical
+emskit/ksma_s1_n6000/cg18_fastest/rep0                       probes rel=0.0e+00  S11: identical  S21: identical
+master/ksma_s1_n6000/multithreaded_t4/rep0                   probes rel=1.5e-04  S11: max|dS|=3.4e-05 max dB=3.4e-03  S21: max|dS|=2.3e-05 max dB=4.8e-04
+master/ksma_s1_n6000/gpu/rep0                                probes rel=1.5e-04  S11: max|dS|=3.4e-05 max dB=3.4e-03  S21: max|dS|=2.3e-05 max dB=4.8e-04
+luikore-metal/ksma_s1_n6000/multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical  S21: identical
+luikore-metal/ksma_s1_n6000/metal_t4/rep0                    probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07
+luikore-legacy/ksma_s1_n6000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=5.9e-07  S11: max|dS|=2.0e-07 max dB=1.9e-05  S21: max|dS|=3.6e-08 max dB=7.0e-07

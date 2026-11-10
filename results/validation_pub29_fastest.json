@@ -1,0 +1,253 @@
+{
+ "meta": {
+  "tag": "pub29_fastest",
+  "date": "2026-11-07T09:23:52",
+  "machine": "arm64",
+  "system": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "engine": "fastest",
+  "threads": "0",
+  "openems_module": "$PUBCHECK/prefix/venv/lib/python3.14/site-packages/openEMS/__init__.py",
+  "libraries": [
+   "$PUBCHECK/snaps/pub29/libCSXCAD.0.dylib",
+   "$PUBCHECK/snaps/pub29/libopenEMS.0.dylib",
+   "$PUBCHECK/snaps/pub29/libnf2ff.0.dylib"
+  ],
+  "lib_path": "$PUBCHECK/snaps/pub29",
+  "quick": false
+ },
+ "timings": {
+  "slab": 1.7,
+  "cavity": 14.5,
+  "lines": 2.7
+ },
+ "runs": {
+  "slab": [
+   {
+    "run": "slab_ref",
+    "engine": "compressed SSE + multi-threading",
+    "threads": ""
+   },
+   {
+    "run": "slab_debye",
+    "engine": "compressed SSE + multi-threading",
+    "threads": ""
+   },
+   {
+    "run": "slab_debye_basic",
+    "engine": "basic",
+    "threads": ""
+   },
+   {
+    "run": "slab_drude",
+    "engine": "compressed SSE + multi-threading",
+    "threads": ""
+   },
+   {
+    "run": "slab_drude_basic",
+    "engine": "basic",
+    "threads": ""
+   },
+   {
+    "run": "slab_lorentz",
+    "engine": "compressed SSE + multi-threading",
+    "threads": ""
+   },
+   {
+    "run": "slab_lorentz_basic",
+    "engine": "basic",
+    "threads": ""
+   }
+  ],
+  "cavity": [
+   {
+    "run": "cavity_rect",
+    "engine": "compressed SSE + multi-threading",
+    "threads": "4 (auto)"
+   },
+   {
+    "run": "cavity_cyl",
+    "engine": "cylindrical mesh using sse compression + multithreading; cylindrical multi grid mesh using sse compression + multithreading",
+    "threads": ""
+   }
+  ],
+  "lines": [
+   {
+    "run": "wr90",
+    "engine": "compressed SSE + multi-threading",
+    "threads": "10 (auto)"
+   },
+   {
+    "run": "msl",
+    "engine": "compressed SSE + multi-threading",
+    "threads": ""
+   }
+  ]
+ },
+ "results": [
+  {
+   "case": "slab_debye",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.0104032511290079,
+   "reference": 0.0,
+   "error": 0.0104032511290079,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0063; distance from non-dispersive answer 0.43"
+  },
+  {
+   "case": "slab_debye",
+   "quantity": "max |v - v_basic| / max |v_basic| (fastest vs basic engine)",
+   "value": 0.0,
+   "reference": 0.0,
+   "error": 0.0,
+   "tol": 0.0,
+   "kind": "abs",
+   "passed": true,
+   "note": "same build; must be 0"
+  },
+  {
+   "case": "slab_drude",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.020091815248816355,
+   "reference": 0.0,
+   "error": 0.020091815248816355,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0156; distance from non-dispersive answer 0.72"
+  },
+  {
+   "case": "slab_drude",
+   "quantity": "max |v - v_basic| / max |v_basic| (fastest vs basic engine)",
+   "value": 0.0,
+   "reference": 0.0,
+   "error": 0.0,
+   "tol": 0.0,
+   "kind": "abs",
+   "passed": true,
+   "note": "same build; must be 0"
+  },
+  {
+   "case": "slab_lorentz",
+   "quantity": "max |R - R_exact| over 0.5-9 GHz",
+   "value": 0.015320678332547619,
+   "reference": 0.0,
+   "error": 0.015320678332547619,
+   "tol": 0.03,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 0.0088; distance from non-dispersive answer 0.77"
+  },
+  {
+   "case": "slab_lorentz",
+   "quantity": "max |v - v_basic| / max |v_basic| (fastest vs basic engine)",
+   "value": 0.0,
+   "reference": 0.0,
+   "error": 0.0,
+   "tol": 0.0,
+   "kind": "abs",
+   "passed": true,
+   "note": "same build; must be 0"
+  },
+  {
+   "case": "cavity_rect",
+   "quantity": "modes found (7 expected)",
+   "value": 7.0,
+   "reference": 7.0,
+   "error": 0.0,
+   "tol": 0,
+   "kind": "abs",
+   "passed": true,
+   "note": "101 110 011 111 201 210 102"
+  },
+  {
+   "case": "cavity_rect",
+   "quantity": "max rel. error vs continuum",
+   "value": 0.000550499219974711,
+   "reference": 0.0,
+   "error": 0.000550499219974711,
+   "tol": 0.002,
+   "kind": "abs",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "cavity_rect",
+   "quantity": "max rel. error vs exact discrete Yee",
+   "value": 1.550729279134433e-08,
+   "reference": 0.0,
+   "error": 1.550729279134433e-08,
+   "tol": 1e-07,
+   "kind": "abs",
+   "passed": true,
+   "note": "mean 1.4e-08"
+  },
+  {
+   "case": "cavity_cyl",
+   "quantity": "modes found (6 expected)",
+   "value": 6.0,
+   "reference": 6.0,
+   "error": 0.0,
+   "tol": 0,
+   "kind": "abs",
+   "passed": true,
+   "note": "TM010:-0.04% TE111:+0.00% TM011:-0.04% TM110:-0.16% TE211:+0.02% TE011/TM111:-0.07%"
+  },
+  {
+   "case": "cavity_cyl",
+   "quantity": "max rel. error vs Bessel-zero formula",
+   "value": 0.0015835312689118162,
+   "reference": 0.0,
+   "error": 0.0015835312689118162,
+   "tol": 0.005,
+   "kind": "abs",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "wr90",
+   "quantity": "max rel. error of beta, 8-12 GHz",
+   "value": 0.0008715100988416769,
+   "reference": 0.0,
+   "error": 0.0008715100988416769,
+   "tol": 0.005,
+   "kind": "abs",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "wr90",
+   "quantity": "max S11 (dB) of the PML-terminated guide",
+   "value": -54.05500290858274,
+   "reference": -30.0,
+   "error": -24.055002908582743,
+   "tol": 0.0,
+   "kind": "max",
+   "passed": true,
+   "note": "pass if below the reference"
+  },
+  {
+   "case": "msl",
+   "quantity": "Z0 (ohm) vs Hammerstad-Jensen 47.67",
+   "value": 47.668778727062154,
+   "reference": 47.66730765404351,
+   "error": 3.086125671957174e-05,
+   "tol": 0.02,
+   "kind": "rel",
+   "passed": true,
+   "note": ""
+  },
+  {
+   "case": "msl",
+   "quantity": "eps_eff vs Hammerstad-Jensen 2.8758",
+   "value": 2.8795589699354602,
+   "reference": 2.8757760531995116,
+   "error": 0.0013154420462399665,
+   "tol": 0.01,
+   "kind": "rel",
+   "passed": true,
+   "note": ""
+  }
+ ]
+}

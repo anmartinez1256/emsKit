@@ -1,0 +1,97 @@
+{
+  "exit" : 0,
+  "invocations" : [
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-u",
+        "-B",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-validate-4242\/fdtdkit_run.py",
+        "--repo",
+        "\/work\/emsKit",
+        "--control-fd",
+        "3",
+        "--report",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-validate-4242\/launcher-validate.json",
+        "--load",
+        "script",
+        "--",
+        "\/work\/emsKit\/bench\/validation\/run_validation.py",
+        "--work",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-validate-4242\/validation\/work",
+        "--out",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-validate-4242\/validation",
+        "--tag",
+        "20261106-120000"
+      ],
+      "cwd" : "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-validate-4242",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : "validate-1",
+      "ran" : false,
+      "role" : "validate",
+      "seconds" : null
+    }
+  ],
+  "jobs" : [
+    {
+      "configs" : [
+        {
+          "cfg" : "installed",
+          "engine" : "fastest",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "19ee8e4df37c921a17e95df4dfbf9d3994412c71009fa0b51643a901a4ce1fab",
+                "uuid" : "24C8A7F2-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "34e1115017d50f5e0c0aa00320c2946e9956ee551208a51b995e363cdcb4e6e7",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "90a25d09f860f722dac73e998a82aa6d5898e54fa4201a1f86c9ea80ad8b0495",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "installed"
+          },
+          "nodumps" : false
+        }
+      ],
+      "id" : "validate-1",
+      "inputs" : [
+
+      ],
+      "knobs" : {
+
+      },
+      "options" : {
+
+      },
+      "outputs" : [
+
+      ],
+      "role" : "validate",
+      "tag" : "20261106-120000",
+      "tool" : "validation"
+    }
+  ],
+  "status" : "ok"
+}

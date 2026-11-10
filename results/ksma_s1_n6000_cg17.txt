@@ -1,0 +1,10 @@
+# ksma_s1_n6000  2026-11-02 20:47
+# note (2026-11-03, final review): a reduced check made with an unpublished scratch script: one run per config
+# (--repeat 1), no load wait (no --quiet), 4 and 8 threads and auto against stock, on a loaded Mac (others 417-801 %
+# across the six cg17 files). These rows show bit identity only; their speeds mean nothing. The full check is
+# bench/check.sh (1, 4, 8, 10 and auto threads, --repeat 2 --quiet 60). LITE=1 bench/check.sh runs the same reduced
+# set as the scratch script (added 2026-11-03).
+stock@multithreaded:4           199.9 MC/s     32.15 s  6000 TS x 1.071 MC  others 512%  busy kernel_task:280,Python:24,Python:23,Python:22,Python:22,Python:22,Python:21,Python:21,Python:21,Python:21  [ref]
+cg17@multithreaded:4            621.5 MC/s     10.34 s  6000 TS x 1.071 MC  others 458%  busy kernel_task:244,Python:24,Python:24,Python:23,Python:23,Python:23,Python:23,Python:23,Python:22  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg17@multithreaded:8            622.7 MC/s     10.32 s  6000 TS x 1.071 MC  others 563%  busy kernel_task:242,Python:36,Python:36,Python:36,Python:36,Python:36,Python:36,Python:35,Python:35  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00
+cg17@fastest                    586.8 MC/s     10.95 s  6000 TS x 1.071 MC  others 459%  busy kernel_task:239,Python:25,Python:23,Python:23,Python:23,Python:23,Python:23,Python:23,Python:22,Python:20  (auto-picked 6 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00

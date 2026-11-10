@@ -1,0 +1,17 @@
+# cache_valley_stock_2026-11-03.txt: the sweep of results/cache_valley_2026-11-01.txt on stock openEMS v0.37.0
+# (scripts/cache_valley/valley_sweep.sh with the stock libraries), 2026-11-03 13:50, quiet Mac. box.py, one thread,
+# 2000 steps, nz = 20, nx = ny. Stock has no allocator stagger, so both columns ran the same stock library; they differ
+# only by run-to-run noise (the column names are the script's).
+# nx ny nz cells MCs_stagger MCs_nostagger
+60 60 20 72000 481.82 479.773
+70 70 20 98000 479.652 475.147
+80 80 20 128000 473.197 474.277
+90 90 20 162000 474.576 472.199
+100 100 20 200000 214.472 215.264
+110 110 20 242000 214.771 214.681
+120 120 20 288000 214.743 214.593
+130 130 20 338000 213.763 213.42
+140 140 20 392000 469.922 461.226
+150 150 20 450000 480.808 472.215
+160 160 20 512000 474.696 470.787
+170 170 20 578000 472.437 473.547

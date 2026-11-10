@@ -1,0 +1,8 @@
+# notch_s3_n2000  reference /Users/anmar/opt/src/emskit-compare/runs/nomur/emskit/notch_s3_n2000/stock_multithreaded_t8/rep0
+emskit/notch_s3_n2000/cg18_multithreaded_t4/rep0             probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+emskit/notch_s3_n2000/cg18_fastest/rep0                      probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+master/notch_s3_n2000/multithreaded_t4/rep0                  probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+master/notch_s3_n2000/gpu/rep0                               probes rel=3.0e-07 (5 files all zero in the reference)  S11: max|dS|=2.3e-08 max dB=5.4e-06  S21: identical
+luikore-metal/notch_s3_n2000/multithreaded_t4/rep0           probes rel=0.0e+00 (5 files all zero in the reference)  S11: identical  S21: identical
+luikore-metal/notch_s3_n2000/metal_t4/rep0                   probes rel=2.4e-07 (5 files all zero in the reference)  S11: max|dS|=9.9e-09 max dB=2.3e-06  S21: identical
+luikore-legacy/notch_s3_n2000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=2.4e-07 (5 files all zero in the reference)  S11: max|dS|=9.9e-09 max dB=2.3e-06  S21: identical

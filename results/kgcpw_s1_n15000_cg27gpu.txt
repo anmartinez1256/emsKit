@@ -1,0 +1,6 @@
+# 2026-11-04 20:13-20:19, OPENEMS_FTZ=1 for both configs; dev26f = snapshot cg27 (4127e1e, byte-identical library). The
+# version string printed (v0.37.0-26-gcd80d8c) is the one cmake wrote when the build directory was configured (cg20).
+# kgcpw_s1_n15000  load avg 16.11
+dev26f@multithreaded:4          632.4 MC/s      5.74 s  15000 TS x 0.242 MC  others 524%  busy Python:128,kernel_task:71,Python:66,emskit:63,WindowServer:45,mediaanalysisd:32,TGOnDeviceInfere:30,Messages:23  during 6.3 s: self cpu 331% gpu>=0.00 s, others cpu 400% gpu 9%, gpu dev 11% [emskit:98/0,(Python):37/0,WindowServer:24/7,Python:98/0]  [ref]  openEMS v0.37.0-26-gcd80d8c
+dev26f@metal-diamond:0         1851.6 MC/s      1.96 s  15000 TS x 0.242 MC  others 275%  busy emskit:78,Python:78,2.1.312:27  during 2.5 s: self cpu 37% gpu>=1.68 s, others cpu 327% gpu 6%, gpu dev 73% [emskit:99/0,WindowServer:19/5,Python:33/0,Python:98/0]  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+NOTHING REQUIRED TO MATCH: every compared config is tolerant (dev26f@metal-diamond:0)

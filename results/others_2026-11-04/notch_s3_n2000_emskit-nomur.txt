@@ -1,0 +1,5 @@
+# notch_s3_n2000  2026-11-04 05:53
+stock@multithreaded:8           726.3 MC/s     14.45 s  2000 TS x 5.247 MC  others  62%  runs 726/547  [ref]  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0
+cg18@multithreaded:4           1655.3 MC/s      6.34 s  2000 TS x 5.247 MC  others  53%  runs 1555/1655  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+cg18@fastest                   2002.8 MC/s      5.24 s  2000 TS x 5.247 MC  others  38%  runs 2003/2003  (auto-picked 8 threads)  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  openEMS v0.37.0-24-g087ce9e
+# IDENTICAL: every run of 3 configs equals the reference

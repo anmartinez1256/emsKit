@@ -1,0 +1,35 @@
+# End-to-end rfsim runs, re-measured 2026-11-03 on the final build (snapshot cg18 = patches 0001-0006,
+# v0.37.0-24-g087ce9e) and on stock v0.37.0, Apple M5, macOS 27.0.1, one run each, in this order.
+# Each run is what the author's toolkit does for a board (rfsim core.run(threads=0): model build in Python, FDTD.Run
+# with operator setup and time stepping, then CalcPort for S11/S21 and the line impedance); toolkit = the rfsim working
+# tree of 2026-11-03 (patches/rfsim 0001-0003). The fork picks its thread count itself; on the stock library the toolkit
+# falls back to 4 threads (GCPW) and 8 (SMA). Before every run the driver waited until the other processes used less
+# than one core for 10 s; 'others' = their mean / max CPU during the run (100 = one core).
+# GCPW line: core.gcpw_line(length=50, feed=10, f_max=2 GHz), 12 ns. SMA launch: launch.sma_launch(), 10 ns, mesh
+# floor min_cell (0 = the toolkit default 0.02 mm, the published default mesh). db/hold: probe end criterion
+# (off = run to max_time). Times in s: build = model build, run = FDTD.Run, post = CalcPort, total = all three.
+# MC/s from openEMS's own 'Time for N iterations' line (the time loop only). thr = engine threads from the run's log
+# (aN = picked by the fork's tuner, N = fixed). E_end = openEMS's field energy estimate relative to its peak at the last
+# progress line of the run (dB); the energy end criterion (-50 dB) never fired.
+# Compared with the full fork run of the same model (G_off, S_off; for the SMA floors that is the full run on the
+# default mesh): S11 at f_ref (GCPW 640 MHz, SMA 1 GHz), max |dS11| in dB where |S11_ref| > -40 dB ('-' when S11_ref
+# stays below -40 dB, as on the GCPW line) and linear over the band, max |dS21| in dB,
+# dZ0 = Re Z0 - Re Z0_ref at f_ref (ohm). prefix = the port files are a byte-identical prefix of the full run's
+# (runs on the same mesh only). stock = the stock full run's port files are byte-identical to the fork's full run's.
+# Scripts: scripts/e2e/ (driver.py runs the set, run_one.py one run, compare.py the comparisons, gen_e2e.py this table);
+# they need the toolkit (RFSIM_PATH), which is not public.
+# name     lib   model floor   db   hold  cells_M  steps   dt_fs   build    run   post  total   MC/s thr  E_end  others   S11@fref  dS11_dB dS11_lin  dS21_dB  dZ0_ohm  prefix  stock
+G_off    fork  gcpw  0.00   off  1.0   0.242   94217  127.36   0.40   13.7   0.02   14.1   1683  a4  -14.9   31/ 61    -46.88        -  0.0e+00  0.00000  +0.0000  -       -
+G_60     fork  gcpw  0.00   -60  1.0   0.242   45570  127.36   0.11    8.6   0.02    8.7   1304  a8  -14.7   35/ 60    -46.88        -  1.3e-04  0.00080  -0.0003  yes     -
+G_80     fork  gcpw  0.00   -80  1.0   0.242   47040  127.36   0.11    7.1   0.02    7.2   1636  a4  -14.6   36/ 48    -46.89        -  1.2e-04  0.00079  -0.0009  yes     -
+G_60h    fork  gcpw  0.00   -60  0.5   0.242   34300  127.36   0.11    5.2   0.01    5.3   1640  a4  -14.6   33/ 52    -46.90        -  2.2e-04  0.00071  -0.0005  yes     -
+G_stock  stock gcpw  0.00   off  1.0   0.242   94217  127.36   0.13   76.5   0.02   76.6    299   4  -13.8   60/222    -46.88        -  0.0e+00  0.00000  +0.0000  yes     yes
+S_off    fork  sma   0.00   off  1.0   1.071  182622   54.76   0.12  168.5   0.03  168.7   1164  a8  -11.1   44/203    -22.80   0.0000  0.0e+00  0.00000  +0.0000  -       -
+S_60     fork  sma   0.00   -60  1.0   1.071  103831   54.76   0.12   97.6   0.02   97.7   1146  a8  -11.0   62/215    -22.80   0.0089  3.3e-05  0.00023  -0.0066  yes     -
+S_80     fork  sma   0.00   -80  1.0   1.071  106113   54.76   0.11   99.8   0.02  100.0   1144  a8  -11.0   38/ 82    -22.80   0.0100  2.8e-05  0.00019  -0.0037  yes     -
+S_60h    fork  sma   0.00   -60  0.5   1.071   77588   54.76   0.11   72.9   0.02   73.1   1147  a8  -11.3   35/ 51    -22.80   0.0188  3.4e-05  0.00022  -0.0092  yes     -
+M_03     fork  sma   0.03   -60  1.0   1.007   97097   58.54   0.11   85.7   0.02   85.9   1148  a8  -11.1   42/132    -22.79   0.0292  2.9e-04  0.00058  +0.0288  -       -
+M_04     fork  sma   0.04   -60  1.0   0.953   72891   77.98   0.11   58.0   0.02   58.1   1208  a8  -15.3   39/103    -22.72   0.0782  1.8e-03  0.00137  +0.1228  -       -
+M_05     fork  sma   0.05   -60  1.0   0.871   67340   84.41   0.11   49.5   0.02   49.6   1195  a8  -15.4   37/ 92    -22.69   0.1156  2.5e-03  0.00208  +0.1043  -       -
+M_05h    fork  sma   0.05   -60  0.5   0.871   50320   84.41   0.11   37.4   0.02   37.6   1184  a8  -15.8   48/133    -22.69   0.1157  2.5e-03  0.00206  +0.1212  -       -
+S_stock  stock sma   0.00   off  1.0   1.071  182622   54.76   0.79  562.7   0.03  563.5    348   8  -11.1   33/206    -22.80   0.0000  0.0e+00  0.00000  +0.0000  yes     yes

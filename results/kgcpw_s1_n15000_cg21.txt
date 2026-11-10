@@ -1,0 +1,7 @@
+# kgcpw_s1_n15000  2026-11-04 08:47
+stock@multithreaded:4           188.7 MC/s     19.24 s  15000 TS x 0.242 MC  others 222%  busy swiftpm-testing-:85,emskit-phase1:85  [ref]  openEMS v0.37.0
+cg21@multithreaded:4            784.0 MC/s      4.63 s  15000 TS x 0.242 MC  others 209%  busy emskit-phase1:86,swiftpm-testing-:85  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@multithreaded:8           1138.8 MC/s      3.19 s  15000 TS x 0.242 MC  others 202%  busy swiftpm-testing-:85,emskit-phase1:84  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@fastest                   1052.3 MC/s      3.45 s  15000 TS x 0.242 MC  others 208%  busy swiftpm-testing-:84,emskit-phase1:84  (auto-picked 8 threads)  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0            211.7 MC/s     17.15 s  15000 TS x 0.242 MC  others 201%  busy emskit-phase1:85,swiftpm-testing-:84  probes rel=0.0e+00  S11: below -40 dB, compared exactly: equal  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg21@metal-diamond:0)

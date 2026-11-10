@@ -1,0 +1,131 @@
+{
+  "exit" : 0,
+  "invocations" : [
+    {
+      "argv" : [
+        "\/opt\/py\/bin\/python3",
+        "-u",
+        "-B",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-check-4242\/fdtdkit_run.py",
+        "--repo",
+        "\/work\/emsKit",
+        "--control-fd",
+        "3",
+        "--report",
+        "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-check-4242\/launcher-check.json",
+        "exec",
+        "--",
+        "\/bin\/zsh",
+        "-f",
+        "\/work\/emsKit\/bench\/check.sh",
+        "plan",
+        "cg29",
+        "cg27"
+      ],
+      "cwd" : "\/work\/emsKit",
+      "envRemoved" : [
+        {
+          "name" : "DYLD_LIBRARY_PATH",
+          "value" : "\/opt\/elsewhere\/lib"
+        }
+      ],
+      "envSet" : {
+        "EXTRA" : "cg29@metal-diamond:0",
+        "LITE" : "1",
+        "OPENEMS_BENCH_RUNS" : "\/tmp\/openems_bench_runs\/emskit-fdtd\/20261106-120000-check-4242\/runs",
+        "OPENEMS_BENCH_SNAPS" : "\/Users\/tester\/opt\/openEMS-dev\/snap",
+        "PATH" : "\/opt\/py\/bin:\/usr\/bin:\/bin",
+        "PYTHONDONTWRITEBYTECODE" : "1",
+        "RFSIM_PATH" : "\/work\/rfsim",
+        "STOCK" : "stock"
+      },
+      "exit" : null,
+      "interrupted" : false,
+      "jobId" : "check-1",
+      "ran" : false,
+      "role" : "check",
+      "seconds" : null
+    }
+  ],
+  "jobs" : [
+    {
+      "configs" : [
+        {
+          "cfg" : "cg29",
+          "engine" : "multithreaded",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "87a1d5a960dd353ca97c0ef8704d15e9767eb2c8fbb990eefb4bd162c956a694",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "34e1115017d50f5e0c0aa00320c2946e9956ee551208a51b995e363cdcb4e6e7",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "90a25d09f860f722dac73e998a82aa6d5898e54fa4201a1f86c9ea80ad8b0495",
+                "uuid" : "40BC8CFF-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "cg29"
+          },
+          "nodumps" : false
+        },
+        {
+          "cfg" : "cg27",
+          "engine" : "multithreaded",
+          "knobs" : {
+
+          },
+          "library" : {
+            "files" : [
+              {
+                "name" : "libopenEMS.0.dylib",
+                "sha256" : "bf0adabcb31a9e686d0f95a2dec0772460183b3e46ca486a1e183115ed0a94d6",
+                "uuid" : "4127E1E0-0000-4000-8000-000000000001"
+              },
+              {
+                "name" : "libCSXCAD.0.dylib",
+                "sha256" : "52e2520e4d92303d0f8b2adaafe380369dc3d9b406672b4693210c961b5b3ee2",
+                "uuid" : "4127E1E0-0000-4000-8000-000000000002"
+              },
+              {
+                "name" : "libnf2ff.0.dylib",
+                "sha256" : "784913fe0ab28e752731cf025a7722087977bcf00483695c2b55c3e53a8ee2dc",
+                "uuid" : "4127E1E0-0000-4000-8000-000000000003"
+              }
+            ],
+            "spec" : "cg27"
+          },
+          "nodumps" : false
+        }
+      ],
+      "id" : "check-1",
+      "inputs" : [
+
+      ],
+      "knobs" : {
+
+      },
+      "options" : {
+        "extra" : "cg29@metal-diamond:0",
+        "lite" : "1",
+        "stock" : "stock"
+      },
+      "outputs" : [
+
+      ],
+      "role" : "check",
+      "tag" : "plan",
+      "tool" : "check"
+    }
+  ],
+  "status" : "ok"
+}

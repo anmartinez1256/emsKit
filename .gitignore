@@ -1,0 +1,42 @@
+__pycache__/
+*.pyc
+# LaTeX build files of the paper, the arXiv tarball and draft builds
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.tar.gz
+paper/*_preview.pdf
+.DS_Store
+bench/runs/
+# check tables of older bench.py versions (bench.py --tag wrote them next to the script)
+bench/results/
+# run directories, logs and binaries the scripts produce
+scripts/**/run_*/
+scripts/**/tmp_*/
+scripts/**/dry_*/
+scripts/**/r_*/
+# the reference run that scripts/README.md asks for (scripts/probe_end/s_ref, the default REF of sma_mesh/batch.sh)
+scripts/**/s_ref/
+scripts/sma_mesh/sweep.log
+scripts/cache_valley/valley.txt
+scripts/kernel/kb_idx
+scripts/kernel/kb_tb
+swift_engine/fdtd_swift
+# raw operator and field exports (OPENEMS_EXPORT_OPERATOR / OPENEMS_EXPORT_FIELDS, swift_engine/)
+*.f32
+*.u32
+*.h5
+*.npz
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/*/.build/
+Packages/*/.swiftpm/
+Package.resolved

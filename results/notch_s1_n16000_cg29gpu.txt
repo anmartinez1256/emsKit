@@ -1,0 +1,4 @@
+# notch_s1_n16000  2026-11-05 02:41
+cg29@multithreaded:4           1873.2 MC/s      2.30 s  16000 TS x 0.270 MC  others  52%  during 2.6 s: self cpu 325% gpu>=0.00 s, others cpu 59% gpu 5%, gpu dev 5%  [ref]  openEMS v0.37.0-44-g074a687
+cg29@metal-diamond:0           1887.5 MC/s      2.29 s  16000 TS x 0.270 MC  others  47%  during 2.6 s: self cpu 30% gpu>=1.87 s, others cpu 59% gpu 2%, gpu dev 97%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-44-g074a687
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (cg29@metal-diamond:0)

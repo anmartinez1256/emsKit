@@ -1,0 +1,8 @@
+# patch_s1_n10500  2026-10-28 23:06
+multithreaded:2                 238.1 MC/s      4.57 s  10500 TS x 0.104 MC  others  33%  runs 225/238  [ref]
+cg9@multithreaded:1             634.8 MC/s      1.71 s  10500 TS x 0.104 MC  others  47%  runs 625/635  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@multithreaded:4            1805.7 MC/s      0.60 s  10500 TS x 0.104 MC  others  57%  runs 1806/1777  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@multithreaded:8            1530.1 MC/s      0.71 s  10500 TS x 0.104 MC  others  60%  runs 1530/617  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@multithreaded:10            478.0 MC/s      2.28 s  10500 TS x 0.104 MC  others  53%  runs 478/470  busy kernel_task:20  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@fastest                    1447.6 MC/s      0.75 s  10500 TS x 0.104 MC  others  53%  runs 1013/1448  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00
+cg9@gpu                         922.7 MC/s      1.18 s  10500 TS x 0.104 MC  others  40%  runs 900/923  probes rel=3.8e-07  S11: max|dS|=2.5e-07 max dB=2.3e-05

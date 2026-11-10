@@ -1,0 +1,15 @@
+# 2026-11-04 21:42-21:44, OPENEMS_FTZ=1 for both configs; dev28b = snapshot cg28 (the metal-diamond engine tunes its
+# tiling at run time; byte-identical library). The version string printed (v0.37.0-26-gcd80d8c) is the one cmake wrote
+# when the build directory was configured (cg20).
+# notch_s3_n2000  load avg 4.34
+/Users/anmar/Library/Python/3.14/lib/python/site-packages/openEMS/ports.py:442: RuntimeWarning: invalid value encountered in divide
+  beta = np.sqrt( - dEt * dHt / (Ht * Et) )
+/Users/anmar/Library/Python/3.14/lib/python/site-packages/openEMS/ports.py:447: RuntimeWarning: invalid value encountered in divide
+  self.Z_ref = np.sqrt(Et * dEt / (Ht * dHt))
+dev28b@multithreaded:4         1787.9 MC/s      5.87 s  2000 TS x 5.247 MC  others  41%  during 7.6 s: self cpu 443% gpu>=0.00 s, others cpu 49% gpu 5%, gpu dev 5%  [ref]  openEMS v0.37.0-26-gcd80d8c
+/Users/anmar/Library/Python/3.14/lib/python/site-packages/openEMS/ports.py:442: RuntimeWarning: invalid value encountered in divide
+  beta = np.sqrt( - dEt * dHt / (Ht * Et) )
+/Users/anmar/Library/Python/3.14/lib/python/site-packages/openEMS/ports.py:447: RuntimeWarning: invalid value encountered in divide
+  self.Z_ref = np.sqrt(Et * dEt / (Ht * dHt))
+dev28b@metal-diamond:0         3203.7 MC/s      3.28 s  2000 TS x 5.247 MC  others  53%  during 5.3 s: self cpu 277% gpu>=2.97 s, others cpu 50% gpu 3%, gpu dev 71%  probes rel=0.0e+00 (5 of 10 files all zero in the reference, compared exactly)  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: below -40 dB, compared exactly: equal  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+NOTHING REQUIRED TO MATCH: every compared config is tolerant (dev28b@metal-diamond:0)

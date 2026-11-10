@@ -1,0 +1,4 @@
+# ksma_s1_n6000  2026-11-04 06:24
+multithreaded:4                 390.7 MC/s     13.38 s  6000 TS x 0.871 MC  others  92%  runs 391/389  busy mediaanalysisd:39  [ref]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-40-g5fecbb5
+gpu                            1204.4 MC/s      4.34 s  6000 TS x 0.871 MC  others  63%  runs 1180/1204  probes rel=3.6e-07  S11: max|dS|=1.1e-07 max dB=8.5e-06  S21: max|dS|=5.0e-08 max dB=7.6e-07  (tolerant)  openEMS v0.37.0-40-g5fecbb5
+# IDENTICAL: every run of 1 config equals the reference (1 tolerant, not required to match: gpu)

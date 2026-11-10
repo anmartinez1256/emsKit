@@ -1,0 +1,7 @@
+# notch_s1_n16000  2026-11-04 08:46
+stock@multithreaded:4           193.5 MC/s     22.31 s  16000 TS x 0.270 MC  others 209%  busy emskit-phase1:86,swiftpm-testing-:85  [ref]  openEMS v0.37.0
+cg21@multithreaded:4            893.7 MC/s      4.83 s  16000 TS x 0.270 MC  others 220%  busy swiftpm-testing-:86,emskit-phase1:85  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@multithreaded:8           1294.1 MC/s      3.34 s  16000 TS x 0.270 MC  others 208%  busy emskit-phase1:84,swiftpm-testing-:84  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@fastest                   1193.6 MC/s      3.62 s  16000 TS x 0.270 MC  others 227%  busy swiftpm-testing-:84,emskit-phase1:84  (auto-picked 8 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-26-gcd80d8c
+cg21@metal-diamond:0           1810.1 MC/s      2.38 s  16000 TS x 0.270 MC  others 220%  busy swiftpm-testing-:85,emskit-phase1:84  probes rel=9.4e-07  S11: max|dS|=2.6e-06 max dB=2.3e-04  S21: max|dS|=2.0e-06 max dB=9.4e-05  (tolerant)  openEMS v0.37.0-26-gcd80d8c
+# IDENTICAL: every run of 3 configs equals the reference (1 tolerant, not required to match: cg21@metal-diamond:0)

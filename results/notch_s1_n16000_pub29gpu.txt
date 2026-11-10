@@ -1,0 +1,4 @@
+# notch_s1_n16000  2026-11-07 09:21
+pub29@multithreaded:4          1900.4 MC/s      2.27 s  16000 TS x 0.270 MC  others  83%  busy mediaanalysisd:40  during 2.6 s: self cpu 329% gpu>=0.00 s, others cpu 67% gpu 0%, gpu dev 0% [mediaanalysisd:35/0]  [ref]  openEMS v0.37.0-45-g1d091c7
+pub29@metal-diamond:0          1903.1 MC/s      2.27 s  16000 TS x 0.270 MC  others  70%  busy mediaanalysisd:41  during 2.6 s: self cpu 35% gpu>=1.88 s, others cpu 97% gpu 0%, gpu dev 97% [mediaanalysisd:52/0]  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  (tolerant)  openEMS v0.37.0-45-g1d091c7
+# NOTHING REQUIRED TO MATCH: every compared config is tolerant (pub29@metal-diamond:0)

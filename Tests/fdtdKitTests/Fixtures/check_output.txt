@@ -1,0 +1,11 @@
+# patch_s5_n1200  load avg 4.10
+stock@multithreaded:8           738.3 MC/s     12.78 s  1200 TS x 7.863 MC  others  52%  during 17.4 s: self cpu 396% gpu>=0.00 s, others cpu 218% gpu 5%, gpu dev 5%  [ref]  openEMS v0.37.0
+cg29@multithreaded:4           1846.4 MC/s      5.11 s  1200 TS x 7.863 MC  others  46%  during 6.4 s: self cpu 430% gpu>=0.00 s, others cpu 49% gpu 5%, gpu dev 5%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-44-g074a687
+cg29@multithreaded:8           2073.6 MC/s      4.55 s  1200 TS x 7.863 MC  others  42%  during 5.8 s: self cpu 664% gpu>=0.00 s, others cpu 49% gpu 5%, gpu dev 5%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-44-g074a687
+cg29@fastest                   1456.0 MC/s      6.48 s  1200 TS x 7.863 MC  others  50%  during 7.8 s: self cpu 362% gpu>=0.00 s, others cpu 49% gpu 5%, gpu dev 5%  (auto-picked 6 threads)  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-44-g074a687
+IDENTICAL: every run of 3 configs equals the reference
+wrote /work/emsKit/results/patch_s5_n1200_smoke.txt
+# notch_s3_n2000  load avg 4.31
+stock@multithreaded:8           818.0 MC/s     12.83 s  2000 TS x 5.247 MC  others  59%  during 17.2 s: self cpu 546% gpu>=0.00 s, others cpu 44% gpu 5%, gpu dev 5%  [ref]  openEMS v0.37.0
+cg29@multithreaded:4           1936.3 MC/s      5.42 s  2000 TS x 5.247 MC  others  34%  during 7.3 s: self cpu 466% gpu>=0.00 s, others cpu 47% gpu 5%, gpu dev 5%  probes rel=0.0e+00  S11: max|dS|=0.0e+00 max dB=0.0e+00  S21: max|dS|=0.0e+00 max dB=0.0e+00  openEMS v0.37.0-44-g074a687
+check.sh smoke: bench.py notch_x3 stopped with exit status 1

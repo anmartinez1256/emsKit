@@ -1,0 +1,19 @@
+# The allocation-placement valley, 2026-11-01 (called the cache-aliasing valley then; what triggers it, the
+# allocator's placement of the two field arrays, is in cache_valley_placement_2026-11-03.txt; note added 2026-11-03):
+# scripts/cache_valley/valley_sweep.sh runs box.py
+# (PEC box with a dielectric slab, uniform 1 mm mesh, one soft excitation) at one thread for 2000 steps, nz = 20 and
+# nx = ny = 60 to 170 lines, on the installed cg16 build, with the allocator stagger (MCs_stagger, MC/s) and with
+# OPENEMS_NO_STAGGER=1 (MCs_nostagger). cells = nx * ny * nz. Only this Mac (Apple M5, macOS allocator) was measured.
+# nx ny nz cells MCs_stagger MCs_nostagger
+60 60 20 72000 948.535 772.201
+70 70 20 98000 936.061 922.679
+80 80 20 128000 901.05 910.381
+90 90 20 162000 903.549 891.707
+100 100 20 200000 881.063 249.452
+110 110 20 242000 889.219 246.794
+120 120 20 288000 884.775 248.729
+130 130 20 338000 894.426 247.701
+140 140 20 392000 907.091 890.74
+150 150 20 450000 893.707 901.365
+160 160 20 512000 893.311 890.029
+170 170 20 578000 901.3 892.623

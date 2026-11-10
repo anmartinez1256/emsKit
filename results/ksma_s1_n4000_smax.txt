@@ -1,0 +1,4 @@
+# ksma_s1_n4000  2026-10-29 04:41
+multithreaded:1                 201.9 MC/s     21.22 s  4000 TS x 1.071 MC  others  25%  [ref]
+multithreaded:1#OPENEMS_BENCH_BC=MUR;MUR;MUR;MUR;PEC;MUR    654.0 MC/s      6.55 s  4000 TS x 1.071 MC  others  36%  probes rel=2.3e-02  S11: max|dS|=5.3e-03 max dB=5.4e-01  S21: max|dS|=6.6e-03 max dB=7.3e-02
+multithreaded:1#OPENEMS_BENCH_BC=PEC;PEC;PEC;PEC;PEC;PEC    717.6 MC/s      5.97 s  4000 TS x 1.071 MC  others  24%  probes rel=1.0e+00  S11: max|dS|=4.6e-01 max dB=1.3e+01  S21: max|dS|=6.9e+00 max dB=1.8e+01

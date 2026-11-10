@@ -1,0 +1,467 @@
+From 99e20fd3ea1ca5a97fa3be3bdeb459067ac4c448 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:48:22 -0600
+Subject: [PATCH 05/27] Review fixes: Debye hooks, probe end arming, setup
+ cache key, portability (snapshot cg17)
+
+Found by an independent read-only correctness review of the fork (2026-11-02):
+
+- Engine_Ext_DebyeMaterial lost its dispersion in the multithreaded engine: it inherited
+  Engine_Ext_Dispersive::GetUsedHooks() (APPLY_VOLT | LINE_HOOKS), so the hook plan never called its
+  DoPre/PostVoltageUpdates and Debye cells ran as their base material (the single-threaded engines were
+  right; 37 % of the peak field on a 60x60x20 Debye box after 600 steps). It now declares
+  PRE_VOLT | POST_VOLT | APPLY_VOLT and no line hooks (the fused sweep stays off with it). Structural
+  guard: OPENEMS_HOOKS_DECLARED_BY(Class) at the start of every GetUsedHooks() override returns
+  LEGACY_HOOKS for any subclass that does not override it itself, so a declaration can never be
+  inherited again. Engine_Ext_Dispersive::DispersiveHooks() is the non-virtual base set for subclasses.
+- Probe end criterion (OPENEMS_PROBE_END_DB): a probe the wavefront had not reached yet (peak still 0)
+  counted as settled, so a model with a one-way delay longer than the hold could stop before its far
+  port saw the pulse. The hold now starts only once every probe has a non-zero peak; a non-Gaussian
+  excitation with the knob set prints a notice instead of being ignored silently.
+- Operator::GetMaterial(): the per-thread last-lookup cache is keyed by a setup generation
+  (bumped in CalcECOperator) so a later setup in the same process can never reuse a pointer to a
+  freed property of an earlier one.
+- Engine_Ext_Excitation declares APPLY_CURR only when it has current excitations (one barrier per
+  timestep less for the usual voltage excitation).
+- Auto thread tuner: never queues more threads than x-lines (it timed the clamped count repeatedly).
+- nf2ff: the separable (BLAS) path is used only when a CBLAS is available (Apple Accelerate); other
+  builds keep the threaded legacy loop instead of a single-threaded scalar fallback.
+- Packed coefficient tables are skipped (SoA tables, generic loops) when they would exceed twice the
+  field memory or allocation fails, instead of aborting the setup.
+- Cleanups: SetupTimer below the includes in operator.cpp, unused includes in
+  operator_sse_compressed.cpp, the NX-1 current-hook invariant documented in engine_extension.h.
+
+Verified: Debye box bit-identical across basic / sse-compressed / multithreaded engines (the single
+engine unchanged against cg16); the six bench models bit-identical to stock v0.37.0 at 4, 8 and auto
+threads (results/*_cg17.txt); CylindricalWave_CC multigrid 18 HDF5 datasets 0 differences; GCPW probe
+end stops at the same step (45570) with a bit-identical port-file prefix.
+
+Generated-by: Claude Fable 5.1 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp                   |  5 +-
+ FDTD/engine_sse_compressed.cpp                | 21 ++++++++-
+ FDTD/extensions/engine_ext_debyematerial.cpp  | 10 ++++
+ FDTD/extensions/engine_ext_debyematerial.h    |  1 +
+ FDTD/extensions/engine_ext_dispersive.cpp     |  6 +++
+ FDTD/extensions/engine_ext_dispersive.h       |  2 +
+ FDTD/extensions/engine_ext_excitation.cpp     |  7 +++
+ FDTD/extensions/engine_ext_excitation.h       |  2 +-
+ .../extensions/engine_ext_lorentzmaterial.cpp |  3 +-
+ FDTD/extensions/engine_ext_lumpedRLC.h        |  2 +-
+ FDTD/extensions/engine_ext_mur_abc.h          |  2 +-
+ FDTD/extensions/engine_ext_upml.h             |  2 +-
+ FDTD/extensions/engine_extension.h            | 15 ++++--
+ FDTD/operator.cpp                             | 46 +++++++++++--------
+ FDTD/operator_sse_compressed.cpp              |  2 -
+ nf2ff/nf2ff_calc.cpp                          |  4 ++
+ openems.cpp                                   |  9 +++-
+ 17 files changed, 104 insertions(+), 35 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 215423c..d76e824 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -138,9 +138,10 @@ void Engine_Multithread::Init()
+ 		m_numThreads = StartThreads(m_max_numThreads);
+ 		m_Tuner.start = m_Tuner.best = m_numThreads;
+ 		m_Tuner.best_speed = 0;
++		const unsigned int maxUse = std::min(m_max_numThreads, numLines[0]);   // more threads than x-lines cannot be used
+ 		m_Tuner.todo.clear();
+ 		for (unsigned int n=m_numThreads+2; n<m_max_numThreads+2; n+=2)
+-			m_Tuner.todo.push_back(std::min(n, m_max_numThreads));
++			m_Tuner.todo.push_back(std::min(n, maxUse));
+ 		if (m_numThreads>2)
+ 			m_Tuner.todo.push_back(m_numThreads-2);
+ 		m_Tuner.speed.assign(m_max_numThreads+1, 0);
+@@ -377,7 +378,7 @@ void Engine_Multithread::TuneThreads(unsigned int iterTS, double seconds)
+ 		t.refined = true;
+ 		if (t.best>1)
+ 			t.todo.push_back(t.best-1);
+-		if (t.best<m_max_numThreads)
++		if (t.best<std::min(m_max_numThreads, numLines[0]))
+ 			t.todo.push_back(t.best+1);
+ 	}
+ 	if (t.todo.empty())
+diff --git a/FDTD/engine_sse_compressed.cpp b/FDTD/engine_sse_compressed.cpp
+index 62f22c6..cc17060 100644
+--- a/FDTD/engine_sse_compressed.cpp
++++ b/FDTD/engine_sse_compressed.cpp
+@@ -73,8 +73,25 @@ void Engine_SSE_Compressed::BuildPackedCoeffs()
+ 		if ((Op->f4_vv_Compressed[n].size()!=numOps) || (Op->f4_vi_Compressed[n].size()!=numOps) ||
+ 		    (Op->f4_ii_Compressed[n].size()!=numOps) || (Op->f4_iv_Compressed[n].size()!=numOps))
+ 			return;
+-	m_PackedV.resize(numOps);
+-	m_PackedI.resize(numOps);
++	// 192 B per operator: a model with nearly one operator per z-vector would need more table memory than its fields;
++	// keep the SoA tables then (generic loops, stock speed) instead of failing (review 2026-11-02)
++	if ((double)numOps*192.0 > 2.0*24.0*Op->GetNumberCells())
++	{
++		std::cerr << "Engine_SSE_Compressed: " << numOps << " operators, packed coefficient tables would exceed the field memory, not packed" << std::endl;
++		return;
++	}
++	try
++	{
++		m_PackedV.resize(numOps);
++		m_PackedI.resize(numOps);
++	}
++	catch (const std::bad_alloc&)
++	{
++		m_PackedV.clear();
++		m_PackedI.clear();
++		std::cerr << "Engine_SSE_Compressed: out of memory for the packed coefficient tables, not packed" << std::endl;
++		return;
++	}
+ 	for (size_t i=0; i<numOps; ++i)
+ 		for (int n=0; n<3; ++n)
+ 		{
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index dadf312..21b1b0f 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -122,3 +122,13 @@ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdates()
+ {
+ 	ENG_DISPATCH(DoPostVoltageUpdatesImpl);
+ }
++
++// Fix 2026-11-02: this used to inherit Engine_Ext_Dispersive's declaration (APPLY_VOLT | LINE_HOOKS), so the
++// multithreaded engine never called the Pre/Post voltage hooks above and Debye cells ran as their base material.
++// The Pre/Post hooks only read engine fields and write the extension's own state; the poles are applied by the
++// inherited Apply2Voltages(). There are no *Lines() versions, so the fused sweep stays off with this extension.
++unsigned int Engine_Ext_DebyeMaterial::GetUsedHooks() const
++{
++	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_DebyeMaterial);
++	return (DispersiveHooks() & ~LINE_HOOKS) | PRE_VOLT | POST_VOLT;
++}
+diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
+index 1c4ea03..111c0e6 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.h
++++ b/FDTD/extensions/engine_ext_debyematerial.h
+@@ -59,6 +59,7 @@ public:
+ 
+ 	virtual void DoPreVoltageUpdates();
+ 	virtual void DoPostVoltageUpdates();
++	virtual unsigned int GetUsedHooks() const;
+ 
+ protected:
+ 	template <typename EngType>
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index 9164fdf..c457da6 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -93,6 +93,12 @@ bool Engine_Ext_Dispersive::AnyCurrADE() const
+ }
+ 
+ unsigned int Engine_Ext_Dispersive::GetUsedHooks() const
++{
++	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Dispersive);
++	return DispersiveHooks();
++}
++
++unsigned int Engine_Ext_Dispersive::DispersiveHooks() const
+ {
+ 	return (AnyVoltADE() ? APPLY_VOLT : 0) | (AnyCurrADE() ? APPLY_CURR : 0) | (m_LinesReady ? LINE_HOOKS : 0);
+ }
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index 0f9eab4..5846ba5 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -37,6 +37,8 @@ public:
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+ 	virtual unsigned int GetUsedHooks() const;
++	//! the hooks of the dispersive base (for subclasses that add their own)
++	unsigned int DispersiveHooks() const;
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
+ 
+diff --git a/FDTD/extensions/engine_ext_excitation.cpp b/FDTD/extensions/engine_ext_excitation.cpp
+index fc94894..c2fda2b 100644
+--- a/FDTD/extensions/engine_ext_excitation.cpp
++++ b/FDTD/extensions/engine_ext_excitation.cpp
+@@ -20,6 +20,13 @@
+ #include "FDTD/engine_sse.h"
+ #include <algorithm>
+ 
++// APPLY_CURR only when there are current excitations (a soft/hard voltage excitation has none): saves a barrier per timestep
++unsigned int Engine_Ext_Excitation::GetUsedHooks() const
++{
++	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Excitation);
++	return APPLY_VOLT | (m_Op_Exc->GetCurrCount() ? APPLY_CURR : 0) | LINE_HOOKS;
++}
++
+ Engine_Ext_Excitation::Engine_Ext_Excitation(Operator_Ext_Excitation* op_ext) : Engine_Extension(op_ext)
+ {
+ 	m_Op_Exc = op_ext;
+diff --git a/FDTD/extensions/engine_ext_excitation.h b/FDTD/extensions/engine_ext_excitation.h
+index 20b24d9..73cf1d9 100644
+--- a/FDTD/extensions/engine_ext_excitation.h
++++ b/FDTD/extensions/engine_ext_excitation.h
+@@ -31,7 +31,7 @@ public:
+ 	Engine_Ext_Excitation(Operator_Ext_Excitation* op_ext);
+ 	virtual ~Engine_Ext_Excitation();
+ 
+-	virtual unsigned int GetUsedHooks() const {return APPLY_VOLT | APPLY_CURR | LINE_HOOKS;}
++	virtual unsigned int GetUsedHooks() const;
+ 
+ 	virtual void Apply2Voltages();
+ 	virtual void Apply2Current();
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index 7164ff8..2bc7dd3 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -78,7 +78,8 @@ Engine_Ext_LorentzMaterial::~Engine_Ext_LorentzMaterial()
+ 
+ unsigned int Engine_Ext_LorentzMaterial::GetUsedHooks() const
+ {
+-	return Engine_Ext_Dispersive::GetUsedHooks() | (AnyVoltADE() ? PRE_VOLT : 0) | (AnyCurrADE() ? PRE_CURR : 0);
++	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_LorentzMaterial);
++	return DispersiveHooks() | (AnyVoltADE() ? PRE_VOLT : 0) | (AnyCurrADE() ? PRE_CURR : 0);
+ }
+ 
+ // the same per-position operations as DoPreVoltageUpdatesImpl, for the positions on x-lines [x0,x1)
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.h b/FDTD/extensions/engine_ext_lumpedRLC.h
+index 6f8636e..b8419b5 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.h
++++ b/FDTD/extensions/engine_ext_lumpedRLC.h
+@@ -40,7 +40,7 @@ public:
+ 	Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC *op_ext_RLC);
+ 	virtual ~Engine_Ext_LumpedRLC();
+ 
+-	virtual unsigned int GetUsedHooks() const {return PRE_VOLT | APPLY_VOLT | LINE_HOOKS;}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_LumpedRLC); return PRE_VOLT | APPLY_VOLT | LINE_HOOKS;}
+ 
+ 	virtual void DoPreVoltageUpdates();
+ 	virtual void Apply2Voltages();
+diff --git a/FDTD/extensions/engine_ext_mur_abc.h b/FDTD/extensions/engine_ext_mur_abc.h
+index 384fb70..0d8e008 100644
+--- a/FDTD/extensions/engine_ext_mur_abc.h
++++ b/FDTD/extensions/engine_ext_mur_abc.h
+@@ -33,7 +33,7 @@ public:
+ 	virtual ~Engine_Ext_Mur_ABC();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+-	virtual unsigned int GetUsedHooks() const {return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS : 0);}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Mur_ABC); return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS : 0);}
+ 
+ 	virtual void DoPreVoltageUpdates() {Engine_Ext_Mur_ABC::DoPreVoltageUpdates(0);}
+ 	virtual void DoPreVoltageUpdates(int threadID);
+diff --git a/FDTD/extensions/engine_ext_upml.h b/FDTD/extensions/engine_ext_upml.h
+index 9fdc806..2842879 100644
+--- a/FDTD/extensions/engine_ext_upml.h
++++ b/FDTD/extensions/engine_ext_upml.h
+@@ -35,7 +35,7 @@ public:
+ 	virtual ~Engine_Ext_UPML();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+-	virtual unsigned int GetUsedHooks() const {return PRE_VOLT | POST_VOLT | PRE_CURR | POST_CURR | PREPOST_WRITES_FIELDS | ((m_Vec || m_Sse) ? LINE_HOOKS : 0);}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_UPML); return PRE_VOLT | POST_VOLT | PRE_CURR | POST_CURR | PREPOST_WRITES_FIELDS | ((m_Vec || m_Sse) ? LINE_HOOKS : 0);}
+ 
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index d454f52..6e0bd15 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -18,6 +18,8 @@
+ #ifndef ENGINE_EXTENSION_H
+ #define ENGINE_EXTENSION_H
+ 
++#include <typeinfo>
++
+ #define ENG_EXT_PRIO_DEFAULT 0 //default engine extension priority
+ 
+ // priority definitions for some important extensions
+@@ -35,6 +37,11 @@ class Operator_Extension;
+ class Engine;
+ 
+ //! Abstract base-class for all engine extensions
++//! Put this first in every GetUsedHooks() override: a subclass that does not override GetUsedHooks() itself then
++//! gets LEGACY_HOOKS (every hook called), so it can never inherit a declaration that misses the hooks it adds
++//! (found 2026-11-02: Engine_Ext_DebyeMaterial inherited Engine_Ext_Dispersive's and lost its Pre/Post voltage hooks).
++#define OPENEMS_HOOKS_DECLARED_BY(CLASS) do { if (typeid(*this) != typeid(CLASS)) return Engine_Extension::LEGACY_HOOKS; } while (0)
++
+ class Engine_Extension
+ {
+ public:
+@@ -56,6 +63,8 @@ public:
+ 	  hooks. Apply2* hooks keep one barrier per extension, because they write engine fields in
+ 	  priority order.
+ 	  The default LEGACY_HOOKS keeps the old behaviour: every hook is called, followed by a barrier.
++	  Every override must start with OPENEMS_HOOKS_DECLARED_BY(ThisClass) and every subclass that adds a hook
++	  must declare its own set: a declaration is never inherited.
+ 	  */
+ 	virtual unsigned int GetUsedHooks() const {return LEGACY_HOOKS;}
+ 
+@@ -86,9 +95,9 @@ public:
+ 	  the same order of hooks and extensions for every cell. A line hook may touch the fields of its
+ 	  own lines only (and of the line next to a line from GetCoupledLines()). Different threads call
+ 	  them for disjoint line ranges at the same time.
+-	  Note: the fused sweep never calls the *CurrentLines() hooks for the last x-line (NX-1): the
+-	  engine does not update the currents there either (they stay 0) and no excitation entry can sit
+-	  on it, so this matches the unfused path today; a current hook with real work on NX-1 would not.
++	  Invariant: the engine never updates the currents of the last x-line (NX-1, they stay 0) and no
++	  excitation entry can sit on it, so the fused sweep never calls the *CurrentLines() hooks for it;
++	  a current hook of an extension must therefore be a no-op on NX-1 (true for every extension in tree).
+ 	  */
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int /*x0*/, unsigned int /*x1*/) {}
+diff --git a/FDTD/operator.cpp b/FDTD/operator.cpp
+index 1fb4f55..ba59ab0 100644
+--- a/FDTD/operator.cpp
++++ b/FDTD/operator.cpp
+@@ -22,21 +22,6 @@
+ #include <chrono>
+ #include <iostream>
+ 
+-// OPENEMS_SETUP_TIMING=1 prints the time of every phase of the operator setup to stderr
+-struct SetupTimer
+-{
+-	SetupTimer(const char* what) : m_what(what), m_t0(std::chrono::steady_clock::now()) {}
+-	static bool Enabled() { static const bool on = getenv("OPENEMS_SETUP_TIMING")!=NULL; return on; }
+-	void Lap(const std::string& step)
+-	{
+-		if (!Enabled()) return;
+-		std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
+-		std::cerr << "setup timing: " << m_what << " " << step << ": " << std::chrono::duration<double>(t-m_t0).count() << " s" << std::endl;
+-		m_t0 = t;
+-	}
+-	const char* m_what;
+-	std::chrono::steady_clock::time_point m_t0;
+-};
+ #include "operator.h"
+ #include "engine.h"
+ #include "extensions/operator_extension.h"
+@@ -61,6 +46,27 @@ using std::cerr;
+ using std::endl;
+ using std::flush;
+ 
++#include <atomic>
++
++// OPENEMS_SETUP_TIMING=1 prints the time of every phase of the operator setup to stderr
++struct SetupTimer
++{
++	SetupTimer(const char* what) : m_what(what), m_t0(std::chrono::steady_clock::now()) {}
++	static bool Enabled() { static const bool on = getenv("OPENEMS_SETUP_TIMING")!=NULL; return on; }
++	void Lap(const std::string& step)
++	{
++		if (!Enabled()) return;
++		std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
++		std::cerr << "setup timing: " << m_what << " " << step << ": " << std::chrono::duration<double>(t-m_t0).count() << " s" << std::endl;
++		m_t0 = t;
++	}
++	const char* m_what;
++	std::chrono::steady_clock::time_point m_t0;
++};
++// bumped by every CalcECOperator(): keys the per-thread GetMaterial() cache so a later setup (same mesh and
++// addresses, properties freed and reallocated) can never reuse a pointer of an earlier one (review 2026-11-02)
++static std::atomic<unsigned int> s_SetupGeneration(0);
++
+ Operator* Operator::New()
+ {
+ 	cout << "Create FDTD operator" << endl;
+@@ -1024,6 +1030,7 @@ void Operator::Calc_ECOperatorPos(int n, unsigned int* pos)
+ 
+ int Operator::CalcECOperator( DebugFlags debugFlags )
+ {
++	++s_SetupGeneration;
+ 	SetupTimer timer("Operator::CalcECOperator");
+ 	Init_EC();
+ 	InitDataStorage();
+@@ -1343,12 +1350,13 @@ double Operator::GetMaterial(
+ 	// The material averaging asks for two types at the same coordinate in a row (epsilon+kappa, mue+sigma):
+ 	// remember the last lookup per thread, the primitives do not change during the setup.
+ 	// (keyed by the vector's address, size and first/last entry: a later vector may reuse a freed address)
+-	struct LastLookup { double coords[3]; const CSPrimitives* const* prims; size_t num; const CSPrimitives* first; const CSPrimitives* back; CSPropMaterial* mat; bool valid; };
+-	static thread_local LastLookup last = {{0,0,0}, NULL, 0, NULL, NULL, NULL, false};
++	struct LastLookup { double coords[3]; const CSPrimitives* const* prims; size_t num; const CSPrimitives* first; const CSPrimitives* back; CSPropMaterial* mat; bool valid; unsigned int gen; };
++	static thread_local LastLookup last = {{0,0,0}, NULL, 0, NULL, NULL, NULL, false, 0};
++	const unsigned int gen = s_SetupGeneration.load();
+ 	const CSPrimitives* first = vPrims.empty() ? NULL : vPrims.front();
+ 	const CSPrimitives* back = vPrims.empty() ? NULL : vPrims.back();
+ 	CSPropMaterial* mat;
+-	if (last.valid && last.coords[0]==coords[0] && last.coords[1]==coords[1] && last.coords[2]==coords[2]
++	if (last.valid && last.gen==gen && last.coords[0]==coords[0] && last.coords[1]==coords[1] && last.coords[2]==coords[2]
+ 		&& last.prims==vPrims.data() && last.num==vPrims.size() && last.first==first && last.back==back)
+ 		mat = last.mat;
+ 	else
+@@ -1356,7 +1364,7 @@ double Operator::GetMaterial(
+ 		CSProperties* prop = CSX->FindPropertyByCoordPriority(coords,vPrims,markAsUsed);
+ 		mat = dynamic_cast<CSPropMaterial*>(prop);
+ 		last.coords[0]=coords[0]; last.coords[1]=coords[1]; last.coords[2]=coords[2];
+-		last.prims = vPrims.data(); last.num = vPrims.size(); last.first = first; last.back = back; last.mat = mat; last.valid = markAsUsed;
++		last.prims = vPrims.data(); last.num = vPrims.size(); last.first = first; last.back = back; last.mat = mat; last.valid = markAsUsed; last.gen = gen;
+ 	}
+ 	if (mat)
+ 	{
+diff --git a/FDTD/operator_sse_compressed.cpp b/FDTD/operator_sse_compressed.cpp
+index c10501b..984dae6 100644
+--- a/FDTD/operator_sse_compressed.cpp
++++ b/FDTD/operator_sse_compressed.cpp
+@@ -16,8 +16,6 @@
+ */
+ 
+ #include "operator_sse_compressed.h"
+-#include <chrono>
+-#include <cstdlib>
+ #include <iostream>
+ #include "engine_sse_compressed.h"
+ #include "engine_sse.h"
+diff --git a/nf2ff/nf2ff_calc.cpp b/nf2ff/nf2ff_calc.cpp
+index 966f051..23b58e4 100644
+--- a/nf2ff/nf2ff_calc.cpp
++++ b/nf2ff/nf2ff_calc.cpp
+@@ -535,7 +535,11 @@ bool nf2ff_calc::AddSinglePlane(float **lines, unsigned int* numLines, ArrayLib:
+ 	ArrayLib::ArrayIJ<complex<float>> Lt("l_Lt", numAngles);
+ 	ArrayLib::ArrayIJ<complex<float>> Lp("l_Lp", numAngles);
+ 
++#ifdef NF2FF_HAVE_CBLAS
+ 	static const bool legacy = getenv("OPENEMS_NF2FF_LEGACY")!=NULL;
++#else
++	static const bool legacy = true;   // the separable path needs a BLAS cgemm; the threaded legacy loop is faster than its scalar fallback
++#endif
+ 	if (MeshType==0 && !legacy)
+ 	{
+ 		CalcPlaneSeparable(ny, lines, numLines, normDir, edge_length_P, edge_length_PP, E_field, H_field, Nt, Np, Lt, Lp);
+diff --git a/openems.cpp b/openems.cpp
+index 9b6e925..cec1ad4 100644
+--- a/openems.cpp
++++ b/openems.cpp
+@@ -1663,6 +1663,8 @@ void openEMS::RunFDTD()
+ 			else
+ 				cerr << "openEMS::RunFDTD: OPENEMS_PROBE_END_DB set but the model has no probe, ignored" << endl;
+ 		}
++		else if (db<0)
++			cerr << "openEMS::RunFDTD: OPENEMS_PROBE_END_DB needs a Gaussian excitation, ignored" << endl;
+ 	}
+ 
+ 	double change=1;
+@@ -1696,20 +1698,23 @@ void openEMS::RunFDTD()
+ 			for (ProcessIntegral* pi : endProbes)
+ 				kindPeak[pi->GetProcessingName()] = max(kindPeak[pi->GetProcessingName()], pi->GetPeakAbs());
+ 			double worst = 0;
++			bool allSeen = true;   // a probe the wavefront has not reached yet (peak still 0) must not count as settled
+ 			for (ProcessIntegral* pi : endProbes)
+ 			{
+ 				double ref = max(pi->GetPeakAbs(), 1e-6*kindPeak[pi->GetProcessingName()]);
++				if (pi->GetPeakAbs()<=0)
++					allSeen = false;
+ 				if (ref>0)
+ 					worst = max(worst, pi->GetLastAbs()/ref);
+ 			}
+ 			unsigned int ts = FDTD_Eng->GetNumberOfTimesteps();
+-			if (worst>probeEndThr || ts<FDTD_Op->GetExcitationSignal()->GetLength())
++			if (!allSeen || worst>probeEndThr || ts<FDTD_Op->GetExcitationSignal()->GetLength())
+ 				probeHoldStart = ts;
+ 			else if (ts-probeHoldStart >= probeHoldTS)
+ 				probeEnd = true;
+ 			if (g_settings.GetVerboseLevel()>2)
+ 				cout << "  probe end check @" << ts << ": worst " << std::scientific << setprecision(2) << worst
+-					 << " hold since " << probeHoldStart << (probeEnd ? "  -> stop" : "") << endl;
++					 << " hold since " << probeHoldStart << (allSeen ? "" : " (a probe has seen no signal yet)") << (probeEnd ? "  -> stop" : "") << endl;
+ 		}
+ 
+ 		if (Eng_Ext_SSD)
+-- 
+2.54.0 (Apple Git-157)
+

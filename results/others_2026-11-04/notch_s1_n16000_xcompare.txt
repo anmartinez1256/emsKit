@@ -1,0 +1,8 @@
+# notch_s1_n16000  reference /Users/anmar/opt/src/emskit-compare/runs/emskit/notch_s1_n16000/stock_multithreaded_t4/rep0
+emskit/notch_s1_n16000/cg18_multithreaded_t4/rep0            probes rel=0.0e+00  S11: identical  S21: identical
+emskit/notch_s1_n16000/cg18_fastest/rep0                     probes rel=0.0e+00  S11: identical  S21: identical
+master/notch_s1_n16000/multithreaded_t4/rep0                 probes rel=0.0e+00  S11: identical  S21: identical
+master/notch_s1_n16000/gpu/rep0                              probes rel=9.4e-07  S11: max|dS|=2.6e-06 max dB=2.3e-04  S21: max|dS|=2.0e-06 max dB=9.4e-05
+luikore-metal/notch_s1_n16000/multithreaded_t4/rep0          probes rel=0.0e+00  S11: identical  S21: identical
+luikore-metal/notch_s1_n16000/metal_t4/rep0                  probes rel=0.0e+00  PROBLEM: missing port_it_1A; missing port_it_1B; missing port_it_2A; missing port_it_2B; missing port_ut_1A; missing port_ut_1B; missing port_ut_1C; missing port_ut_2A; missing port_ut_2B; missing port_ut_2C
+luikore-legacy/notch_s1_n16000/metal_t4_OPENEMS_METAL_FUSED_PIPELINE_0/rep0 probes rel=8.1e-07  S11: max|dS|=1.7e-06 max dB=1.5e-04  S21: max|dS|=2.1e-06 max dB=1.1e-04

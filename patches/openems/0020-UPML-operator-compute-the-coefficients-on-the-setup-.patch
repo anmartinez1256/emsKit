@@ -1,0 +1,234 @@
+From 0ff3802ffb87f10a532cc8b891f4e63072910c30 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 01:51:09 -0600
+Subject: [PATCH 20/27] UPML operator: compute the coefficients on the setup
+ threads (upstream PR #244)
+
+Operator_Ext_UPML::BuildExtension() computed the PML coefficients of every cell on one thread, evaluating the
+grading function through FunctionParser for every cell and component. The cells are independent:
+BuildExtensionRange() now computes the x-lines of one thread, RunJobsInThreads() (tools/useful) splits the
+x-lines over the operator's setup threads (GetNumSetupThreads(): the threads of the multithreaded operator, one
+for the others), and each thread evaluates the grading on its own deep copy of the parser
+(FunctionParser::Eval() is not reentrant). An exception in a thread is rethrown on the calling thread.
+
+From upstream PR #244 by Noriaki Takashima (nori-proto): its UPML part and the RunJobsInThreads() helper, with
+the thread count taken from GetNumSetupThreads() instead of AvailableThreads(), so the single-threaded engines
+keep their one-thread setup. The PR's Debye part is not taken (no measurable share of any model's setup).
+
+Same values in every cell (bit-identical). UPML build lap (OPENEMS_SETUP_TIMING=1, multithreaded engine, 6
+interleaved rounds, other processes on 0.3-0.5 cores): SMA launch 0.086 -> 0.022 s (operator setup 0.32 ->
+0.24 s), notch x3 0.090 -> 0.035 s (1.46 -> 1.38 s), notch tutorial 0.013 -> 0.005 s.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/operator_ext_upml.cpp | 31 +++++++++++++++++------
+ FDTD/extensions/operator_ext_upml.h   |  6 ++++-
+ tools/useful.cpp                      | 36 +++++++++++++++++++++++++++
+ tools/useful.h                        |  7 ++++++
+ 4 files changed, 71 insertions(+), 9 deletions(-)
+
+diff --git a/FDTD/extensions/operator_ext_upml.cpp b/FDTD/extensions/operator_ext_upml.cpp
+index bb542e1..7ccaf8a 100644
+--- a/FDTD/extensions/operator_ext_upml.cpp
++++ b/FDTD/extensions/operator_ext_upml.cpp
+@@ -19,6 +19,9 @@
+ #include "FDTD/operator_cylindermultigrid.h"
+ #include "engine_ext_upml.h"
+ #include "fparser.hh"
++#include "tools/useful.h"
++
++#include <algorithm>
+ 
+ using namespace std;
+ 
+@@ -266,7 +269,7 @@ bool Operator_Ext_UPML::SetGradingFunction(string func)
+ 	return false;
+ }
+ 
+-void Operator_Ext_UPML::CalcGradingKappa(int ny, unsigned int pos[3], double Zm, double kappa_v[3], double kappa_i[3])
++void Operator_Ext_UPML::CalcGradingKappa(int ny, unsigned int pos[3], double Zm, double kappa_v[3], double kappa_i[3], FunctionParser* grading)
+ {
+ 	double depth=0;
+ 	double width=0;
+@@ -287,7 +290,7 @@ void Operator_Ext_UPML::CalcGradingKappa(int ny, unsigned int pos[3], double Zm,
+ 				depth-=m_Op->GetEdgeLength(n,pos)/2;
+ 			double vars[5] = {depth, width/m_Size[2*n], width, Zm, (double)m_Size[2*n]};
+ 			if (depth>0)
+-				kappa_v[n] = m_GradingFunction->Eval(vars);
++				kappa_v[n] = grading->Eval(vars);
+ 			else
+ 				kappa_v[n]=0;
+ 			if (n==ny)
+@@ -299,7 +302,7 @@ void Operator_Ext_UPML::CalcGradingKappa(int ny, unsigned int pos[3], double Zm,
+ 				depth=0;
+ 			vars[0]=depth;
+ 			if (depth>0)
+-				kappa_i[n] = m_GradingFunction->Eval(vars);
++				kappa_i[n] = grading->Eval(vars);
+ 			else
+ 				kappa_i[n] = 0;
+ 		}
+@@ -318,7 +321,7 @@ void Operator_Ext_UPML::CalcGradingKappa(int ny, unsigned int pos[3], double Zm,
+ 				depth+=m_Op->GetEdgeLength(n,pos)/2;
+ 			double vars[5] = {depth, width/(m_Size[2*n+1]), width, Zm, (double)m_Size[2*n+1]};
+ 			if (depth>0)
+-				kappa_v[n] = m_GradingFunction->Eval(vars);
++				kappa_v[n] = grading->Eval(vars);
+ 			else
+ 				kappa_v[n]=0;
+ 			if (n==ny)
+@@ -330,7 +333,7 @@ void Operator_Ext_UPML::CalcGradingKappa(int ny, unsigned int pos[3], double Zm,
+ 				depth=0;
+ 			vars[0]=depth;
+ 			if (depth>0)
+-				kappa_i[n] = m_GradingFunction->Eval(vars);
++				kappa_i[n] = grading->Eval(vars);
+ 			else
+ 				kappa_i[n]=0;
+ 		}
+@@ -359,6 +362,19 @@ bool Operator_Ext_UPML::BuildExtension()
+ 	iifo.Init("iifo", m_numLines);
+ 	iifn.Init("iifn", m_numLines);
+ 
++	// The cells are independent: split the x-lines over the operator's setup threads (GetNumSetupThreads(): the
++	// multithreaded operator's threads, one for the others). Each thread evaluates the grading function on its own
++	// copy, FunctionParser::Eval() is not thread safe.
++	unsigned int numThreads = std::max(1u, std::min(m_Op->GetNumSetupThreads(), m_numLines[0]));
++	std::vector<FunctionParser> grading(numThreads, *m_GradingFunction);
++	for (size_t n=0; n<grading.size(); ++n)
++		grading[n].ForceDeepCopy(); // a copy shares the parser data until this, so do it before the threads start
++	RunJobsInThreads(m_numLines[0], numThreads, [&](unsigned int t, unsigned int start, unsigned int stop) {BuildExtensionRange(start, stop, &grading[t]);});
++	return true;
++}
++
++void Operator_Ext_UPML::BuildExtensionRange(unsigned int x_start, unsigned int x_stop, FunctionParser* grading)
++{
+ 	unsigned int pos[3];
+ 	unsigned int loc_pos[3];
+ 	int nP,nPP;
+@@ -367,7 +383,7 @@ bool Operator_Ext_UPML::BuildExtension()
+ 	double eff_Mat[4];
+ 	double dT = m_Op->GetTimestep();
+ 
+-	for (loc_pos[0]=0; loc_pos[0]<m_numLines[0]; ++loc_pos[0])
++	for (loc_pos[0]=x_start; loc_pos[0]<=x_stop; ++loc_pos[0])
+ 	{
+ 		pos[0] = loc_pos[0] + m_StartPos[0];
+ 		for (loc_pos[1]=0; loc_pos[1]<m_numLines[1]; ++loc_pos[1])
+@@ -380,7 +396,7 @@ bool Operator_Ext_UPML::BuildExtension()
+ 				for (int n=0; n<3; ++n)
+ 				{
+ 					m_Op->Calc_EffMatPos(n,pos,eff_Mat,vPrims);
+-					CalcGradingKappa(n, pos,Z0 ,kappa_v ,kappa_i);
++					CalcGradingKappa(n, pos,Z0 ,kappa_v ,kappa_i, grading);
+ 					nP = (n+1)%3;
+ 					nPP = (n+2)%3;
+ 					// if eff_Mat[1] > 1e3 assume a metal and disable PML to continue a signal layer
+@@ -441,7 +457,6 @@ bool Operator_Ext_UPML::BuildExtension()
+ 			}
+ 		}
+ 	}
+-	return true;
+ }
+ 
+ Engine_Extension* Operator_Ext_UPML::CreateEngineExtention()
+diff --git a/FDTD/extensions/operator_ext_upml.h b/FDTD/extensions/operator_ext_upml.h
+index 32e984c..39112c4 100644
+--- a/FDTD/extensions/operator_ext_upml.h
++++ b/FDTD/extensions/operator_ext_upml.h
+@@ -96,7 +96,11 @@ protected:
+ 	std::string m_GradFunc;
+ 	FunctionParser* m_GradingFunction;
+ 
+-	void CalcGradingKappa(int ny, unsigned int pos[3], double Zm, double kappa_v[3], double kappa_i[3]);
++	//! grading: the calling thread's own copy of m_GradingFunction, FunctionParser::Eval() is not reentrant
++	void CalcGradingKappa(int ny, unsigned int pos[3], double Zm, double kappa_v[3], double kappa_i[3], FunctionParser* grading);
++
++	//! Calculate the coefficients of the (local) x-lines x_start..x_stop, see BuildExtension()
++	void BuildExtensionRange(unsigned int x_start, unsigned int x_stop, FunctionParser* grading);
+ 
+ 	void DeleteOp();
+ 
+diff --git a/tools/useful.cpp b/tools/useful.cpp
+index 48ea6c2..839c6fb 100644
+--- a/tools/useful.cpp
++++ b/tools/useful.cpp
+@@ -25,6 +25,7 @@
+ #include <sstream>
+ #include <fstream>
+ #include <thread>
++#include <exception>
+ #ifdef __linux__
+ #include <sched.h>
+ #endif
+@@ -224,6 +225,41 @@ std::vector<unsigned int> AssignJobs2Threads(unsigned int jobs, unsigned int nrT
+ 	return jpt;
+ }
+ 
++void RunJobsInThreads(unsigned int jobs, unsigned int nrThreads, const std::function<void(unsigned int, unsigned int, unsigned int)>& func)
++{
++	if (jobs==0)
++		return;
++	if (nrThreads==0)
++		nrThreads = 1;
++	std::vector<unsigned int> jpt = AssignJobs2Threads(jobs, nrThreads, true);
++	std::vector<unsigned int> start(jpt.size(), 0);
++	for (size_t n=1; n<jpt.size(); ++n)
++		start[n] = start[n-1] + jpt[n-1];
++
++	// an exception must not leave its thread (std::terminate): keep it, rethrow it below
++	std::vector<std::exception_ptr> error(jpt.size());
++	auto run = [&](unsigned int n)
++	{
++		try
++		{
++			func(n, start[n], start[n]+jpt[n]-1);
++		}
++		catch (...)
++		{
++			error[n] = std::current_exception();
++		}
++	};
++	std::vector<std::thread> threads;
++	for (unsigned int n=1; n<jpt.size(); ++n)
++		threads.push_back(std::thread(run, n));
++	run(0);
++	for (size_t n=0; n<threads.size(); ++n)
++		threads[n].join();
++	for (size_t n=0; n<error.size(); ++n)
++		if (error[n])
++			std::rethrow_exception(error[n]);
++}
++
+ std::vector<float> SplitString2Float(std::string str, std::string delimiter)
+ {
+ 	std::vector<float> v_f;
+diff --git a/tools/useful.h b/tools/useful.h
+index 97f0f13..b6af02d 100644
+--- a/tools/useful.h
++++ b/tools/useful.h
+@@ -20,6 +20,7 @@
+ 
+ #include <vector>
+ #include <string>
++#include <functional>
+ 
+ //! Calc the nyquist number of timesteps for a given frequency and timestep
+ unsigned int CalcNyquistNum(double fmax, double dT);
+@@ -40,6 +41,12 @@ bool EnvFlag(const char* name);
+ //! Calculate an optimal job distribution to a given number of threads. Will return a vector with the jobs for each thread.
+ std::vector<unsigned int> AssignJobs2Threads(unsigned int jobs, unsigned int nrThreads, bool RemoveEmpty=false);
+ 
++//! Run func(thread, start, stop) over the jobs 0..jobs-1, split by AssignJobs2Threads() into one
++//! consecutive range (start..stop inclusive) per thread, on min(jobs, nrThreads) threads.
++//! Thread 0 runs on the calling thread; returns when all are done. An exception thrown by func
++//! is rethrown here, the one of the lowest range first (what a single thread would have met first).
++void RunJobsInThreads(unsigned int jobs, unsigned int nrThreads, const std::function<void(unsigned int, unsigned int, unsigned int)>& func);
++
+ std::vector<float> SplitString2Float(std::string str, std::string delimiter=",");
+ std::vector<double> SplitString2Double(std::string str, std::string delimiter=",");
+ 
+-- 
+2.54.0 (Apple Git-157)
+
