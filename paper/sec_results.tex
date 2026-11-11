@@ -259,3 +259,160 @@ the automatic thread count and the probe end, run on it with no change on the to
 opt-in, and the toolkit does not select it.
 
 \input{figures/tab_e2e_cg29}
+
+\subsection{Common benchmarks}\label{sec:common}
+The tables so far use this project's own models. Four measurements of 2026-11-10 use tests that readers outside the
+project know by name: upstream's own benchmark on current master, STREAM, a free-space cube after the gprMax benchmark
+models, and the radar cross-section of a metal sphere against the Mie series
+(\code{results/common\_benchmarks\_2026-11-10.txt}; \code{scripts/common\_bench/}). The fork is the installed build
+cg29 in all four.
+
+\paragraph{Upstream's benchmark, and master's new engine.}
+Upstream master has a benchmark tool, \code{benchmark/bench.py}: six cases (an empty box, a box with PML, an
+inhomogeneous one, a dispersive one, an antenna with field dumps, a cylindrical mesh) at about 1\,M (size S) and
+8\,M cells (size M), each timed for 3\,s of time stepping with the \code{openEMS} binary. Since the fork's base,
+master has also gained a third engine, \code{--engine=cpu}, beside \code{multithreaded} and
+\code{gpu}~\cite{thliebig495}. The tool ran twice on master 1d710c2: master alone on its three engines (part A), and
+master against the fork on the \code{multithreaded} engine, the one engine both have, interleaved as upstream asks
+(part B); 4 and 8 threads, three repeats (Table~\ref{tab:upstream}). During both parts the other processes used a
+median of 0.22 cores (three of 75 samples above 0.8). The tool's column that says whether two builds compute the same
+thing was not produced: it needs master's Python module, which was not built.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+ & & \multicolumn{3}{c}{part B, interleaved} & \multicolumn{3}{c@{}}{part A, master alone} \\
+\cmidrule(lr){3-5}\cmidrule(l){6-8}
+case & size & master & fdtdKit & ratio & master & master & master \\
+ & & \code{multithr.} & \code{multithr.} & & \code{multithr.} & \code{cpu} & \code{gpu} \\
+\midrule
+ideal & S & 1\,181 & 2\,456 & 2.08$\times$ & 1\,267 & 1\,907 & 1\,703 \\
+pml & S & 189 & 1\,056 & 5.60$\times$ & 201 & 709 & 1\,163 \\
+inhomogeneous & S & 187 & 1\,014 & 5.42$\times$ & 203 & 678 & 1\,153 \\
+dispersive & S & 48 & 479 & 10.0$\times$ & 53 & 921 & 737 \\
+antenna & S & 148 & 871 & 5.87$\times$ & 162 & 679 & 1\,078 \\
+cylindrical & S & 911 & 1\,544 & 1.69$\times$ & 1\,029 & 1\,304 & 1\,537 \\
+\addlinespace
+ideal & M & 1\,088 & 1\,739 & 1.60$\times$ & 1\,360 & 2\,099 & 1\,689 \\
+pml & M & 277 & 1\,061 & 3.83$\times$ & 295 & 1\,225 & 1\,414 \\
+inhomogeneous & M & 266 & 967 & 3.63$\times$ & 286 & 1\,188 & 1\,413 \\
+dispersive & M & 53 & 448 & 8.47$\times$ & 52 & 1\,109 & 739 \\
+antenna & M & 214 & 908 & 4.24$\times$ & 230 & 1\,088 & 1\,334 \\
+cylindrical & M & 823 & 1\,012 & 1.23$\times$ & 921 & 1\,755 & 1\,590 \\
+\bottomrule
+\end{tabular}
+\caption{Upstream's \code{benchmark/bench.py} on the M5, 2026-11-10, in \MC: the better of 4 and 8 threads per
+cell of the table, each the median of three repeats as the tool reports it. Master: openEMS 1d710c2 with CSXCAD
+fdff4b5; fdtdKit: the installed cg29. Part B ran the two builds interleaved; part A ran master alone, 15 minutes
+earlier, so its \code{cpu} and \code{gpu} columns are not paired with the fork. The tool's spread was below 5\,\%
+in most rows and above 10\,\% in ten of the 120 (master's dispersive S rows in part B, 23 and 26\,\%, among
+them); the file has every row.}\label{tab:upstream}
+\end{table}
+
+On the engine both builds have, the fork runs 1.23--8.5$\times$ as fast as master at 8\,M cells and
+1.69--10.0$\times$ at 1\,M, the least on the cylindrical mesh and the most on the dispersive case, as against v0.37.0
+(Section~\ref{sec:cg29}). Master's new \code{cpu} engine changes the picture at 8\,M cells: taken as measured,
+its rates are 1.15--1.23$\times$ the fork's on the ideal, pml, inhomogeneous and antenna cases, 1.73$\times$ on the
+cylindrical mesh and 2.5$\times$ on the dispersive case. The two columns come from different parts, and master's own
+\code{multithreaded} rates were 6--25\,\% higher in part A than in part B (dispersive M: 2\,\% lower); with each engine
+taken relative to master's \code{multithreaded} rate of its own part, the \code{cpu} engine is level with the fork
+on the ideal case (0.97$\times$), 1.08--1.14$\times$ on pml, inhomogeneous and antenna, 1.55$\times$ on the
+cylindrical mesh and 2.5$\times$ on the dispersive case. At 1\,M cells the fork is ahead of the \code{cpu} engine on
+five cases (1.18--1.50$\times$ as measured) and behind on the dispersive one (0.52$\times$). So on large grids
+upstream's own new engine is level with or ahead of this fork's CPU engine, and well ahead with dispersive material;
+a paired run of the two, with the probes compared, has not been made. The fork's Metal diamond engine was not part of
+this run: every case of the tool uses the steady-state detection, which that engine runs on its CPU loops
+(Section~\ref{sec:future}).
+
+\paragraph{STREAM.}
+The introduction takes the machine's memory bus as about 150\,GB/s from Apple's figure. STREAM~\cite{stream}, the
+usual measure of sustained memory bandwidth (version 5.10, 100\,M elements per array, OpenMP, the best of 20 passes),
+gives Table~\ref{tab:stream}: 120--130\,GB/s at 4 threads and 125--138\,GB/s at 8 and 10, and one thread alone
+already draws 110--115\,GB/s. STREAM counts 16 or 24 bytes per element and not the read that a store to a new cache
+line may cost, so its figures are a lower bound of the traffic. They sit where this paper's kernels do: the Metal
+kernels drew 121--127\,GB/s (Section~\ref{sec:gpu}), and the fused CPU sweep 95\,GB/s at 4 threads
+(Section~\ref{sec:engine}). A system process held one core during the run.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+threads & Copy & Scale & Add & Triad \\
+\midrule
+1 & 114.3 & 110.4 & 114.5 & 115.3 \\
+4 & 129.0 & 130.3 & 120.3 & 120.1 \\
+8 & 135.9 & 125.5 & 124.7 & 125.0 \\
+10 & 137.7 & 125.7 & 126.2 & 126.1 \\
+\bottomrule
+\end{tabular}
+\caption{STREAM 5.10 on the M5 (16\,GB), best rate in GB/s ($10^9$ bytes per second), 2026-11-10; Apple clang
+\code{-O3 -mcpu=native}, OpenMP, 100\,M elements per array.}\label{tab:stream}
+\end{table}
+
+\paragraph{A free-space cube.}
+The gprMax project times its solver on cubes of free space with one dipole source and its default 10-cell
+absorbing boundary, from $100^3$ to $800^3$ cells~\cite{gprmax,gprmaxgpu}. The model \code{cube} of
+\code{bench/models.py} builds the same problem in openEMS: $N^3$ cells of 1\,mm, one excited cell edge at the
+centre, \code{PML\_10} on all six faces, one voltage probe. Table~\ref{tab:cube} has $N=100$ to 400, the largest
+that 16\,GB hold with room to spare, in three paired rounds per size. These are rates of one model on three builds of
+one solver; they are not set against the rates that gprMax publishes for its own code.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}rrrrrrrrr@{}}
+\toprule
+$N$ & cells & steps & stock & fdtdKit & fdtdKit & Metal & CPU / & Metal / \\
+ & & & best & 4 thr & 8 thr & diamond & stock & CPU \\
+\midrule
+100 & 1.0\,M & 6\,000 & 181 & 923 & 1\,222 & 992 & 6.77$\times$ & 0.81$\times$ \\
+150 & 3.4\,M & 1\,800 & 256 & 1\,038 & 1\,339 & 1\,353 & 5.22$\times$ & 1.01$\times$ \\
+200 & 8.0\,M & 800 & 299 & 1\,030 & 1\,228 & 1\,470 & 4.11$\times$ & 1.20$\times$ \\
+300 & 27\,M & 600 & 370 & 946 & 1\,097 & 1\,703 & 2.97$\times$ & 1.55$\times$ \\
+400 & 64\,M & 600 & 439 & 875 & 1\,034 & 1\,834 & 2.35$\times$ & 1.77$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{The free-space cube with a 10-cell PML on every face, 2026-11-10, in \MC: medians of three paired rounds
+(\code{bench/abtest.py}). Stock: v0.37.0 at the better of 4 and 8 threads ($N\ge300$: 8 threads only); fdtdKit:
+cg29, \code{multithreaded}. Ratios: of the medians, the CPU ratio with fdtdKit at 8 threads. Every CPU run's probe is
+identical to stock's; the Metal engine's differs by $5.9\times10^{-7}$ to $3.9\times10^{-6}$ relative (it flushes
+subnormals). Other processes: a median of 1.3--1.6 cores during the runs of $N=100$ and 150, where a run that saw
+them above the limit of 1.5 cores was kept after one redo in every round, and 0.3--0.7 cores for
+$N\ge200$, where that happened in one round each at $N=200$ and 300.}\label{tab:cube}
+\end{table}
+
+The absorbing boundary sets the scale of these rates. At $N=100$ the six PML slabs hold 49\,\% of the cells and at
+$N=400$ 14\,\%, and stock updates PML cells far more slowly than plain ones, so stock's rate rises from 181 to
+439\,\MC\ with the size, the opposite of the six models. The fork's CPU engine stays at 1\,034--1\,339\,\MC, 2.4 to
+6.8 times stock. The Metal diamond engine passes the CPU engine at about 3\,M cells, as in
+Figure~\ref{fig:crossover}, and at 64\,M cells it runs 1.77$\times$ as fast, the largest lead in a paired run of
+this project; its rate still rises at the largest size.
+
+\paragraph{A metal sphere against the Mie series.}
+The monostatic radar cross-section of a perfectly conducting sphere has an exact series
+solution~\cite{mie}, and openEMS ships the case as a tutorial (\code{RCS\_Sphere}: radius 200\,mm, a plane wave from
+a total-field/scattered-field box, \code{PML\_8}, the far field through the nf2ff box).
+\code{scripts/common\_bench/mie.py} runs it with a fixed number of steps and compares 95 frequencies, $ka=0.41$ to
+4.19, with the series (Table~\ref{tab:mie}).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+cell at 1\,GHz & build, engine & cells & mean $|$error$|$ & largest \\
+\midrule
+$\lambda/20$ (the tutorial's) & stock v0.37.0 & 0.57\,M & 0.770\,dB & 2.943\,dB \\
+$\lambda/20$ & fdtdKit, multithreaded & 0.57\,M & 0.770\,dB & 2.943\,dB \\
+$\lambda/40$ & fdtdKit, multithreaded & 4.33\,M & 0.357\,dB & 0.880\,dB \\
+$\lambda/40$ & fdtdKit, Metal diamond$^{*}$ & 4.33\,M & 0.357\,dB & 0.880\,dB \\
+\bottomrule
+\end{tabular}
+\caption{Backscatter of a PEC sphere of 200\,mm radius against the Mie series, 95 frequencies with $ka$ from 0.41
+to 4.19, 2026-11-10; 1\,400 steps at $\lambda/20$ and 2\,000 at $\lambda/40$. $^{*}$The engine has no GPU version of
+the plane-wave source and ran its CPU loops.}\label{tab:mie}
+\end{table}
+
+The error is the method's and the mesh's: a staircased sphere on a uniform mesh, with a mean that halves when the cell is halved.
+It is not the fork's. Stock and fork give the same error to the digits shown; their cross-sections differ by at most
+$2.5\times10^{-6}$ relative, all of it from the fork's separable far-field routine
+(Section~\ref{sec:beyond}), and with that routine switched off (\code{OPENEMS\_NF2FF\_LEGACY=1}) the two are identical
+at all 100 frequencies. One thing this case showed about the tutorial itself: with its energy end criterion the stop
+step is not reproducible (1\,104 and 1\,340 steps in two stock runs), because the engine tests the criterion between
+chunks of steps whose length follows the measured speed, and two such runs differ by up to $1.6\times10^{-3}$ in
+the cross-section. Comparisons across builds need a fixed step count, as everywhere else in this paper.

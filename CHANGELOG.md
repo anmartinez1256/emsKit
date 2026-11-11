@@ -9,6 +9,27 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-11: four common benchmarks
+
+On the author's request the main session (Claude Fable 5.2, Claude Code) ran four tests on 2026-11-10 that readers
+outside the project know by name, all on the installed cg29 (`results/common_benchmarks_2026-11-10.txt`, the new
+section "Common benchmarks" of the paper, `scripts/common_bench/`, and a new model `cube` in `bench/models.py`, for the harness only: the model list of `emskit fdtd` is unchanged):
+
+- upstream master's own `benchmark/bench.py` on master 1d710c2 (three engines) and on master against the fork. On the
+  `multithreaded` engine the fork is 1.23 to 10.0 times master. Master's new `cpu` engine is level with or ahead of
+  the fork's CPU engine at 8 M cells (as measured 1.15 to 2.5 times; the two were not run interleaved) and behind it
+  on five of six cases at 1 M. The tool's probes column was not produced (it needs master's Python module);
+- STREAM 5.10: 125 to 138 GB/s at 8 and 10 threads, 110 to 115 GB/s on one;
+- a free-space cube with a 10-cell PML after the gprMax benchmark models, 100 to 400 cells per edge: the CPU engine
+  2.4 to 6.8 times stock, the Metal diamond engine 1.77 times the CPU engine at 64 M cells; CPU probes identical to
+  stock's;
+- the radar cross-section of a PEC sphere (tutorial `RCS_Sphere`) against the Mie series: 0.77 dB mean error at
+  lambda/20, equal for stock and fork, and 0.36 dB at lambda/40 (fork only); with the same far-field routine stock and
+  fork are identical.
+
+The paper's closing section no longer says that the compare table against master has not been made. The first two
+cube sizes ran with the other processes at 1.3 to 1.6 cores; the record gives the load of every run.
+
 ## 2026-11-10: published
 
 On the author's word this repository was pushed to github.com/anmartinez1256/emsKit as one commit made from the files

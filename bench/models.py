@@ -171,7 +171,30 @@ def build_ksma(nrts=None, scale=1.0):
     return _rfsim_model(launch.sma_launch(scale=scale), nrts)
 
 
-MODELS = {'patch': build_patch, 'notch': build_notch, 'kgcpw': build_kgcpw, 'ksma': build_ksma}
+def build_cube(nrts=None, scale=1.0):
+    """Free-space cube after the gprMax benchmark models (bench_100x100x100 .. bench_800x800x800 of gprMax's
+    tests/benchmarking): N x N x N cells of 1 mm, a z-directed dipole (one excited cell edge) at the centre, a
+    10-cell PML on all six faces. N = round(100 * scale). One voltage probe beside the source, so runs can be compared."""
+    n = int(round(100*scale))
+    FDTD = openEMS(NrTS=int(nrts), EndCriteria=0) if nrts else openEMS(NrTS=3000, EndCriteria=1e-5)
+    FDTD.SetGaussExcite(1e9, 0.9e9)
+    FDTD.SetBoundaryCond(['PML_10']*6)
+    CSX = ContinuousStructure()
+    FDTD.SetCSX(CSX)
+    mesh = CSX.GetGrid()
+    mesh.SetDeltaUnit(1e-3)
+    lines = np.arange(n + 1, dtype=float)
+    for d in 'xyz':
+        mesh.SetLines(d, lines)
+    c = float(n//2)
+    exc = CSX.AddExcitation('dipole', exc_type=0, exc_val=[0, 0, 1])
+    exc.AddBox([c, c, c], [c, c, c + 1])
+    probe = CSX.AddProbe('port_ut1', 0)
+    probe.AddBox([c + 5, c, c], [c + 5, c, c + 3])
+    return FDTD, [], np.linspace(1e8, 1.9e9, 201)
+
+
+MODELS = {'patch': build_patch, 'notch': build_notch, 'kgcpw': build_kgcpw, 'ksma': build_ksma, 'cube': build_cube}
 
 
 def sparams(name, sim_path, nrts=None, scale=1.0):

@@ -1,0 +1,738 @@
+Common benchmarks, 2026-11-10 (Apple M5, 4 P + 6 E cores, 16 GB, macOS 27.0.1)
+==================================================================================
+Four measurements that readers outside this project know by name. The fork is the installed build cg29
+(patches 0001-0027; banner v0.37.0-44-g074a687), stock is openEMS v0.37.0 (snapshot `stock`).
+The machine was shared: each section gives what the other processes used.
+
+1. Upstream's benchmark (openEMS master's benchmark/bench.py), 20:08-20:33
+--------------------------------------------------------------------------
+master = openEMS 1d710c2 (v0.37.0-50-g1d710c2) with CSXCAD fdff4b5, built with Apple clang into a scratch prefix.
+Part A (20:08-20:23): master alone, engines multithreaded, cpu, gpu, at 4 and 8 threads, --repeat 3.
+Part B (20:23-20:33): master and the fork interleaved, engine multithreaded, 4 and 8 threads, --repeat 3.
+bench.py times 3 s of time stepping per run with the openEMS binary. Its probes column (do two builds compute
+the same thing?) was NOT produced: it needs the Python module of master (openEMS.compare), which was not built;
+the tool stopped with ModuleNotFoundError after printing the tables below.
+Other processes, sampled every 20 s over both parts (75 samples): median 22 % of one core, 90th percentile 50 %;
+three samples above 80 %: 20:17:09 199 %, 20:24:50 88 %, 20:33:12 455 % (the last 34 s before the end).
+The cpu and gpu columns of master come from part A and were not interleaved with the fork.
+
+Part A, as printed:
+master: $SCRATCH/prefix/bin/openEMS (openEMS v0.37.0-50-g1d710c2, CSXCAD v0.7.0-9-gfdff4b5), GPU: 0: Apple M5 (metal, 11.8 GiB, integrated)
+machine: Apple M5, 4 physical cores / 10 logical CPUs, 16.0 GiB RAM, macOS-27.0.1-arm64-arm-64bit-Mach-O
+[  1/216] ideal          S  multithreaded  t4   master    1208.8 MC/s  setup   0.11 s
+[  2/216] ideal          S  multithreaded  t4   master    1228.4 MC/s  setup   0.11 s
+[  3/216] ideal          S  multithreaded  t4   master    1186.3 MC/s  setup   0.10 s
+[  4/216] ideal          S  multithreaded  t8   master    1277.2 MC/s  setup   0.08 s
+[  5/216] ideal          S  multithreaded  t8   master    1259.8 MC/s  setup   0.08 s
+[  6/216] ideal          S  multithreaded  t8   master    1267.0 MC/s  setup   0.08 s
+[  7/216] ideal          S  cpu            t4   master    1910.1 MC/s  setup   0.16 s
+[  8/216] ideal          S  cpu            t4   master    1907.0 MC/s  setup   0.15 s
+[  9/216] ideal          S  cpu            t4   master    1867.1 MC/s  setup   0.14 s
+[ 10/216] ideal          S  cpu            t8   master    1694.5 MC/s  setup   0.15 s
+[ 11/216] ideal          S  cpu            t8   master    1658.0 MC/s  setup   0.11 s
+[ 12/216] ideal          S  cpu            t8   master    1693.7 MC/s  setup   0.11 s
+[ 13/216] ideal          S  gpu            t4   master    1684.1 MC/s  setup   0.13 s
+[ 14/216] ideal          S  gpu            t4   master    1628.8 MC/s  setup   0.14 s
+[ 15/216] ideal          S  gpu            t4   master    1677.3 MC/s  setup   0.13 s
+[ 16/216] ideal          S  gpu            t8   master    1650.6 MC/s  setup   0.09 s
+[ 17/216] ideal          S  gpu            t8   master    1704.6 MC/s  setup   0.09 s
+[ 18/216] ideal          S  gpu            t8   master    1702.6 MC/s  setup   0.11 s
+[ 19/216] ideal          M  multithreaded  t4   master    1374.2 MC/s  setup   0.73 s
+[ 20/216] ideal          M  multithreaded  t4   master    1338.0 MC/s  setup   0.78 s
+[ 21/216] ideal          M  multithreaded  t4   master    1359.7 MC/s  setup   0.80 s
+[ 22/216] ideal          M  multithreaded  t8   master    1291.5 MC/s  setup   0.58 s
+[ 23/216] ideal          M  multithreaded  t8   master    1284.5 MC/s  setup   0.62 s
+[ 24/216] ideal          M  multithreaded  t8   master    1279.5 MC/s  setup   0.61 s
+[ 25/216] ideal          M  cpu            t4   master    2010.2 MC/s  setup   1.17 s
+[ 26/216] ideal          M  cpu            t4   master    2029.0 MC/s  setup   1.10 s
+[ 27/216] ideal          M  cpu            t4   master    2003.9 MC/s  setup   1.08 s
+[ 28/216] ideal          M  cpu            t8   master    2098.6 MC/s  setup   0.82 s
+[ 29/216] ideal          M  cpu            t8   master    2083.6 MC/s  setup   0.82 s
+[ 30/216] ideal          M  cpu            t8   master    2102.3 MC/s  setup   0.82 s
+[ 31/216] ideal          M  gpu            t4   master    1698.5 MC/s  setup   0.89 s
+[ 32/216] ideal          M  gpu            t4   master    1688.2 MC/s  setup   0.73 s
+[ 33/216] ideal          M  gpu            t4   master    1687.6 MC/s  setup   0.71 s
+[ 34/216] ideal          M  gpu            t8   master    1680.5 MC/s  setup   0.51 s
+[ 35/216] ideal          M  gpu            t8   master    1689.0 MC/s  setup   0.52 s
+[ 36/216] ideal          M  gpu            t8   master    1688.9 MC/s  setup   0.53 s
+[ 37/216] pml            S  multithreaded  t4   master     220.2 MC/s  setup   0.16 s
+[ 38/216] pml            S  multithreaded  t4   master     131.2 MC/s  setup   0.17 s
+[ 39/216] pml            S  multithreaded  t4   master     133.9 MC/s  setup   0.18 s
+[ 40/216] pml            S  multithreaded  t8   master     199.5 MC/s  setup   0.13 s
+[ 41/216] pml            S  multithreaded  t8   master     201.4 MC/s  setup   0.12 s
+[ 42/216] pml            S  multithreaded  t8   master     200.5 MC/s  setup   0.12 s
+[ 43/216] pml            S  cpu            t4   master     707.4 MC/s  setup   0.23 s
+[ 44/216] pml            S  cpu            t4   master     703.6 MC/s  setup   0.23 s
+[ 45/216] pml            S  cpu            t4   master     702.3 MC/s  setup   0.23 s
+[ 46/216] pml            S  cpu            t8   master     712.9 MC/s  setup   0.17 s
+[ 47/216] pml            S  cpu            t8   master     704.0 MC/s  setup   0.18 s
+[ 48/216] pml            S  cpu            t8   master     709.4 MC/s  setup   0.18 s
+[ 49/216] pml            S  gpu            t4   master    1154.5 MC/s  setup   0.22 s
+[ 50/216] pml            S  gpu            t4   master    1158.0 MC/s  setup   0.20 s
+[ 51/216] pml            S  gpu            t4   master    1169.1 MC/s  setup   0.20 s
+[ 52/216] pml            S  gpu            t8   master    1147.1 MC/s  setup   0.16 s
+[ 53/216] pml            S  gpu            t8   master    1162.6 MC/s  setup   0.15 s
+[ 54/216] pml            S  gpu            t8   master    1167.9 MC/s  setup   0.16 s
+[ 55/216] pml            M  multithreaded  t4   master     285.7 MC/s  setup   0.96 s
+[ 56/216] pml            M  multithreaded  t4   master     281.3 MC/s  setup   1.05 s
+[ 57/216] pml            M  multithreaded  t4   master     279.1 MC/s  setup   1.10 s
+[ 58/216] pml            M  multithreaded  t8   master     293.8 MC/s  setup   0.78 s
+[ 59/216] pml            M  multithreaded  t8   master     295.1 MC/s  setup   0.79 s
+[ 60/216] pml            M  multithreaded  t8   master     299.5 MC/s  setup   0.85 s
+[ 61/216] pml            M  cpu            t4   master    1120.4 MC/s  setup   1.55 s
+[ 62/216] pml            M  cpu            t4   master    1109.9 MC/s  setup   1.51 s
+[ 63/216] pml            M  cpu            t4   master    1117.0 MC/s  setup   1.60 s
+[ 64/216] pml            M  cpu            t8   master    1225.2 MC/s  setup   1.15 s
+[ 65/216] pml            M  cpu            t8   master    1223.5 MC/s  setup   1.15 s
+[ 66/216] pml            M  cpu            t8   master    1228.3 MC/s  setup   1.14 s
+[ 67/216] pml            M  gpu            t4   master    1413.5 MC/s  setup   1.32 s
+[ 68/216] pml            M  gpu            t4   master    1414.7 MC/s  setup   1.10 s
+[ 69/216] pml            M  gpu            t4   master    1409.7 MC/s  setup   1.01 s
+[ 70/216] pml            M  gpu            t8   master    1408.0 MC/s  setup   0.71 s
+[ 71/216] pml            M  gpu            t8   master    1418.5 MC/s  setup   0.71 s
+[ 72/216] pml            M  gpu            t8   master    1414.4 MC/s  setup   0.75 s
+[ 73/216] inhomogeneous  S  multithreaded  t4   master     209.2 MC/s  setup   0.19 s
+[ 74/216] inhomogeneous  S  multithreaded  t4   master     199.6 MC/s  setup   0.21 s
+[ 75/216] inhomogeneous  S  multithreaded  t4   master     200.2 MC/s  setup   0.21 s
+[ 76/216] inhomogeneous  S  multithreaded  t8   master     201.6 MC/s  setup   0.16 s
+[ 77/216] inhomogeneous  S  multithreaded  t8   master     202.7 MC/s  setup   0.16 s
+[ 78/216] inhomogeneous  S  multithreaded  t8   master     204.0 MC/s  setup   0.16 s
+[ 79/216] inhomogeneous  S  cpu            t4   master     631.7 MC/s  setup   0.28 s
+[ 80/216] inhomogeneous  S  cpu            t4   master     634.7 MC/s  setup   0.30 s
+[ 81/216] inhomogeneous  S  cpu            t4   master     651.5 MC/s  setup   0.28 s
+[ 82/216] inhomogeneous  S  cpu            t8   master     678.1 MC/s  setup   0.21 s
+[ 83/216] inhomogeneous  S  cpu            t8   master     676.8 MC/s  setup   0.22 s
+[ 84/216] inhomogeneous  S  cpu            t8   master     683.5 MC/s  setup   0.22 s
+[ 85/216] inhomogeneous  S  gpu            t4   master    1153.0 MC/s  setup   0.25 s
+[ 86/216] inhomogeneous  S  gpu            t4   master    1142.7 MC/s  setup   0.22 s
+[ 87/216] inhomogeneous  S  gpu            t4   master    1157.7 MC/s  setup   0.23 s
+[ 88/216] inhomogeneous  S  gpu            t8   master    1138.0 MC/s  setup   0.20 s
+[ 89/216] inhomogeneous  S  gpu            t8   master    1119.4 MC/s  setup   0.19 s
+[ 90/216] inhomogeneous  S  gpu            t8   master    1137.5 MC/s  setup   0.19 s
+[ 91/216] inhomogeneous  M  multithreaded  t4   master     260.2 MC/s  setup   1.27 s
+[ 92/216] inhomogeneous  M  multithreaded  t4   master     273.6 MC/s  setup   1.37 s
+[ 93/216] inhomogeneous  M  multithreaded  t4   master     270.1 MC/s  setup   1.43 s
+[ 94/216] inhomogeneous  M  multithreaded  t8   master     284.2 MC/s  setup   1.00 s
+[ 95/216] inhomogeneous  M  multithreaded  t8   master     286.4 MC/s  setup   1.01 s
+[ 96/216] inhomogeneous  M  multithreaded  t8   master     286.2 MC/s  setup   1.02 s
+[ 97/216] inhomogeneous  M  cpu            t4   master    1041.2 MC/s  setup   1.95 s
+[ 98/216] inhomogeneous  M  cpu            t4   master    1050.7 MC/s  setup   1.96 s
+[ 99/216] inhomogeneous  M  cpu            t4   master    1052.7 MC/s  setup   2.08 s
+[100/216] inhomogeneous  M  cpu            t8   master    1199.2 MC/s  setup   1.45 s
+[101/216] inhomogeneous  M  cpu            t8   master    1185.7 MC/s  setup   1.36 s
+[102/216] inhomogeneous  M  cpu            t8   master    1188.0 MC/s  setup   1.32 s
+[103/216] inhomogeneous  M  gpu            t4   master    1413.4 MC/s  setup   1.46 s
+[104/216] inhomogeneous  M  gpu            t4   master    1405.1 MC/s  setup   1.38 s
+[105/216] inhomogeneous  M  gpu            t4   master    1410.0 MC/s  setup   1.34 s
+[106/216] inhomogeneous  M  gpu            t8   master    1413.1 MC/s  setup   0.89 s
+[107/216] inhomogeneous  M  gpu            t8   master    1412.6 MC/s  setup   0.94 s
+[108/216] inhomogeneous  M  gpu            t8   master    1398.9 MC/s  setup   0.98 s
+[109/216] dispersive     S  multithreaded  t4   master      53.3 MC/s  setup   0.22 s
+[110/216] dispersive     S  multithreaded  t4   master      52.7 MC/s  setup   0.23 s
+[111/216] dispersive     S  multithreaded  t4   master      55.0 MC/s  setup   0.25 s
+[112/216] dispersive     S  multithreaded  t8   master      53.7 MC/s  setup   0.16 s
+[113/216] dispersive     S  multithreaded  t8   master      47.4 MC/s  setup   0.16 s
+[114/216] dispersive     S  multithreaded  t8   master      35.9 MC/s  setup   0.16 s
+[115/216] dispersive     S  cpu            t4   master     851.3 MC/s  setup   0.28 s
+[116/216] dispersive     S  cpu            t4   master     863.6 MC/s  setup   0.29 s
+[117/216] dispersive     S  cpu            t4   master     868.9 MC/s  setup   0.31 s
+[118/216] dispersive     S  cpu            t8   master     920.6 MC/s  setup   0.21 s
+[119/216] dispersive     S  cpu            t8   master     923.3 MC/s  setup   0.22 s
+[120/216] dispersive     S  cpu            t8   master     918.4 MC/s  setup   0.22 s
+[121/216] dispersive     S  gpu            t4   master     733.7 MC/s  setup   0.28 s
+[122/216] dispersive     S  gpu            t4   master     722.7 MC/s  setup   0.24 s
+[123/216] dispersive     S  gpu            t4   master     732.3 MC/s  setup   0.26 s
+[124/216] dispersive     S  gpu            t8   master     736.6 MC/s  setup   0.18 s
+[125/216] dispersive     S  gpu            t8   master     731.0 MC/s  setup   0.18 s
+[126/216] dispersive     S  gpu            t8   master     737.1 MC/s  setup   0.20 s
+[127/216] dispersive     M  multithreaded  t4   master      49.9 MC/s  setup   1.65 s
+[128/216] dispersive     M  multithreaded  t4   master      51.8 MC/s  setup   1.83 s
+[129/216] dispersive     M  multithreaded  t4   master      52.3 MC/s  setup   1.78 s
+[130/216] dispersive     M  multithreaded  t8   master      48.2 MC/s  setup   1.19 s
+[131/216] dispersive     M  multithreaded  t8   master      47.4 MC/s  setup   1.20 s
+[132/216] dispersive     M  multithreaded  t8   master      47.5 MC/s  setup   1.24 s
+[133/216] dispersive     M  cpu            t4   master    1033.6 MC/s  setup   2.18 s
+[134/216] dispersive     M  cpu            t4   master    1021.0 MC/s  setup   2.26 s
+[135/216] dispersive     M  cpu            t4   master    1014.8 MC/s  setup   2.36 s
+[136/216] dispersive     M  cpu            t8   master    1073.7 MC/s  setup   1.61 s
+[137/216] dispersive     M  cpu            t8   master    1109.4 MC/s  setup   1.57 s
+[138/216] dispersive     M  cpu            t8   master    1220.5 MC/s  setup   1.58 s
+[139/216] dispersive     M  gpu            t4   master     736.5 MC/s  setup   2.00 s
+[140/216] dispersive     M  gpu            t4   master     735.7 MC/s  setup   1.78 s
+[141/216] dispersive     M  gpu            t4   master     733.5 MC/s  setup   1.74 s
+[142/216] dispersive     M  gpu            t8   master     736.8 MC/s  setup   1.11 s
+[143/216] dispersive     M  gpu            t8   master     739.9 MC/s  setup   1.10 s
+[144/216] dispersive     M  gpu            t8   master     739.0 MC/s  setup   1.21 s
+[145/216] antenna        S  multithreaded  t4   master     169.2 MC/s  setup   0.22 s
+[146/216] antenna        S  multithreaded  t4   master     162.1 MC/s  setup   0.24 s
+[147/216] antenna        S  multithreaded  t4   master     147.2 MC/s  setup   0.24 s
+[148/216] antenna        S  multithreaded  t8   master     156.2 MC/s  setup   0.18 s
+[149/216] antenna        S  multithreaded  t8   master     162.4 MC/s  setup   0.20 s
+[150/216] antenna        S  multithreaded  t8   master     162.1 MC/s  setup   0.20 s
+[151/216] antenna        S  cpu            t4   master     632.9 MC/s  setup   0.33 s
+[152/216] antenna        S  cpu            t4   master     627.2 MC/s  setup   0.33 s
+[153/216] antenna        S  cpu            t4   master     637.8 MC/s  setup   0.33 s
+[154/216] antenna        S  cpu            t8   master     678.7 MC/s  setup   0.26 s
+[155/216] antenna        S  cpu            t8   master     671.7 MC/s  setup   0.26 s
+[156/216] antenna        S  cpu            t8   master     681.0 MC/s  setup   0.26 s
+[157/216] antenna        S  gpu            t4   master    1068.0 MC/s  setup   0.29 s
+[158/216] antenna        S  gpu            t4   master    1075.2 MC/s  setup   0.27 s
+[159/216] antenna        S  gpu            t4   master    1086.7 MC/s  setup   0.26 s
+[160/216] antenna        S  gpu            t8   master    1092.6 MC/s  setup   0.20 s
+[161/216] antenna        S  gpu            t8   master    1077.8 MC/s  setup   0.20 s
+[162/216] antenna        S  gpu            t8   master    1072.2 MC/s  setup   0.22 s
+[163/216] antenna        M  multithreaded  t4   master     219.5 MC/s  setup   1.41 s
+[164/216] antenna        M  multithreaded  t4   master     213.3 MC/s  setup   1.64 s
+[165/216] antenna        M  multithreaded  t4   master     218.3 MC/s  setup   1.62 s
+[166/216] antenna        M  multithreaded  t8   master     230.0 MC/s  setup   1.24 s
+[167/216] antenna        M  multithreaded  t8   master     229.9 MC/s  setup   1.26 s
+[168/216] antenna        M  multithreaded  t8   master     227.5 MC/s  setup   1.22 s
+[169/216] antenna        M  cpu            t4   master     953.4 MC/s  setup   2.08 s
+[170/216] antenna        M  cpu            t4   master     946.8 MC/s  setup   2.18 s
+[171/216] antenna        M  cpu            t4   master     948.4 MC/s  setup   2.11 s
+[172/216] antenna        M  cpu            t8   master    1091.4 MC/s  setup   1.64 s
+[173/216] antenna        M  cpu            t8   master    1087.4 MC/s  setup   1.67 s
+[174/216] antenna        M  cpu            t8   master    1087.6 MC/s  setup   1.63 s
+[175/216] antenna        M  gpu            t4   master    1331.0 MC/s  setup   1.61 s
+[176/216] antenna        M  gpu            t4   master    1331.6 MC/s  setup   1.36 s
+[177/216] antenna        M  gpu            t4   master    1334.0 MC/s  setup   1.40 s
+[178/216] antenna        M  gpu            t8   master    1332.1 MC/s  setup   0.95 s
+[179/216] antenna        M  gpu            t8   master    1334.4 MC/s  setup   0.98 s
+[180/216] antenna        M  gpu            t8   master    1336.8 MC/s  setup   0.99 s
+[181/216] cylindrical    S  multithreaded  t4   master    1090.9 MC/s  setup   0.16 s
+[182/216] cylindrical    S  multithreaded  t4   master     913.4 MC/s  setup   0.24 s
+[183/216] cylindrical    S  multithreaded  t4   master    1028.5 MC/s  setup   0.21 s
+[184/216] cylindrical    S  multithreaded  t8   master     917.9 MC/s  setup   0.15 s
+[185/216] cylindrical    S  multithreaded  t8   master     924.8 MC/s  setup   0.15 s
+[186/216] cylindrical    S  multithreaded  t8   master     916.9 MC/s  setup   0.16 s
+[187/216] cylindrical    S  cpu            t4   master    1197.8 MC/s  setup   0.26 s
+[188/216] cylindrical    S  cpu            t4   master    1250.0 MC/s  setup   0.23 s
+[189/216] cylindrical    S  cpu            t4   master    1215.2 MC/s  setup   0.23 s
+[190/216] cylindrical    S  cpu            t8   master    1264.3 MC/s  setup   0.18 s
+[191/216] cylindrical    S  cpu            t8   master    1307.8 MC/s  setup   0.20 s
+[192/216] cylindrical    S  cpu            t8   master    1304.2 MC/s  setup   0.19 s
+[193/216] cylindrical    S  gpu            t4   master    1536.5 MC/s  setup   0.23 s
+[194/216] cylindrical    S  gpu            t4   master    1535.8 MC/s  setup   0.17 s
+[195/216] cylindrical    S  gpu            t4   master    1543.5 MC/s  setup   0.19 s
+[196/216] cylindrical    S  gpu            t8   master    1517.5 MC/s  setup   0.15 s
+[197/216] cylindrical    S  gpu            t8   master    1553.0 MC/s  setup   0.13 s
+[198/216] cylindrical    S  gpu            t8   master    1527.5 MC/s  setup   0.15 s
+[199/216] cylindrical    M  multithreaded  t4   master     861.8 MC/s  setup   1.32 s
+[200/216] cylindrical    M  multithreaded  t4   master     863.0 MC/s  setup   1.50 s
+[201/216] cylindrical    M  multithreaded  t4   master     874.4 MC/s  setup   1.52 s
+[202/216] cylindrical    M  multithreaded  t8   master     909.7 MC/s  setup   1.13 s
+[203/216] cylindrical    M  multithreaded  t8   master     920.7 MC/s  setup   1.12 s
+[204/216] cylindrical    M  multithreaded  t8   master     924.9 MC/s  setup   1.13 s
+[205/216] cylindrical    M  cpu            t4   master    1540.5 MC/s  setup   1.76 s
+[206/216] cylindrical    M  cpu            t4   master    1541.5 MC/s  setup   1.71 s
+[207/216] cylindrical    M  cpu            t4   master    1543.6 MC/s  setup   1.62 s
+[208/216] cylindrical    M  cpu            t8   master    1744.9 MC/s  setup   1.25 s
+[209/216] cylindrical    M  cpu            t8   master    1756.5 MC/s  setup   1.26 s
+[210/216] cylindrical    M  cpu            t8   master    1754.6 MC/s  setup   1.29 s
+[211/216] cylindrical    M  gpu            t4   master    1584.7 MC/s  setup   1.38 s
+[212/216] cylindrical    M  gpu            t4   master    1588.0 MC/s  setup   1.19 s
+[213/216] cylindrical    M  gpu            t4   master    1590.0 MC/s  setup   1.14 s
+[214/216] cylindrical    M  gpu            t8   master    1590.1 MC/s  setup   0.88 s
+[215/216] cylindrical    M  gpu            t8   master    1589.7 MC/s  setup   0.79 s
+[216/216] cylindrical    M  gpu            t8   master    1589.2 MC/s  setup   0.79 s
+
+master: openEMS v0.37.0-50-g1d710c2 ($SCRATCH/prefix/bin/openEMS)
+case           size engine          thr  MCells timesteps      MC/s spread  setup s  RSS MiB
+ideal          S    multithreaded     4    1.00      3666    1208.8   3.5%     0.11      104
+ideal          S    multithreaded     8    1.00      3848    1267.0   1.4%     0.08      104
+ideal          S    cpu               4    1.00      5785    1907.0   2.3%     0.15       92  generic, fast z, k8 W48, cache 16 MiB
+ideal          S    cpu               8    1.00      5135    1693.7   2.2%     0.11       92  generic, fast z, k8 W48, cache 16 MiB
+ideal          S    gpu               4    1.00      5083    1677.3   3.3%     0.13      166
+ideal          S    gpu               8    1.00      5174    1702.6   3.2%     0.09      166
+ideal          M    multithreaded     4    8.00       520    1359.7   2.7%     0.78      752
+ideal          M    multithreaded     8    8.00       494    1284.5   0.9%     0.61      752
+ideal          M    cpu               4    8.00       767    2010.2   1.2%     1.10      628  generic, fast z, k7 W15, cache 16 MiB
+ideal          M    cpu               8    8.00       793    2098.6   0.9%     0.82      630  generic, fast z, k7 W15, cache 16 MiB
+ideal          M    gpu               4    8.00       650    1688.2   0.6%     0.73      877
+ideal          M    gpu               8    8.00       650    1688.9   0.5%     0.52      877
+pml            S    multithreaded     4    1.00       416     133.9  66.5%     0.17      149
+pml            S    multithreaded     8    1.00       611     200.5   0.9%     0.12      149
+pml            S    cpu               4    1.00      2145     703.6   0.7%     0.23      163  generic, fast z, k8 W30, cache 16 MiB
+pml            S    cpu               8    1.00      2145     709.4   1.2%     0.18      163  generic, fast z, k8 W30, cache 16 MiB
+pml            S    gpu               4    1.00      3523    1158.0   1.3%     0.20      283
+pml            S    gpu               8    1.00      3510    1162.6   1.8%     0.16      283
+pml            M    multithreaded     4    8.00       117     281.3   2.4%     1.05      937
+pml            M    multithreaded     8    8.00       117     295.1   1.9%     0.79      937
+pml            M    cpu               4    8.00       429    1117.0   0.9%     1.55      923  generic, fast z, k6 W13, cache 16 MiB
+pml            M    cpu               8    8.00       468    1225.2   0.4%     1.15      924  generic, fast z, k6 W13, cache 16 MiB
+pml            M    gpu               4    8.00       546    1413.5   0.4%     1.10     1337
+pml            M    gpu               8    8.00       546    1414.4   0.7%     0.71     1337
+inhomogeneous  S    multithreaded     4    0.97       676     200.2   4.8%     0.21      177
+inhomogeneous  S    multithreaded     8    0.97       676     202.7   1.2%     0.16      177
+inhomogeneous  S    cpu               4    0.97      2028     634.7   3.1%     0.28      161  generic, fast y, k8 W30, cache 16 MiB
+inhomogeneous  S    cpu               8    0.97      2132     678.1   1.0%     0.22      161  generic, fast y, k8 W30, cache 16 MiB
+inhomogeneous  S    gpu               4    0.97      3640    1153.0   1.3%     0.23      283
+inhomogeneous  S    gpu               8    0.97      3536    1137.5   1.6%     0.19      284
+inhomogeneous  M    multithreaded     4    7.88       104     270.1   5.0%     1.37     1116
+inhomogeneous  M    multithreaded     8    7.88       156     286.2   0.7%     1.01     1117
+inhomogeneous  M    cpu               4    7.88       416    1050.7   1.1%     1.96      914  generic, fast y, k6 W13, cache 16 MiB
+inhomogeneous  M    cpu               8    7.88       468    1188.0   1.1%     1.36      913  generic, fast y, k6 W13, cache 16 MiB
+inhomogeneous  M    gpu               4    7.88       572    1410.0   0.6%     1.38     1325
+inhomogeneous  M    gpu               8    7.88       572    1412.6   1.0%     0.94     1325
+dispersive     S    multithreaded     4    1.00       169      53.3   4.2%     0.23      156
+dispersive     S    multithreaded     8    1.00       156      47.4  37.6%     0.16      156
+dispersive     S    cpu               4    1.00      2639     863.6   2.0%     0.29      145  generic, fast z, k8 W35, cache 16 MiB
+dispersive     S    cpu               8    1.00      2795     920.6   0.5%     0.22      146  generic, fast z, k8 W35, cache 16 MiB
+dispersive     S    gpu               4    1.00      2210     732.3   1.5%     0.26      249
+dispersive     S    gpu               8    1.00      2249     736.6   0.8%     0.18      256
+dispersive     M    multithreaded     4    8.00        26      51.8   4.5%     1.78     1285
+dispersive     M    multithreaded     8    8.00        26      47.5   1.6%     1.20     1336
+dispersive     M    cpu               4    8.00       390    1021.0   1.8%     2.26     1154  generic, fast z, k5 W11, cache 16 MiB
+dispersive     M    cpu               8    8.00       429    1109.4  13.2%     1.58     1186  generic, fast z, k5 W11, cache 16 MiB
+dispersive     M    gpu               4    8.00       286     735.7   0.4%     1.78     1719
+dispersive     M    gpu               8    8.00       286     739.0   0.4%     1.11     1757
+antenna        S    multithreaded     4    0.97       520     162.1  13.6%     0.24      206
+antenna        S    multithreaded     8    0.97       520     162.1   3.8%     0.20      207
+antenna        S    cpu               4    0.97      1976     632.9   1.7%     0.33      187  generic, fast y, k8 W30, cache 16 MiB
+antenna        S    cpu               8    0.97      2132     678.7   1.4%     0.26      188  generic, fast y, k8 W30, cache 16 MiB
+antenna        S    gpu               4    0.97      3380    1075.2   1.7%     0.27      332
+antenna        S    gpu               8    0.97      3380    1077.8   1.9%     0.20      334
+antenna        M    multithreaded     4    7.88       104     218.3   2.8%     1.62     1325
+antenna        M    multithreaded     8    7.88       104     229.9   1.1%     1.24     1325
+antenna        M    cpu               4    7.88       364     948.4   0.7%     2.11     1105  generic, fast y, k5 W11, cache 16 MiB
+antenna        M    cpu               8    7.88       416    1087.6   0.4%     1.64     1106  generic, fast y, k5 W11, cache 16 MiB
+antenna        M    gpu               4    7.88       520    1331.6   0.2%     1.40     1708
+antenna        M    gpu               8    7.88       520    1334.4   0.4%     0.98     1713
+cylindrical    S    multithreaded     4    1.03      3240    1028.5  17.3%     0.21      133
+cylindrical    S    multithreaded     8    1.03      2808     917.9   0.9%     0.15      133
+cylindrical    S    cpu               4    1.03      3672    1215.2   4.3%     0.23       98  generic, fast y, k8 W57, cache 16 MiB
+cylindrical    S    cpu               8    1.03      3888    1304.2   3.3%     0.19       99  generic, fast y, k8 W57, cache 16 MiB
+cylindrical    S    gpu               4    1.03      4536    1536.5   0.5%     0.19      193
+cylindrical    S    gpu               8    1.03      4536    1527.5   2.3%     0.15      193
+cylindrical    M    multithreaded     4    8.12       431     863.0   1.5%     1.50      954
+cylindrical    M    multithreaded     8    8.12       431     920.7   1.7%     1.13      954
+cylindrical    M    cpu               4    8.12       862    1541.5   0.2%     1.71      650  generic, fast y, k8 W17, cache 16 MiB
+cylindrical    M    cpu               8    8.12       862    1754.6   0.7%     1.26      651  generic, fast y, k8 W17, cache 16 MiB
+cylindrical    M    gpu               4    8.12       862    1588.0   0.3%     1.19      933
+cylindrical    M    gpu               8    8.12       862    1589.7   0.1%     0.79      933
+
+Part B, as printed (the compare table that follows these in the tool's output is the one that failed):
+master: $SCRATCH/prefix/bin/openEMS (openEMS v0.37.0-50-g1d710c2, CSXCAD v0.7.0-9-gfdff4b5), GPU: 0: Apple M5 (metal, 11.8 GiB, integrated)
+fdtdKit: $HOME/opt/openEMS/bin/openEMS (openEMS v0.37.0-44-g074a687, CSXCAD v0.7.0), GPU: unknown device
+machine: Apple M5, 4 physical cores / 10 logical CPUs, 16.0 GiB RAM, macOS-27.0.1-arm64-arm-64bit-Mach-O
+[  1/144] ideal          S  multithreaded  t4   master     911.1 MC/s  setup   0.12 s
+[  2/144] ideal          S  multithreaded  t4   fdtdKit    1963.8 MC/s  setup   0.20 s
+[  3/144] ideal          S  multithreaded  t4   master     918.8 MC/s  setup   0.15 s
+[  4/144] ideal          S  multithreaded  t4   fdtdKit    1963.5 MC/s  setup   0.19 s
+[  5/144] ideal          S  multithreaded  t4   master     924.3 MC/s  setup   0.15 s
+[  6/144] ideal          S  multithreaded  t4   fdtdKit    1973.2 MC/s  setup   0.20 s
+[  7/144] ideal          S  multithreaded  t8   master    1181.7 MC/s  setup   0.11 s
+[  8/144] ideal          S  multithreaded  t8   fdtdKit    2455.9 MC/s  setup   0.22 s
+[  9/144] ideal          S  multithreaded  t8   master    1181.4 MC/s  setup   0.11 s
+[ 10/144] ideal          S  multithreaded  t8   fdtdKit    2464.8 MC/s  setup   0.21 s
+[ 11/144] ideal          S  multithreaded  t8   master    1167.5 MC/s  setup   0.12 s
+[ 12/144] ideal          S  multithreaded  t8   fdtdKit    2415.1 MC/s  setup   0.21 s
+[ 13/144] ideal          M  multithreaded  t4   master    1100.8 MC/s  setup   0.95 s
+[ 14/144] ideal          M  multithreaded  t4   fdtdKit    1547.0 MC/s  setup   1.37 s
+[ 15/144] ideal          M  multithreaded  t4   master    1088.1 MC/s  setup   1.08 s
+[ 16/144] ideal          M  multithreaded  t4   fdtdKit    1541.1 MC/s  setup   1.39 s
+[ 17/144] ideal          M  multithreaded  t4   master    1043.8 MC/s  setup   0.99 s
+[ 18/144] ideal          M  multithreaded  t4   fdtdKit    1504.0 MC/s  setup   1.40 s
+[ 19/144] ideal          M  multithreaded  t8   master     988.7 MC/s  setup   0.77 s
+[ 20/144] ideal          M  multithreaded  t8   fdtdKit    1739.3 MC/s  setup   1.35 s
+[ 21/144] ideal          M  multithreaded  t8   master    1007.1 MC/s  setup   0.82 s
+[ 22/144] ideal          M  multithreaded  t8   fdtdKit    1754.8 MC/s  setup   1.36 s
+[ 23/144] ideal          M  multithreaded  t8   master     982.0 MC/s  setup   0.83 s
+[ 24/144] ideal          M  multithreaded  t8   fdtdKit    1733.9 MC/s  setup   1.36 s
+[ 25/144] pml            S  multithreaded  t4   master     181.9 MC/s  setup   0.23 s
+[ 26/144] pml            S  multithreaded  t4   fdtdKit     829.9 MC/s  setup   0.34 s
+[ 27/144] pml            S  multithreaded  t4   master     179.1 MC/s  setup   0.21 s
+[ 28/144] pml            S  multithreaded  t4   fdtdKit     883.3 MC/s  setup   0.32 s
+[ 29/144] pml            S  multithreaded  t4   master     180.2 MC/s  setup   0.23 s
+[ 30/144] pml            S  multithreaded  t4   fdtdKit     875.5 MC/s  setup   0.31 s
+[ 31/144] pml            S  multithreaded  t8   master     193.1 MC/s  setup   0.15 s
+[ 32/144] pml            S  multithreaded  t8   fdtdKit    1055.8 MC/s  setup   0.33 s
+[ 33/144] pml            S  multithreaded  t8   master     184.9 MC/s  setup   0.17 s
+[ 34/144] pml            S  multithreaded  t8   fdtdKit    1057.8 MC/s  setup   0.33 s
+[ 35/144] pml            S  multithreaded  t8   master     188.5 MC/s  setup   0.18 s
+[ 36/144] pml            S  multithreaded  t8   fdtdKit    1039.9 MC/s  setup   0.33 s
+[ 37/144] pml            M  multithreaded  t4   master     250.6 MC/s  setup   1.27 s
+[ 38/144] pml            M  multithreaded  t4   fdtdKit     907.0 MC/s  setup   1.88 s
+[ 39/144] pml            M  multithreaded  t4   master     253.0 MC/s  setup   1.29 s
+[ 40/144] pml            M  multithreaded  t4   fdtdKit     892.4 MC/s  setup   1.87 s
+[ 41/144] pml            M  multithreaded  t4   master     246.7 MC/s  setup   1.37 s
+[ 42/144] pml            M  multithreaded  t4   fdtdKit     897.4 MC/s  setup   1.97 s
+[ 43/144] pml            M  multithreaded  t8   master     277.4 MC/s  setup   0.98 s
+[ 44/144] pml            M  multithreaded  t8   fdtdKit    1075.8 MC/s  setup   1.91 s
+[ 45/144] pml            M  multithreaded  t8   master     276.5 MC/s  setup   1.02 s
+[ 46/144] pml            M  multithreaded  t8   fdtdKit    1060.9 MC/s  setup   1.91 s
+[ 47/144] pml            M  multithreaded  t8   master     277.2 MC/s  setup   1.00 s
+[ 48/144] pml            M  multithreaded  t8   fdtdKit    1043.6 MC/s  setup   1.93 s
+[ 49/144] inhomogeneous  S  multithreaded  t4   master     178.1 MC/s  setup   0.28 s
+[ 50/144] inhomogeneous  S  multithreaded  t4   fdtdKit     842.7 MC/s  setup   0.36 s
+[ 51/144] inhomogeneous  S  multithreaded  t4   master     178.3 MC/s  setup   0.27 s
+[ 52/144] inhomogeneous  S  multithreaded  t4   fdtdKit     800.2 MC/s  setup   0.36 s
+[ 53/144] inhomogeneous  S  multithreaded  t4   master     179.6 MC/s  setup   0.27 s
+[ 54/144] inhomogeneous  S  multithreaded  t4   fdtdKit     816.9 MC/s  setup   0.37 s
+[ 55/144] inhomogeneous  S  multithreaded  t8   master     187.2 MC/s  setup   0.20 s
+[ 56/144] inhomogeneous  S  multithreaded  t8   fdtdKit    1017.1 MC/s  setup   0.37 s
+[ 57/144] inhomogeneous  S  multithreaded  t8   master     185.4 MC/s  setup   0.22 s
+[ 58/144] inhomogeneous  S  multithreaded  t8   fdtdKit    1004.3 MC/s  setup   0.37 s
+[ 59/144] inhomogeneous  S  multithreaded  t8   master     188.4 MC/s  setup   0.22 s
+[ 60/144] inhomogeneous  S  multithreaded  t8   fdtdKit    1013.9 MC/s  setup   0.42 s
+[ 61/144] inhomogeneous  M  multithreaded  t4   master     241.5 MC/s  setup   1.63 s
+[ 62/144] inhomogeneous  M  multithreaded  t4   fdtdKit     853.4 MC/s  setup   2.19 s
+[ 63/144] inhomogeneous  M  multithreaded  t4   master     240.8 MC/s  setup   1.58 s
+[ 64/144] inhomogeneous  M  multithreaded  t4   fdtdKit     856.4 MC/s  setup   2.20 s
+[ 65/144] inhomogeneous  M  multithreaded  t4   master     240.9 MC/s  setup   1.66 s
+[ 66/144] inhomogeneous  M  multithreaded  t4   fdtdKit     863.8 MC/s  setup   2.17 s
+[ 67/144] inhomogeneous  M  multithreaded  t8   master     266.1 MC/s  setup   1.26 s
+[ 68/144] inhomogeneous  M  multithreaded  t8   fdtdKit    1049.7 MC/s  setup   2.18 s
+[ 69/144] inhomogeneous  M  multithreaded  t8   master     267.1 MC/s  setup   1.31 s
+[ 70/144] inhomogeneous  M  multithreaded  t8   fdtdKit     936.3 MC/s  setup   2.16 s
+[ 71/144] inhomogeneous  M  multithreaded  t8   master     260.5 MC/s  setup   1.33 s
+[ 72/144] inhomogeneous  M  multithreaded  t8   fdtdKit     967.0 MC/s  setup   2.20 s
+[ 73/144] dispersive     S  multithreaded  t4   master      48.4 MC/s  setup   0.33 s
+[ 74/144] dispersive     S  multithreaded  t4   fdtdKit     386.8 MC/s  setup   0.60 s
+[ 75/144] dispersive     S  multithreaded  t4   master      46.0 MC/s  setup   0.30 s
+[ 76/144] dispersive     S  multithreaded  t4   fdtdKit     393.8 MC/s  setup   0.64 s
+[ 77/144] dispersive     S  multithreaded  t4   master      37.7 MC/s  setup   0.28 s
+[ 78/144] dispersive     S  multithreaded  t4   fdtdKit     404.2 MC/s  setup   0.63 s
+[ 79/144] dispersive     S  multithreaded  t8   master      47.9 MC/s  setup   0.21 s
+[ 80/144] dispersive     S  multithreaded  t8   fdtdKit     442.3 MC/s  setup   0.62 s
+[ 81/144] dispersive     S  multithreaded  t8   master      47.7 MC/s  setup   0.23 s
+[ 82/144] dispersive     S  multithreaded  t8   fdtdKit     484.1 MC/s  setup   0.64 s
+[ 83/144] dispersive     S  multithreaded  t8   master      35.4 MC/s  setup   0.22 s
+[ 84/144] dispersive     S  multithreaded  t8   fdtdKit     478.9 MC/s  setup   0.61 s
+[ 85/144] dispersive     M  multithreaded  t4   master      52.0 MC/s  setup   1.99 s
+[ 86/144] dispersive     M  multithreaded  t4   fdtdKit     390.3 MC/s  setup   4.75 s
+[ 87/144] dispersive     M  multithreaded  t4   master      49.9 MC/s  setup   2.12 s
+[ 88/144] dispersive     M  multithreaded  t4   fdtdKit     362.8 MC/s  setup   4.76 s
+[ 89/144] dispersive     M  multithreaded  t4   master      50.8 MC/s  setup   2.03 s
+[ 90/144] dispersive     M  multithreaded  t4   fdtdKit     364.5 MC/s  setup   4.58 s
+[ 91/144] dispersive     M  multithreaded  t8   master      52.9 MC/s  setup   1.53 s
+[ 92/144] dispersive     M  multithreaded  t8   fdtdKit     449.3 MC/s  setup   4.95 s
+[ 93/144] dispersive     M  multithreaded  t8   master      49.0 MC/s  setup   1.50 s
+[ 94/144] dispersive     M  multithreaded  t8   fdtdKit     441.4 MC/s  setup   4.78 s
+[ 95/144] dispersive     M  multithreaded  t8   master      59.0 MC/s  setup   1.50 s
+[ 96/144] dispersive     M  multithreaded  t8   fdtdKit     448.0 MC/s  setup   4.94 s
+[ 97/144] antenna        S  multithreaded  t4   master     130.8 MC/s  setup   0.32 s
+[ 98/144] antenna        S  multithreaded  t4   fdtdKit     724.6 MC/s  setup   0.46 s
+[ 99/144] antenna        S  multithreaded  t4   master     137.8 MC/s  setup   0.34 s
+[100/144] antenna        S  multithreaded  t4   fdtdKit     690.0 MC/s  setup   0.47 s
+[101/144] antenna        S  multithreaded  t4   master     133.8 MC/s  setup   0.33 s
+[102/144] antenna        S  multithreaded  t4   fdtdKit     714.7 MC/s  setup   0.47 s
+[103/144] antenna        S  multithreaded  t8   master     150.0 MC/s  setup   0.24 s
+[104/144] antenna        S  multithreaded  t8   fdtdKit     890.1 MC/s  setup   0.48 s
+[105/144] antenna        S  multithreaded  t8   master     148.4 MC/s  setup   0.26 s
+[106/144] antenna        S  multithreaded  t8   fdtdKit     853.3 MC/s  setup   0.50 s
+[107/144] antenna        S  multithreaded  t8   master     139.1 MC/s  setup   0.26 s
+[108/144] antenna        S  multithreaded  t8   fdtdKit     870.9 MC/s  setup   0.48 s
+[109/144] antenna        M  multithreaded  t4   master     196.8 MC/s  setup   1.86 s
+[110/144] antenna        M  multithreaded  t4   fdtdKit     735.0 MC/s  setup   2.71 s
+[111/144] antenna        M  multithreaded  t4   master     184.5 MC/s  setup   1.70 s
+[112/144] antenna        M  multithreaded  t4   fdtdKit     743.6 MC/s  setup   2.82 s
+[113/144] antenna        M  multithreaded  t4   master     195.8 MC/s  setup   1.82 s
+[114/144] antenna        M  multithreaded  t4   fdtdKit     725.9 MC/s  setup   2.71 s
+[115/144] antenna        M  multithreaded  t8   master     213.5 MC/s  setup   1.31 s
+[116/144] antenna        M  multithreaded  t8   fdtdKit     905.2 MC/s  setup   2.68 s
+[117/144] antenna        M  multithreaded  t8   master     214.0 MC/s  setup   1.38 s
+[118/144] antenna        M  multithreaded  t8   fdtdKit     907.6 MC/s  setup   2.68 s
+[119/144] antenna        M  multithreaded  t8   master     220.1 MC/s  setup   1.40 s
+[120/144] antenna        M  multithreaded  t8   fdtdKit     925.4 MC/s  setup   2.66 s
+[121/144] cylindrical    S  multithreaded  t4   master     911.3 MC/s  setup   0.26 s
+[122/144] cylindrical    S  multithreaded  t4   fdtdKit    1356.6 MC/s  setup   0.36 s
+[123/144] cylindrical    S  multithreaded  t4   master     920.8 MC/s  setup   0.24 s
+[124/144] cylindrical    S  multithreaded  t4   fdtdKit    1365.5 MC/s  setup   0.35 s
+[125/144] cylindrical    S  multithreaded  t4   master     902.1 MC/s  setup   0.24 s
+[126/144] cylindrical    S  multithreaded  t4   fdtdKit    1385.4 MC/s  setup   0.35 s
+[127/144] cylindrical    S  multithreaded  t8   master     872.9 MC/s  setup   0.18 s
+[128/144] cylindrical    S  multithreaded  t8   fdtdKit    1555.2 MC/s  setup   0.38 s
+[129/144] cylindrical    S  multithreaded  t8   master     878.0 MC/s  setup   0.19 s
+[130/144] cylindrical    S  multithreaded  t8   fdtdKit    1543.7 MC/s  setup   0.36 s
+[131/144] cylindrical    S  multithreaded  t8   master     878.9 MC/s  setup   0.19 s
+[132/144] cylindrical    S  multithreaded  t8   fdtdKit    1384.1 MC/s  setup   0.37 s
+[133/144] cylindrical    M  multithreaded  t4   master     816.8 MC/s  setup   1.66 s
+[134/144] cylindrical    M  multithreaded  t4   fdtdKit     992.7 MC/s  setup   2.31 s
+[135/144] cylindrical    M  multithreaded  t4   master     822.6 MC/s  setup   1.58 s
+[136/144] cylindrical    M  multithreaded  t4   fdtdKit    1002.0 MC/s  setup   2.35 s
+[137/144] cylindrical    M  multithreaded  t4   master     838.0 MC/s  setup   1.60 s
+[138/144] cylindrical    M  multithreaded  t4   fdtdKit    1005.5 MC/s  setup   2.32 s
+[139/144] cylindrical    M  multithreaded  t8   master     812.0 MC/s  setup   1.23 s
+[140/144] cylindrical    M  multithreaded  t8   fdtdKit    1012.0 MC/s  setup   2.28 s
+[141/144] cylindrical    M  multithreaded  t8   master     814.7 MC/s  setup   1.18 s
+[142/144] cylindrical    M  multithreaded  t8   fdtdKit    1002.8 MC/s  setup   2.24 s
+[143/144] cylindrical    M  multithreaded  t8   master     828.6 MC/s  setup   1.16 s
+[144/144] cylindrical    M  multithreaded  t8   fdtdKit    1014.6 MC/s  setup   2.25 s
+
+master: openEMS v0.37.0-50-g1d710c2 ($SCRATCH/prefix/bin/openEMS)
+case           size engine          thr  MCells timesteps      MC/s spread  setup s  RSS MiB
+ideal          S    multithreaded     4    1.00      2795     918.8   1.4%     0.15      104
+ideal          S    multithreaded     8    1.00      3588    1181.4   1.2%     0.11      104
+ideal          M    multithreaded     4    8.00       416    1088.1   5.2%     0.99      752
+ideal          M    multithreaded     8    8.00       377     988.7   2.5%     0.82      752
+pml            S    multithreaded     4    1.00       546     180.2   1.6%     0.23      149
+pml            S    multithreaded     8    1.00       572     188.5   4.4%     0.17      150
+pml            M    multithreaded     4    8.00       104     250.6   2.5%     1.29      937
+pml            M    multithreaded     8    8.00       117     277.2   0.3%     1.00      937
+inhomogeneous  S    multithreaded     4    0.97       572     178.3   0.8%     0.27      177
+inhomogeneous  S    multithreaded     8    0.97       624     187.2   1.6%     0.22      177
+inhomogeneous  M    multithreaded     4    7.88       104     240.9   0.3%     1.63     1116
+inhomogeneous  M    multithreaded     8    7.88       104     266.1   2.5%     1.31     1117
+dispersive     S    multithreaded     4    1.00       143      46.0  23.2%     0.30      153
+dispersive     S    multithreaded     8    1.00       156      47.7  26.2%     0.22      170
+dispersive     M    multithreaded     4    8.00        26      50.8   4.2%     2.03     1285
+dispersive     M    multithreaded     8    8.00        26      52.9  19.0%     1.50     1335
+antenna        S    multithreaded     4    0.97       468     133.8   5.2%     0.33      206
+antenna        S    multithreaded     8    0.97       468     148.4   7.3%     0.26      207
+antenna        M    multithreaded     4    7.88       104     195.8   6.3%     1.82     1323
+antenna        M    multithreaded     8    7.88       104     214.0   3.1%     1.38     1324
+cylindrical    S    multithreaded     4    1.03      2808     911.3   2.1%     0.24      133
+cylindrical    S    multithreaded     8    1.03      2592     878.0   0.7%     0.19      133
+cylindrical    M    multithreaded     4    8.12       431     822.6   2.6%     1.60      954
+cylindrical    M    multithreaded     8    8.12       431     814.7   2.0%     1.18      954
+
+fdtdKit: openEMS v0.37.0-44-g074a687 ($HOME/opt/openEMS/bin/openEMS)
+case           size engine          thr  MCells timesteps      MC/s spread  setup s  RSS MiB
+ideal          S    multithreaded     4    1.00      5993    1963.8   0.5%     0.20      144
+ideal          S    multithreaded     8    1.00      7410    2455.9   2.0%     0.21      144
+ideal          M    multithreaded     4    8.00       585    1541.1   2.8%     1.39      952
+ideal          M    multithreaded     8    8.00       663    1739.3   1.2%     1.36      952
+pml            S    multithreaded     4    1.00      2652     875.5   6.1%     0.32      210
+pml            S    multithreaded     8    1.00      3198    1055.8   1.7%     0.33      210
+pml            M    multithreaded     4    8.00       351     897.4   1.6%     1.88     1241
+pml            M    multithreaded     8    8.00       403    1060.9   3.0%     1.91     1241
+inhomogeneous  S    multithreaded     4    0.97      2548     816.9   5.2%     0.36      196
+inhomogeneous  S    multithreaded     8    0.97      3172    1013.9   1.3%     0.37      196
+inhomogeneous  M    multithreaded     4    7.88       364     856.4   1.2%     2.19     1059
+inhomogeneous  M    multithreaded     8    7.88       416     967.0  11.7%     2.18     1060
+dispersive     S    multithreaded     4    1.00      1196     393.8   4.4%     0.63      200
+dispersive     S    multithreaded     8    1.00      1456     478.9   8.7%     0.62      200
+dispersive     M    multithreaded     4    8.00       143     364.5   7.5%     4.75     1709
+dispersive     M    multithreaded     8    8.00       169     448.0   1.8%     4.94     1709
+antenna        S    multithreaded     4    0.97      2236     714.7   4.8%     0.47      236
+antenna        S    multithreaded     8    0.97      2704     870.9   4.2%     0.48      236
+antenna        M    multithreaded     4    7.88       312     735.0   2.4%     2.71     1347
+antenna        M    multithreaded     8    7.88       364     907.6   2.2%     2.68     1347
+cylindrical    S    multithreaded     4    1.03      4104    1365.5   2.1%     0.35      128
+cylindrical    S    multithreaded     8    1.03      4536    1543.7  11.1%     0.37      128
+cylindrical    M    multithreaded     4    8.12       431    1002.0   1.3%     2.32      788
+cylindrical    M    multithreaded     8    8.12       431    1012.0   1.2%     2.25      788
+
+2. STREAM 5.10 (J. McCalpin), 23:16:59-23:17:07
+-----------------------------------------------
+stream.c from https://www.cs.virginia.edu/stream/FTP/Code/stream.c, Apple clang -O3 -mcpu=native with OpenMP (Homebrew
+libomp), 100 M elements per array (2.4 GB), 20 passes, best pass reported. Columns as STREAM prints them:
+best rate MB/s, average, minimum and maximum time in s. "all processes cpu%" is every process before the run,
+including a system process (appstoreagent) that held one core all evening.
+
+== STREAM threads 1  23:16:59  all processes cpu% 136
+Copy:          114294.0     0.018200     0.013999     0.086700
+Scale:         110383.7     0.021388     0.014495     0.117329
+Add:           114508.5     0.025936     0.020959     0.103020
+Triad:         115262.4     0.022789     0.020822     0.043298
+Solution Validates: avg error less than 1.000000e-13 on all three arrays
+== STREAM threads 4  23:17:02  all processes cpu% 169
+Copy:          128981.1     0.012675     0.012405     0.013576
+Scale:         130323.7     0.012523     0.012277     0.013280
+Add:           120331.5     0.020155     0.019945     0.021076
+Triad:         120107.5     0.020219     0.019982     0.021390
+Solution Validates: avg error less than 1.000000e-13 on all three arrays
+== STREAM threads 8  23:17:04  all processes cpu% 154
+Copy:          135927.7     0.011977     0.011771     0.012354
+Scale:         125460.6     0.013011     0.012753     0.013960
+Add:           124714.5     0.019549     0.019244     0.020913
+Triad:         124987.0     0.019527     0.019202     0.020207
+Solution Validates: avg error less than 1.000000e-13 on all three arrays
+== STREAM threads 10  23:17:05  all processes cpu% 136
+Copy:          137741.1     0.011965     0.011616     0.013161
+Scale:         125679.1     0.013021     0.012731     0.013993
+Add:           126209.3     0.019770     0.019016     0.021587
+Triad:         126063.9     0.019786     0.019038     0.022710
+Solution Validates: avg error less than 1.000000e-13 on all three arrays
+
+3. Free-space cube after the gprMax benchmark models, 23:17-00:03
+-----------------------------------------------------------------
+Model `cube` of bench/models.py: N x N x N cells of 1 mm, one excited z edge at the centre (Gaussian pulse),
+a 10-cell PML on all six faces, one voltage probe; fixed step counts. bench/abtest.py, 3 paired rounds, each run
+after the other processes fell to 150 % of one core or less (the limit allows for the system process above) and
+run once more when they rose above it. Rates are for the same model on three builds of one solver; they are not
+set against gprMax's own published rates. Command: scripts/common_bench/run.zsh.
+
+# cube_s1_n6000  2026-11-10 23:17  load avg 2.41  3 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c0    199.0 MC/s  others cpu  159% gpu   1%  reference
+# r0 c0: redo 1 of 1 (the others at 159 % CPU, 1 % GPU during the run)
+# redo r0 c2    919.9 MC/s  others cpu  156% gpu   1%  identical
+# r0 c2: redo 1 of 1 (the others at 156 % CPU, 1 % GPU during the run)
+# redo r0 c4    992.3 MC/s  others cpu  152% gpu   1%  probes rel 2.2e-06
+# r0 c4: redo 1 of 1 (the others at 152 % CPU, 1 % GPU during the run)
+r0 c0    185.9 MC/s  others cpu  160% gpu   1%  reference
+r0 c1    182.6 MC/s  others cpu  130% gpu   1%  identical
+r0 c2    922.7 MC/s  others cpu  155% gpu   1%  identical
+r0 c3   1221.7 MC/s  others cpu  145% gpu   1%  identical
+r0 c4    990.7 MC/s  others cpu  153% gpu   1%  probes rel 2.2e-06
+# r0: kept after 1 redos although a run saw the others above the limit
+# redo r1 c0    176.2 MC/s  others cpu  178% gpu   3%  identical
+# r1 c0: redo 1 of 1 (the others at 178 % CPU, 3 % GPU during the run)
+# redo r1 c2    902.5 MC/s  others cpu  154% gpu   1%  identical
+# r1 c2: redo 1 of 1 (the others at 154 % CPU, 1 % GPU during the run)
+# redo r1 c4    992.3 MC/s  others cpu  162% gpu   2%  probes rel 2.2e-06
+# r1 c4: redo 1 of 1 (the others at 162 % CPU, 2 % GPU during the run)
+r1 c0    177.5 MC/s  others cpu  156% gpu   1%  identical
+r1 c1    177.8 MC/s  others cpu  129% gpu   1%  identical
+r1 c2   1020.1 MC/s  others cpu  159% gpu   1%  identical
+r1 c3   1266.8 MC/s  others cpu  148% gpu   1%  identical
+r1 c4    992.3 MC/s  others cpu  155% gpu   2%  probes rel 2.2e-06
+# r1: kept after 1 redos although a run saw the others above the limit
+# redo r2 c0    189.0 MC/s  others cpu  155% gpu   1%  identical
+# r2 c0: redo 1 of 1 (the others at 155 % CPU, 1 % GPU during the run)
+# redo r2 c2    901.1 MC/s  others cpu  159% gpu   2%  identical
+# r2 c2: redo 1 of 1 (the others at 159 % CPU, 2 % GPU during the run)
+# redo r2 c4    990.7 MC/s  others cpu  158% gpu   1%  probes rel 2.2e-06
+# r2 c4: redo 1 of 1 (the others at 158 % CPU, 1 % GPU during the run)
+r2 c0    180.0 MC/s  others cpu  168% gpu   1%  identical
+r2 c1    180.5 MC/s  others cpu  130% gpu   1%  identical
+r2 c2    910.4 MC/s  others cpu  153% gpu   1%  identical
+r2 c3   1200.4 MC/s  others cpu  149% gpu   1%  identical
+r2 c4    993.9 MC/s  others cpu  155% gpu   1%  probes rel 2.2e-06
+# r2: kept after 1 redos although a run saw the others above the limit
+# summary cube_s1_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 stock@multithreaded:4                                           180.0 [178-186]  x1.000 [1.000-1.000]  others 160%/1%  identical,reference
+c1 stock@multithreaded:8                                           180.5 [178-183]  x1.001 [0.982-1.003]  others 130%/1%  identical
+c2 cg29@multithreaded:4                                            922.7 [910-1020]  x5.059 [4.963-5.746]  others 155%/1%  identical
+c3 cg29@multithreaded:8                                           1221.7 [1200-1267]  x6.670 [6.571-7.135]  others 148%/1%  identical
+c4 cg29@metal-diamond                                              992.3 [991-994]  x5.523 [5.329-5.589]  others 155%/1%  probes rel 2.2e-06
+
+# cube_s1.5_n1800  2026-11-10 23:26  load avg 4.78  3 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c0    216.2 MC/s  others cpu  156% gpu   1%  reference
+# r0 c0: redo 1 of 1 (the others at 156 % CPU, 1 % GPU during the run)
+# redo r0 c2    953.4 MC/s  others cpu  153% gpu   1%  identical
+# r0 c2: redo 1 of 1 (the others at 153 % CPU, 1 % GPU during the run)
+r0 c0    215.1 MC/s  others cpu  157% gpu   1%  reference
+r0 c1    249.9 MC/s  others cpu  147% gpu   1%  identical
+r0 c2   1038.1 MC/s  others cpu  153% gpu   1%  identical
+r0 c3   1296.5 MC/s  others cpu  146% gpu   1%  identical
+r0 c4   1315.8 MC/s  others cpu  149% gpu   2%  probes rel 3.8e-06
+# r0: kept after 1 redos although a run saw the others above the limit
+# redo r1 c0    222.7 MC/s  others cpu  172% gpu   1%  identical
+# r1 c0: redo 1 of 1 (the others at 172 % CPU, 1 % GPU during the run)
+# redo r1 c1    249.9 MC/s  others cpu  176% gpu   1%  identical
+# r1 c1: redo 1 of 1 (the others at 176 % CPU, 1 % GPU during the run)
+# redo r1 c4   1347.2 MC/s  others cpu  269% gpu   3%  probes rel 3.8e-06
+# r1 c4: redo 1 of 1 (the others at 269 % CPU, 3 % GPU during the run)
+r1 c0    223.7 MC/s  others cpu  184% gpu   1%  identical
+r1 c1    261.0 MC/s  others cpu  216% gpu   1%  identical
+r1 c2   1083.4 MC/s  others cpu  149% gpu   1%  identical
+r1 c3   1374.1 MC/s  others cpu  145% gpu   1%  identical
+r1 c4   1353.1 MC/s  others cpu  151% gpu   3%  probes rel 3.8e-06
+# r1: kept after 1 redos although a run saw the others above the limit
+# redo r2 c0    229.9 MC/s  others cpu  160% gpu   2%  identical
+# r2 c0: redo 1 of 1 (the others at 160 % CPU, 2 % GPU during the run)
+# redo r2 c1    262.7 MC/s  others cpu  163% gpu   2%  identical
+# r2 c1: redo 1 of 1 (the others at 163 % CPU, 2 % GPU during the run)
+# redo r2 c2    976.0 MC/s  others cpu  153% gpu   1%  identical
+# r2 c2: redo 1 of 1 (the others at 153 % CPU, 1 % GPU during the run)
+# redo r2 c4   1350.2 MC/s  others cpu  150% gpu   3%  probes rel 3.8e-06
+# r2 c4: redo 1 of 1 (the others at 150 % CPU, 3 % GPU during the run)
+r2 c0    227.8 MC/s  others cpu  160% gpu   1%  identical
+r2 c1    256.4 MC/s  others cpu  153% gpu   2%  identical
+r2 c2    979.0 MC/s  others cpu  183% gpu   2%  identical
+r2 c3   1338.5 MC/s  others cpu  147% gpu   1%  identical
+r2 c4   1353.1 MC/s  others cpu  149% gpu   3%  probes rel 3.8e-06
+# r2: kept after 1 redos although a run saw the others above the limit
+# summary cube_s1.5_n1800: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 stock@multithreaded:4                                           223.7 [215-228]  x1.000 [1.000-1.000]  others 160%/1%  identical,reference
+c1 stock@multithreaded:8                                           256.4 [250-261]  x1.162 [1.126-1.167]  others 153%/1%  identical
+c2 cg29@multithreaded:4                                           1038.1 [979-1083]  x4.826 [4.299-4.843]  others 153%/1%  identical
+c3 cg29@multithreaded:8                                           1338.5 [1297-1374]  x6.027 [5.877-6.142]  others 146%/1%  identical
+c4 cg29@metal-diamond                                             1353.1 [1316-1353]  x6.048 [5.941-6.117]  others 149%/3%  probes rel 3.8e-06
+
+# cube_s2_n800  2026-11-10 23:41  load avg 4.89  3 rounds, interleaved, each round after others <= 150 % CPU
+# redo r0 c0    252.5 MC/s  others cpu  159% gpu   1%  reference
+# r0 c0: redo 1 of 1 (the others at 159 % CPU, 1 % GPU during the run)
+# redo r0 c2   1032.8 MC/s  others cpu  203% gpu   5%  identical
+# r0 c2: redo 1 of 1 (the others at 203 % CPU, 5 % GPU during the run)
+r0 c0    250.9 MC/s  others cpu  161% gpu   1%  reference
+r0 c1    292.5 MC/s  others cpu  148% gpu   1%  identical
+r0 c2   1079.1 MC/s  others cpu   40% gpu   1%  identical
+r0 c3   1301.9 MC/s  others cpu   41% gpu   1%  identical
+r0 c4   1440.5 MC/s  others cpu   31% gpu   4%  probes rel 3.9e-06
+# r0: kept after 1 redos although a run saw the others above the limit
+r1 c0    256.3 MC/s  others cpu   34% gpu   2%  identical
+r1 c1    304.4 MC/s  others cpu   33% gpu   2%  identical
+r1 c2   1029.6 MC/s  others cpu   37% gpu   1%  identical
+r1 c3   1228.1 MC/s  others cpu   73% gpu   2%  identical
+r1 c4   1469.8 MC/s  others cpu   39% gpu   4%  probes rel 3.9e-06
+r2 c0    251.6 MC/s  others cpu   38% gpu   0%  identical
+r2 c1    298.7 MC/s  others cpu   52% gpu   1%  identical
+r2 c2   1023.1 MC/s  others cpu   34% gpu   0%  identical
+r2 c3   1216.6 MC/s  others cpu   59% gpu   3%  identical
+r2 c4   1476.5 MC/s  others cpu   31% gpu   0%  probes rel 3.9e-06
+# summary cube_s2_n800: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 stock@multithreaded:4                                           251.6 [251-256]  x1.000 [1.000-1.000]  others 38%/1%  identical,reference
+c1 stock@multithreaded:8                                           298.7 [293-304]  x1.187 [1.166-1.188]  others 52%/1%  identical
+c2 cg29@multithreaded:4                                           1029.6 [1023-1079]  x4.066 [4.017-4.301]  others 37%/1%  identical
+c3 cg29@multithreaded:8                                           1228.1 [1217-1302]  x4.835 [4.792-5.188]  others 59%/2%  identical
+c4 cg29@metal-diamond                                             1469.8 [1440-1476]  x5.741 [5.735-5.868]  others 31%/4%  probes rel 3.9e-06
+
+# cube_s3_n600  2026-11-10 23:47  load avg 4.59  3 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0    369.6 MC/s  others cpu   52% gpu   1%  reference
+r0 c1    942.5 MC/s  others cpu   89% gpu   4%  identical
+r0 c2   1097.4 MC/s  others cpu   51% gpu   0%  identical
+r0 c3   1702.7 MC/s  others cpu   32% gpu   0%  probes rel 5.9e-07
+# redo r1 c3   1624.9 MC/s  others cpu  104% gpu  25%  probes rel 5.9e-07
+# r1 c3: redo 1 of 1 (the others at 104 % CPU, 25 % GPU during the run)
+r1 c0    365.7 MC/s  others cpu   62% gpu   3%  identical
+r1 c1    945.8 MC/s  others cpu   66% gpu   4%  identical
+r1 c2   1063.2 MC/s  others cpu   73% gpu   5%  identical
+r1 c3   1695.6 MC/s  others cpu  152% gpu  13%  probes rel 5.9e-07
+# r1: kept after 1 redos although a run saw the others above the limit
+r2 c0    372.6 MC/s  others cpu   30% gpu   0%  identical
+r2 c1    958.6 MC/s  others cpu   36% gpu   0%  identical
+r2 c2   1110.8 MC/s  others cpu   39% gpu   0%  identical
+r2 c3   1735.2 MC/s  others cpu   39% gpu   0%  probes rel 5.9e-07
+# summary cube_s3_n600: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 stock@multithreaded:8                                           369.6 [366-373]  x1.000 [1.000-1.000]  others 52%/1%  identical,reference
+c1 cg29@multithreaded:4                                            945.8 [943-959]  x2.572 [2.550-2.586]  others 66%/4%  identical
+c2 cg29@multithreaded:8                                           1097.4 [1063-1111]  x2.969 [2.907-2.981]  others 51%/0%  identical
+c3 cg29@metal-diamond                                             1702.7 [1696-1735]  x4.636 [4.607-4.656]  others 39%/0%  probes rel 5.9e-07
+
+# cube_s4_n600  2026-11-10 23:54  load avg 5.81  3 rounds, interleaved, each round after others <= 150 % CPU
+r0 c0    441.0 MC/s  others cpu   41% gpu   1%  reference
+r0 c1    869.8 MC/s  others cpu   47% gpu   0%  identical
+r0 c2   1017.9 MC/s  others cpu   60% gpu   0%  identical
+r0 c3   1808.7 MC/s  others cpu   45% gpu   4%  probes rel 1.0e-06
+r1 c0    432.5 MC/s  others cpu   55% gpu   0%  identical
+r1 c1    877.3 MC/s  others cpu   42% gpu   0%  identical
+r1 c2   1034.2 MC/s  others cpu   49% gpu   0%  identical
+r1 c3   1837.9 MC/s  others cpu   34% gpu   0%  probes rel 1.0e-06
+r2 c0    439.1 MC/s  others cpu   53% gpu   0%  identical
+r2 c1    874.7 MC/s  others cpu   46% gpu   0%  identical
+r2 c2   1033.6 MC/s  others cpu   46% gpu   0%  identical
+r2 c3   1833.6 MC/s  others cpu   36% gpu   0%  probes rel 1.0e-06
+# summary cube_s4_n600: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+c0 stock@multithreaded:8                                           439.1 [432-441]  x1.000 [1.000-1.000]  others 53%/0%  identical,reference
+c1 cg29@multithreaded:4                                            874.7 [870-877]  x1.992 [1.972-2.029]  others 46%/0%  identical
+c2 cg29@multithreaded:8                                           1033.6 [1018-1034]  x2.354 [2.308-2.391]  others 49%/0%  identical
+c3 cg29@metal-diamond                                             1833.6 [1809-1838]  x4.176 [4.101-4.250]  others 36%/0%  probes rel 1.0e-06
+
+4. PEC sphere against the Mie series (openEMS tutorial RCS_Sphere), 22:36-22:43
+------------------------------------------------------------------------------
+scripts/common_bench/mie.py: radius 200 mm, plane wave from a total-field/scattered-field box, PML_8, monostatic
+radar cross-section at 100 frequencies from 50 MHz to 1 GHz (ka = 0.21 to 4.19) through the nf2ff box, against the
+exact series for a perfectly conducting sphere. Fixed step counts (MIE_NRTS), 8 threads. The error figures are over
+the 95 points with ka > 0.4. A correctness check: the load of the machine does not enter.
+
+cell = lambda/20 at 1 GHz (83 lines per axis, 571 787 cells, 1400 steps)
+  stock v0.37.0:               0.770 dB mean, 2.943 dB max (at ka 4.03), 95 points
+  fork, multithreaded:         0.770 dB mean, 2.943 dB max (at ka 4.03), 95 points
+cell = lambda/40 (163 lines per axis, 4 330 747 cells, 2000 steps)
+  fork, multithreaded:         0.357 dB mean, 0.880 dB max (at ka 3.35), 95 points
+  fork, metal-diamond:         0.357 dB mean, 0.880 dB max (at ka 3.35), 95 points
+
+Largest relative difference of the radar cross-section over the 100 frequencies:
+  stock against the fork:                                   2.5e-06
+  stock against the fork with OPENEMS_NF2FF_LEGACY=1:       0.0e+00   (same far-field routine: identical)
+  fork multithreaded against metal-diamond (lambda/40):     0.0e+00
+  fork multithreaded with OPENEMS_FTZ=1 against metal-diamond: 5.0e-07
+The Metal diamond engine has no GPU version of the total-field/scattered-field extension and ran every step on
+its CPU loops (its message says so): the same numbers as the multithreaded engine without flush-to-zero, at a quarter
+of its speed (118 s against 27 s of time stepping, on a loaded machine).
+With the tutorial's own end criterion (-50 dB of energy) the stop step is not reproducible (1104 and 1340 steps in
+two stock runs, 782 with the fork at lambda/20: the engine tests the criterion between chunks of steps whose
+length it sets from the speed it measures); the radar cross-sections of two such runs differ by up to 1.6e-3. Hence the fixed step counts.
