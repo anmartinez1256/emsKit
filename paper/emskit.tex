@@ -26,7 +26,7 @@
 \title{\vspace{-1cm}fdtdKit: taking openEMS towards the memory ceiling of an Apple~M5\\
 \large A bit-identical speed-up of the EC-FDTD engine, and two run-length levers on the modelling side}
 \author{Angel Martinez\\ University of Texas at Austin}
-\date{Work of 2026-10-28 to 2026-11-10; draft of 2026-11-11}
+\date{Work of 2026-10-28 to 2026-11-11; draft of 2026-11-11}
 % PDF metadata: keep pdfauthor in step with the name in \author
 \hypersetup{pdftitle={fdtdKit: taking openEMS towards the memory ceiling of an Apple M5}, pdfauthor={Angel Martinez}}
 
@@ -54,7 +54,8 @@ criterion based on the port probes, and a mesh-line merging rule with a minimum 
 themselves. In the same paired runs the Metal engine ran the two large models at 2\,879 and 3\,193\,\MC, 1.47 and
 1.46$\times$ the CPU engine at its best, and one board, a grounded-coplanar (GCPW) line, 1.17$\times$; it was level on
 the other, a vertical SMA launch (1.00$\times$, 1.07 million cells), and slower on the two tutorials (0.97 and
-0.93$\times$). In a sweep of three models over 0.1--7.9 million cells it was ahead in every round from 1.7--2.9
+0.93$\times$); a later build (cg31, 2026-11-11) raised the Metal engine's rates by 1.07--1.58$\times$.
+In a sweep of three models over 0.1--7.9 million cells it was ahead in every round from 1.7--2.9
 million cells on, depending on the model, by 1.25--1.52$\times$ above 3 million, and within 0.89--1.23$\times$ of the
 CPU engine below that. Unblocked, as a fused sweep, it reaches only 67--75\,\% of that sweep's traffic bound on the large
 models: on this machine, whose GPU shares the bus with the cores, the blocking carries the gain. Together, the CPU
@@ -82,6 +83,7 @@ the checks (\code{emskit fdtd}) are published at \repourl.
 \input{sec_gpu}
 \input{sec_modelling}
 \input{sec_results}
+\input{sec_cg31}
 \input{sec_positioning}
 \input{sec_closing}
 

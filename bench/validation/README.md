@@ -52,10 +52,10 @@ These runs on the author's Mac (Apple M5, macOS 27.0.1) passed 15 of 15: stock v
 at 4 threads and with the fastest engine (`validation_cg18_mt4`, `validation_cg18_fastest`,
 2026-11-03); the Metal diamond engine on cg23 and cg27 (`validation_cg23_metal`,
 `validation_cg27_metal`, 2026-11-04: the three slabs equal the basic engine exactly, without
-`OPENEMS_FTZ`, and the cylindrical cavity runs on the cylindrical CPU engine); cg29, the fork's
-head (patches 0001-0027), at 4 threads and with the fastest engine (`validation_cg29_mt4`,
+`OPENEMS_FTZ`, and the cylindrical cavity runs on the cylindrical CPU engine); cg29, patches
+0001-0027 (the fork's head until 2026-11-11), at 4 threads and with the fastest engine (`validation_cg29_mt4`,
 `validation_cg29_fastest`, 2026-11-05; the slabs again equal the basic engine); and a fresh
-build of the published patches (snapshot pub29, `results/fresh_build_pub29_2026-11-07.txt`) in the
+build of the patches published on 2026-11-07, 0001-0027 (snapshot pub29, `results/fresh_build_pub29_2026-11-07.txt`) in the
 same two ways (`validation_pub29_mt4`, `validation_pub29_fastest`, 2026-11-07; the slabs equal the
 basic engine; `$PUBCHECK` in them stands for that build's scratch folder). The
 `validation_cg29pre_*` files are an earlier build of cg29's CPU items (2026-11-04).

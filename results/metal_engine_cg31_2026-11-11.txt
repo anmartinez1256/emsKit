@@ -1,0 +1,80 @@
+GPU items of 2026-11-11 (Metal diamond engine), snapshots cg30a .. cg30l on cg29 = speed-m5-gpu 78fe656
+====================================================================================================
+Committed on 2026-11-11 as 72a6492..b59d989 on branch speed-m5-gpu (patches 0028 to 0038 of patches/openems; snapshot cg30a = 0028 + 0029,
+cg30b = 0030, cg30c = 0031, cg30e = 0032, cg30f = 0033, cg30h = 0034, cg30i = 0035, cg30j = 0036, cg30k = 0037, cg30l = 0038); with the
+cylinder line hooks (ff2538a, patch 0039, snapshot cg31a; section "CPU" below) installed on the author's Mac the same day as build cg31
+(banner v0.37.0-57-gff2538a). Apple M5, shared Mac: every timing below is from
+interleaved rounds (bench/abtest.py) with 3-9 cores of other sessions busy; ratios paired per round. Final numbers need a quiet machine.
+
+Kept (results identical; switch in brackets, all default on):
+ 1. no Nyquist-period energy schedule when the run has no end criteria (endCriteria = 0) and --exact-endcriteria is not given
+    (openems.cpp; as v0.37.0). Each estimate is one single-threaded pass over both fields while the engine waits.
+ 2. mountain x valley and valley x mountain tiles in ONE dispatch (three per block) [OPENEMS_DIAMOND_MERGE]
+ 3. Mur faces of one axis share a barrier; Post and Apply fused where a tile's faces are on one axis [OPENEMS_DIAMOND_MURMERGE]
+ 4. a call's rest in blocks of nearly equal depth [OPENEMS_DIAMOND_EVEN]
+ 5. divisions by run-time widths as a high-word multiplication with host reciprocals; z wrap by select [OPENEMS_DIAMOND_FASTIDX]
+ 6. pipeline told that a threadgroup is whole SIMD groups [OPENEMS_DIAMOND_TGFLAG]
+ 7. UPML a z-vector at a time for boxes with every z line (the x and y slabs) [OPENEMS_DIAMOND_PML4]; 16-bit UPML indices
+ 8. UPML of the other boxes (z slabs) three components of a cell at a time [OPENEMS_DIAMOND_PML3]
+ 9. dispersive materials (sheets, Drude/Lorentz, Debye) three components of a cell at a time (no switch)
+10. the extension data's offsets and counts as compile-time constants; the kernel is compiled after the data are packed
+11. tuner: seven tilings (adds K=4 10,6; K=4 9,2; K=5 12,8) in two stages [OPENEMS_DIAMOND_CAND=n: the first n]; the per-tile lists
+    of a tiling in a buffer of their own (the shared words are no longer copied per tiling)
+Dropped: OPENEMS_DIAMOND_PRENEXT (Mur and dispersive Pre stages in the half-step before, beside the cell update): identical results,
+ 2-4 % slower on the GCPW line and the notch tutorial (5 % slower again with a second call site per stage).
+Found: on the M5 (macOS 27.0.1) the GPU's own 0xffffffffu / w returns 3579139454 for w = 3 (1431655765 is right); the reciprocals
+ therefore come from the host. Macro values with spaces or commas do not survive MTLCompileOptions.preprocessorMacros.
+
+Verification of cg30l: scripts/checks/diamond_check.sh 72/72 identical (also after every single step: cg30a, b, c, e, f, g, h, i, j, k);
+ emskit fdtd check cg30l --lite: ALL IDENTICAL (6 models, 18 rows; the CPU paths against stock); debye-check PASS; validate
+ --engine metal-diamond 15/15; e2e gcpw --engine metal-diamond ok (the records of the check stay on the author's machine). Every A/B run's probes identical to cg29's GPU run.
+
+cg30l against cg29, Metal engine, median MC/s and paired ratio [min-max], 3 rounds (ab8_*.txt; others 3-7 cores):
+ GCPW line 0.24 M      2068 -> 2246   x1.086 [0.992-1.088]
+ SMA launch            1755 -> 2012   x1.147 [1.072-1.182]
+ luikore box 3.0 M     3459 -> 4161   x1.203 [1.130-1.215]
+ luikore box 17 M      2756 -> 3149   x1.156 [1.139-1.172]
+ notch x3 5.25 M       3002 -> 3444   x1.142 [1.074-1.153]
+ patch x5 7.86 M       2730 -> 2899   x1.062 [1.033-1.076]
+Earlier snapshots (ab5, ab7): notch tutorial x1.48 (cg30k), cube with 10-cell PML 1 M cells x1.48 and 8 M x1.14 (cg30f/cg30i).
+
+Diagnostics (builds not in the tree; WRONG results by design, timing only):
+ ABLATE on cg30f: GCPW x1.35 without Mur, x1.32 without the sheets, x2.0 without all extensions; SMA x1.69 without UPML, x1.05 Mur,
+  x1.05 excitation, x1.90 without all.
+ ABLATE on cg30j, GCPW: Mur compiled out x1.26, sheets compiled out x1.22, all out x1.94; but skipping single stages at run time:
+  sheets Pre x1.07, sheets Apply x1.06, Mur Pre x1.05, Mur Post x1.02. The cost is tied to the code being compiled in; cause not found.
+ Empty extra barriers after the update: no change (they may be coalesced).
+ Tiling sweep on cg30k (tiles_*.txt, 13 fixed tilings, 2 rounds, others at a median of 7.6 cores).
+Not done: dumps through the base's snapshot hook (patch tutorial only), a Mur per-cell record, tiles blocked in z (nothing on the
+ six models).
+
+CPU, the same day (patch 0039, snapshot cg31a): line hooks for Engine_Ext_Cylinder, so a mesh closed in alpha runs the fused sweep.
+ scripts/cylinder_closed/cyl_closed.py (61 x 72 x 41 lines, r = 0 or r0 = 5, a dielectric ring, five probes on the axis and the alpha seam,
+ 3000 steps): the five probes equal stock v0.37.0's and cg30l's (unfused); the raw fields (OPENEMS_EXPORT_FIELDS) are bit-identical between
+ cg30l and cg31a, between 1, 4, 8 and 10 threads and between the fused sweep and OPENEMS_FUSED=0; the cylindrical multigrid tutorial
+ (scripts/cylinder_multigrid/run_cyl.py, still unfused) has 18 datasets with 0 differences against cg29. One run each at 4 threads on a
+ loaded machine: stock 232, cg30l 834, cg31a 1241 MC/s. (A first version of the test had its source between two mesh lines: every probe
+ was zero and every comparison "passed"; the script now puts source and probes on mesh lines.)
+Install checks of cg31 (2026-11-11 05:30): emskit fdtd check installed --lite ALL IDENTICAL (6 models, 18 rows), debye-check, e2e gcpw
+ 34300 steps and e2e sma 50320 steps (both as with cg29), diamond_check.sh on the installed library 72/72.
+
+FINAL TABLE on a quiet machine, 2026-11-11 06:44-07:07 (bench/abtest.py, 4 paired rounds per model, every run after the other processes
+fell to 1.5 cores or less and repeated once when they rose above it; the other sessions on the machine were paused). This table replaces
+the loaded-machine figures above. cg31 = the installed build (patches 0001 to 0039); CPU = cg31's multithreaded engine. Median MC/s,
+the paired ratio of the Metal engine cg31 / cg29 [min-max over the rounds], and the other processes' CPU per configuration (% of a core):
+ model                                       Metal cg29  Metal cg31  ratio                   CPU 8 thr  CPU 4 thr  Metal/CPU best  others
+ GCPW line, 0.24 M cells, 15000 steps            2118        2307    x1.089 [1.087-1.090]       2000       1816       1.15        27/38/27/40
+ SMA launch, 0.87 M cells, 6000 steps            1854        2108    x1.137 [1.137-1.139]       1955       1509       1.08        32/38/36/36
+ patch tutorial, 0.10 M, 10500 steps             1753        1887    x1.075 [0.922-1.130]       1910       1868       0.99        38/38/16/29
+ notch tutorial, 0.27 M, 16000 steps             1904        2907    x1.527 [1.419-1.530]       2129       1909       1.37        29/28/45/29
+ patch x5, 7.86 M, 1200 steps                    2901        3100    x1.067 [1.066-1.075]       2104       1802       1.47        56/41/49/60
+ notch x3, 5.25 M, 2000 steps                    3210        3702    x1.152 [1.146-1.174]       2330       1853       1.59        89/45/51/64
+ luikore box, 3.0 M, 3000 steps                  3692        4408    x1.192 [1.190-1.221]       2614       2156       1.69        59/69/80/58
+ luikore box, 17 M, 1000 steps                   3056        3507    x1.148 [1.136-1.157]       1736       1550       2.02        55/50/64/59
+ cube with 10-cell PML, 1.0 M, 3000 steps         980        1546    x1.576 [1.505-1.580]       1343       1012       1.15        59/50/75/58
+ cube with 10-cell PML, 8.0 M, 800 steps         1483        1839    x1.244 [1.195-1.290]       1293       1049       1.42        36/45/43/43
+Every cg31 Metal run's probes are identical to the cg29 Metal run's; the CPU runs differ from them by 1.7e-7 to 2.5e-5 relative (the
+GPU flushes subnormals; the largest on the two box models, whose probe sits in the pulse's tail). The models run from Python with EndCriteria = 0, so cg31 makes no energy estimates in them (patch 0028).
+The SMA launch is on the toolkit's current mesh (0.871 M cells). Closed cylinder (scripts/cylinder_closed/cyl_closed.py, 6000 steps,
+two rounds in the same quiet block): cg29 2126 and 2176 MC/s at 4 threads, 1857 and 1891 at 8; cg31 2125 and 2400 at 4 threads, 2503 and
+2553 at 8 (x1.35 at 8 threads; at 4 threads the two rounds disagree); stock v0.37.0 474 and 464 at 4 threads.

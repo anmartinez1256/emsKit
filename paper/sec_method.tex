@@ -75,8 +75,8 @@ thread count, against the stock snapshot, two repeats, results in the top-level 
 \code{max|dS|=0.0e+00}; \code{bench.py} and \code{check.sh} now also exit with an error status when a comparison
 differs or a file is missing. cg18 (patches 0001--0006, the build installed on the author's Mac from 2026-11-04 to
 2026-11-06) passed the full check on a quiet machine on 2026-11-03 (\code{results/*\_cg18.txt},
-Section~\ref{sec:results}). The current build, cg29 (patches 0001--0027, installed in cg18's place on 2026-11-06),
-passed it on 2026-11-05 with three more configurations, the geometry coefficient tables
+Section~\ref{sec:results}). Its successor, cg29 (patches 0001--0027, the installed build from 2026-11-06 to
+2026-11-11), passed it on 2026-11-05 with three more configurations, the geometry coefficient tables
 forced at 4 threads, the packed ones at 8 and the barriers instead of the neighbour flags at 8
 (\code{results/*\_cg29.txt}; the speeds in those tables are the faster of two unpaired runs under the check's load,
 not comparisons).
@@ -90,7 +90,8 @@ Section~\ref{sec:gpu} has its own acceptance test, against the multithreaded eng
 instead of stock (Section~\ref{sec:policy}): \code{scripts/checks/diamond\_check.sh} compares every exported field
 value of box models (PEC, Mur and PML faces, delayed and soft excitations, lumped RLC elements, conducting sheets,
 Drude/Lorentz and Debye blocks) at $K=1$, 2, 3, 4 and 8 time steps per tile and with an odd tile, threadgroup and
-batch size, 72 of 72 comparisons identical on cg28 and cg29, and \code{bench.py} compares the port probes and
+batch size, 72 of 72 comparisons identical on cg28, on cg29 and on every snapshot of cg31, and \code{bench.py}
+compares the port probes and
 $S$-parameters of the six models, identical on cg29 (\code{results/*\_cg29gpu.txt}) as on the earlier GPU snapshots.
 The cg29 runs set \code{OPENEMS\_FTZ=1} for the whole call (\code{results/cpu\_items\_cg29\_2026-11-05.txt},
 section 3), so the reference is tolerant too, and a tolerant reference makes every configuration tolerant: the files
@@ -105,12 +106,18 @@ cg29 snapshot), \code{diamond\_check.sh} 72 of 72, the validation suite 15 of 15
 multithreaded engine at 4 threads, and the GCPW end-to-end run with the toolkit's defaults stopped at step 34\,300, as
 on cg18 (Table~\ref{tab:e2e}). Other processes used 4.6--8.5 cores during these runs, so their speeds are not quoted,
 and their tables are not in \code{results/}; \code{Docs/fdtdKit/PLAN.md}, section 16, logs the runs.
-On 2026-11-07 the 27 published patches were built from a fresh clone of upstream's superproject into an empty prefix
+On 2026-11-07 the 27 patches published then (0001--0027) were built from a fresh clone of upstream's superproject
+into an empty prefix
 (\code{BUILD.md}, sections 1, 4 and 5; snapshot pub29), and that build passed \code{check.sh} (every run identical
 to stock on all six models, \code{results/*\_pub29.txt}), \code{debye\_check.sh}, \code{diamond\_check.sh} 72 of
 72, the six models on the Metal engine, the validation suite 15 of 15 with the multithreaded engine at 4 threads and
 with the fastest engine, and the cylindrical multigrid (\code{results/fresh\_build\_pub29\_2026-11-07.txt}); other
 programs used up to 8.9 cores during \code{check.sh}, so here too only the verdicts count.
+The current build, cg31 (patches 0001--0039, installed in cg29's place on 2026-11-11), passed the reduced check
+(identical to stock on all six models, 18 of 18 rows), \code{debye\_check.sh}, \code{diamond\_check.sh} (72 of 72 on
+each of its snapshots and on the installed library), the validation suite on the Metal engine (15 of 15, on snapshot
+cg30l, patches 0001--0038) and both boards end to end with the toolkit's defaults, which stopped at the steps of cg29
+(34\,300 and 50\,320; Section~\ref{sec:cg31}, \code{results/metal\_engine\_cg31\_2026-11-11.txt}).
 
 \subsection{Verification policy}\label{sec:policy}
 \begin{itemize}
@@ -169,7 +176,9 @@ programs used up to 8.9 cores during \code{check.sh}, so here too only the verdi
   a fixed step count. In the run-mode matrix of the cg29 check this was the only difference: on a 0.7\,s model that
   ends on the energy criterion, stock ran to its step limit of 1\,496 steps and every cg29 configuration stopped at
   step 255, with its 64 probe lines equal to the first 64 of stock's 375
-  (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 3).
+  (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 3). Up to cg29 the base's schedule also ran in a run
+  without an end criteria, one thread summing both fields every Nyquist period while the engine waited; since cg31
+  such a run makes no energy estimates, as in v0.37.0 (patch 0028, Section~\ref{sec:cg31}).
 \item \textbf{Every number has a load figure next to it.} The machine was shared with other sessions; a speed quoted
   without its \code{others} percentage was not trusted, and comparisons across snapshots were re-run when loads
   differed. Up to the cg23 tables of 2026-11-04 the figure was a one-second sample taken just before each run, not
@@ -191,12 +200,14 @@ programs used up to 8.9 cores during \code{check.sh}, so here too only the verdi
   \code{OPENEMS\_OP\_INDEX\_PER\_CELL} and \code{OPENEMS\_FTZ} switches act when set to any value other than empty or
   0; \code{OPENEMS\_FTZ} and the probe end criterion are off unless set. The other items (the spin barriers and the
   hook plan, work stealing and the thread search, the Mur and UPML fast paths, the dispersive-material line hooks, the
-  dump gather, the setup changes and the CSXCAD changes, and from cg29 the threaded UPML coefficient setup and the
-  line hooks of the steady-state detection and the Debye materials) have no switch: they rest on the bit-identity
+  dump gather, the setup changes and the CSXCAD changes, from cg29 the threaded UPML coefficient setup and the
+  line hooks of the steady-state detection and the Debye materials, and from cg31 those of the cylinder extension)
+  have no switch: they rest on the bit-identity
   checks and are bisected through the snapshots and commits. The Metal engine is opt-in
   (\code{--engine=metal-diamond}); \code{OPENEMS\_DIAMOND\_TUNE=0} turns off its run-time choice of the tiling, and
   \code{OPENEMS\_DIAMOND\_K}, \code{OPENEMS\_DIAMOND\_TILE} and \code{OPENEMS\_DIAMOND\_COEF} fix the tiling and the
-  coefficient layout (Section~\ref{sec:gpu}).
+  coefficient layout (Section~\ref{sec:gpu}); its changes of cg31 have eight switches of their own
+  (Section~\ref{sec:cg31}).
 \item \textbf{What ``bit-identical'' rests on.} Three rewrites depend on the compiler fusing a multiply-add the same
   way in the old and the new expression; this was verified by comparison on every model with Apple clang builds, not
   forced in the source (Section~\ref{sec:contract}). In the standalone kernel the rewritten inner loop matches the stock

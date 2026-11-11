@@ -24,7 +24,10 @@ measurements from the project log (not in \code{results/}) unless a result file 
   loops gain less was not examined. A real version (halo lines per thread, every extension's line hooks per sub-step)
   would gain less. Not built (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2). Deeper wavefront or diamond blocking on the
   CPU~\cite{malas2015,fukaya2018} was not tried; on the GPU, diamond blocking is the fork's Metal engine
-  (Section~\ref{sec:gpu}, with the tile schedule of luikore's engine, PR \#228~\cite{luikore228}).
+  (Section~\ref{sec:gpu}, with the tile schedule of luikore's engine, PR \#228~\cite{luikore228}). Both tests gave
+  every thread a sub-grid of its own. Upstream master's \code{cpu} engine blocks with all threads in one cache-sized
+  tile, which is worth 1.15--1.49$\times$ to it on this machine (Section~\ref{sec:threebuilds}); that form was not
+  tried and is open (Section~\ref{sec:future}).
 \item \textbf{Compiler flags}: \code{-mcpu=apple-m4} gives an identical instruction stream; link-time optimisation (LTO)
   was not tried; \code{-ffast-math} is ruled out (not bit-identical); GCC~16, measured at one thread in the standalone
   kernel only, runs the stock inner loop 1.16--1.39$\times$ faster than Apple clang but the rewritten one at about the
@@ -68,7 +71,10 @@ measurements from the project log (not in \code{results/}) unless a result file 
   CPU engines is 7--9\,\% slower on the GPU than N-I-J-K (\code{results/diamond\_engine\_cg19\_2026-11-04.txt}); 1\,024
   threads per tile, the pipeline maximum and the first default, cost 44\,\% on the notch tutorial and 21\,\% on the
   SMA launch (\code{results/diamond\_engine\_cg21\_2026-11-04.txt}). A one-dispatch fused kernel was not built: it
-  needs a second copy of both fields, and $K=4$ already runs above the bound such a kernel has.
+  needs a second copy of both fields, and $K=4$ already runs above the bound such a kernel has. On 2026-11-11 (cg31,
+  Section~\ref{sec:cg31}), moving the Pre stages of Mur and of the conducting sheets into the half step before,
+  beside the cell update, saved a barrier per half step with identical fields but ran 2--4\,\% slower, and was
+  dropped.
 \end{itemize}
 
 \section{Discussion and future work}\label{sec:future}
@@ -97,12 +103,17 @@ notch tutorial and 0.93$\times$ on the patch tutorial). At cg19 the CPU engine w
 models (Figure~\ref{fig:crossover}) it led in every round from 1.7--2.9\,M cells on, by 1.25--1.52$\times$ above
 3\,M; on smaller grids it waits for the CPU between short calls (18--27\,\% of the loop on the patch tutorial at
 cg29) or runs at a lower rate of its own (the notch tutorial), and the CPU engine is at its fastest between 0.6 and 1.9\,M cells; below 1.7--2.9\,M
-cells the two are within 0.89--1.23$\times$ of each other (Section~\ref{sec:gpu}). Once both engines are near what they can draw from
+cells the two are within 0.89--1.23$\times$ of each other (Section~\ref{sec:gpu}). The build of 2026-11-11, cg31,
+raised the Metal engine's rates on the six models by 1.07--1.53$\times$ (three dispatches per block, UPML and
+dispersive stages on z-vectors or on the three components of a cell, seven tilings); in its paired rounds the Metal
+engine is ahead of the CPU engine at its best on five of them, by 1.08--1.59$\times$, and level on the patch tutorial
+(Section~\ref{sec:cg31}, Table~\ref{tab:cg31}). Once both engines are near what they can draw from
 memory, the cheapest remaining wins are in the model. Still open: fp16 field storage (Section~\ref{sec:rejected}); larger Apple GPUs, on which luikore's
 diamond engine (PR \#228~\cite{luikore228}) reports several times the CPU (Section~\ref{sec:positioning}; on this M5
 it refused the six models, which all have Mur faces, and ran the PEC variants of five of them, speed-only cases, at
-0.39--2.00$\times$ cg18, \code{results/others\_2026-11-04/README.md}); and spreading one model over several machines
-(Section~\ref{sec:cluster}).
+0.39--2.00$\times$ cg18, \code{results/others\_2026-11-04/README.md}; on its own benchmark model cg31's Metal engine
+was level with it at 3.0\,M cells and 1.17$\times$ as fast at 17\,M, Table~\ref{tab:threebuilds}); and spreading one
+model over several machines (Section~\ref{sec:cluster}).
 
 On the engine side, a second read-only optimisation review, made on 2026-11-02 after the work up to then, ranked what
 was left (Table~\ref{tab:review2}); its gains were estimates. Its CPU items were built and measured for cg29 on
@@ -156,9 +167,23 @@ launch ran 1.140$\times$, 1.128$\times$ and 1.076$\times$ faster at 4, 8 and 1 t
 and 1.027$\times$ at 4 and 8, and the two large models within the noise, so only the SMA launch streams its
 coefficient tables from memory (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2).
 
+cg31 (Section~\ref{sec:cg31}) worked on the Metal engine's per-step structure and on its extension stages: three
+dispatches per block instead of four, UPML and dispersive stages that take a z-vector or the three components of a
+cell at a time instead of single floats, Mur faces of one axis behind one barrier, seven tilings instead of four.
+Three items are open after it. On the CPU, temporal blocking with one cache-sized tile for all threads, as upstream
+master's \code{cpu} engine does it: the blocking is worth 1.15--1.49$\times$ to that engine on this machine, and on a
+17\,M-cell grid it is ahead of the fork's CPU engine (Section~\ref{sec:threebuilds}), while the tests of
+Section~\ref{sec:rejected} gave every thread a sub-grid of its own. In the Metal kernel, the cost of an extension
+that is compiled in: in timing-only builds of two snapshots the GCPW line ran 1.26--1.35$\times$ as fast without its
+Mur faces and 1.22--1.32$\times$ without its sheets, but skipping one of their stages at run time (on the later of the
+two) gave 1.02--1.07$\times$, and what in the GPU's execution makes it so was not found. The third is a shorter excitation pulse (next paragraph).
+
 Open on the modelling side: the same mesh-floor rule for the other builders; a convergence pair (coarse/fine) as part
 of every study; the SMA launch's top PML, eight cells over the whole x-y face although only the coax wave has to be
-absorbed there (a thinner one was not validated on the full-size board); and the time step. openEMS's default step
+absorbed there (a thinner one was not validated on the full-size board); a baseband excitation pulse for boards on
+which every conductor has a DC path (on the two boards it cut the steps 1.52$\times$ and 1.94$\times$ with $S_{21}$
+within 0.005\,dB of the full run; a board with a conductor without a DC path, or with a series capacitor, where the
+signals may not settle, was not tested; Section~\ref{sec:pulse}); and the time step. openEMS's default step
 (\code{CalcTimestep\_Var3}) is a per-node bound that is exact on a uniform mesh and conservative at grading steps: on
 the GCPW line the largest eigenvalue of the lossless update operator puts the leapfrog limit of the bulk update 1.26
 times above it (computed for this report from the operator exported by cg18,
@@ -190,7 +215,9 @@ hooks and \code{TS\_LOCAL} put them on the fused sweep and the neighbour flags (
 line hooks too, 6.5$\times$ and 10.0$\times$; Section~\ref{sec:cg29}). The tool was run on master and on the fork
 on 2026-11-10 (Section~\ref{sec:common}, Table~\ref{tab:upstream}), without its probes column, which needs master's
 Python module: on the \code{multithreaded} engine the fork is 1.23--10.0$\times$ master, and master's new \code{cpu}
-engine is level with or ahead of the fork's CPU engine at 8\,M cells, so a submission of the CPU items would have
+engine is level with or ahead of the fork's CPU engine at 8\,M cells (on luikore's benchmark model, run interleaved
+on 2026-11-11, cg31's CPU engine was 1.27$\times$ master's \code{cpu} engine at 3.0\,M cells and 0.86$\times$ at
+17\,M; Table~\ref{tab:threebuilds}), so a submission of the CPU items would have
 to show a gain over that engine, not over \code{multithreaded}. The Metal diamond engine does not run the steady-state detection on the GPU: with it, every step runs
 the single-threaded CPU loops of the compressed engine (Section~\ref{sec:gpu}). A submission would also follow
 upstream's AI policy~\cite{aipolicy} (a \code{Generated-by:} trailer, a sign-off, and a human who has read every
@@ -205,18 +232,24 @@ the repository and its folder keep that name, as do the result files, the patche
 The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
 \href{https://doi.org/10.5281/zenodo.24118865}{10.5281/zenodo.24118865}), contains:
 \begin{itemize}
-\item \code{patches/openems/}: the fork as \code{git am} patches 0001--0027 on commit 7bb294f of upstream's
+\item \code{patches/openems/}: the fork as \code{git am} patches 0001--0039 on commit 7bb294f of upstream's
   \code{gpu-engine} branch (\code{BASE\_origin\_gpu-engine.txt}; upstream has since deleted the branch, so
-  \code{BUILD.md} fetches the commit by its hash), and one cumulative diff that gives the same tree. 0001--0006 are
+  \code{BUILD.md} fetches the commit by its hash), and one cumulative diff that gives the same tree (dc4a352).
+  0001--0006 are
   cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007--0016 add the Metal diamond
   engine, one patch per snapshot cg19--cg28; 0017--0027 are the CPU items of cg29 (Section~\ref{sec:cg29}), so
-  0001--0027 give cg29, the build installed there since 2026-11-06; the result files carry these snapshot names.
-  The fork's commits were rewritten for publication on 2026-11-07, with the author's public identity, the trailers
+  0001--0027 give cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are the twelve commits
+  of 2026-11-11 (72a6492 to ff2538a, Section~\ref{sec:cg31}), so 0001--0039 give cg31, the build installed there
+  since; the result files carry these snapshot names. All 39 patch files were made again on 2026-11-11; in
+  0001--0027 only the numbering in the subject line changed.
+  The fork's commits up to cg29 were rewritten for publication on 2026-11-07, with the author's public identity,
+  the trailers
   of upstream's AI policy and the same trees, and pushed that day; the result files made before then and the
   entries of \code{CHANGELOG.md} dated before then give their earlier hashes, which \code{CHANGELOG.md} maps to the
   published ones. The version strings that the libraries of those snapshots print keep the hashes at which their
   build folders were configured, from before the rewrite; the fresh build of 2026-11-07 (pub29) prints the hash of
-  its own \code{git am} commit, v0.37.0-45-g1d091c7.
+  its own \code{git am} commit, v0.37.0-45-g1d091c7, and the installed cg31 that of the fork's head,
+  v0.37.0-57-gff2538a.
   \code{patches/csxcad/}: one patch on v0.7.0 (+9 lines), which the openEMS patches need. The changes made in this
   project to the author's simulation toolkit (rfsim) are not published, since the toolkit itself is private;
   Section~\ref{sec:modelling} and \code{CHANGELOG.md} describe them.
@@ -231,8 +264,8 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   \code{results/validation\_<tag>.md} (and \code{.json}). On the M5 cg18 passes 15 of 15 with the
   multithreaded engine at 4 threads (\code{cg18\_mt4}) and with the default engine and thread count
   (\code{cg18\_fastest}), and so do cg29 (\code{cg29\_mt4}, \code{cg29\_fastest}; \code{cg29pre\_*} are an earlier
-  build of it), the fresh build of the published patches of 2026-11-07 (\code{pub29\_mt4}, \code{pub29\_fastest})
-  and stock v0.37.0 with its defaults (\code{stock-v0.37.0\_macos}); the Metal diamond engine passes 15
+  build of it), the fresh build of 2026-11-07 of the patches published then, 0001--0027 (\code{pub29\_mt4},
+  \code{pub29\_fastest}), and stock v0.37.0 with its defaults (\code{stock-v0.37.0\_macos}); the Metal diamond engine passes 15
   of 15 at cg23 and cg27 (\code{cg23\_metal}, \code{cg27\_metal}; \code{VALIDATION\_ENGINE} selects the engine, the
   cylindrical cavity runs the cylinder engine whatever it says, and the dispersive slabs on the GPU equal the basic
   engine of the same build); snapshot cg17
@@ -244,8 +277,8 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   on the M5 a build of patches 0001--0004 (snapshot cg16, which has the Debye bug) with the multithreaded engine at
   2 threads passes 4 of 6, and both Debye checks fail (\code{negative-control\_patches-0001-0004\_mt2}).
 \item \code{results/}: the benchmark tables, one file per model, step count and snapshot, with the load figure of
-  every run, among them the full checks of cg18 (\code{*\_cg18.txt}) and of a fresh build of the published patches
-  (\code{*\_pub29.txt}, 2026-11-07) and the comparison of stock, the fork's base and cg18 (\code{*\_base.txt});
+  every run, among them the full checks of cg18 (\code{*\_cg18.txt}) and of a fresh build of the patches published on
+  2026-11-07, 0001--0027 (\code{*\_pub29.txt}), and the comparison of stock, the fork's base and cg18 (\code{*\_base.txt});
   \code{summary.json} (best speed per model and snapshot; the cg17 tables and every table after cg18, those of cg19,
   cg21, cg22, cg29, cg29pre and pub29 and the \code{*gpu.txt} tables of cg20 to cg29 and pub29, are correctness
   checks with unpaired runs, many of them on a loaded machine, so their speeds do not compare; for a
@@ -264,11 +297,15 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   (\code{cpu\_items\_cg29\_2026-11-05.txt}, with the identity check tables \code{*\_cg29.txt}, whose speeds are the
   faster of two unpaired runs under the check's load, and \code{*\_cg29pre.txt} of an earlier build); the GPU against
   the CPU by grid size on cg29 (\code{gpu\_crossover\_cg29\_2026-11-05.txt}, Figure~\ref{fig:crossover}); and the
-  tables of the current build:
+  tables of cg29:
   stock, cg29 on the CPU and the Metal diamond engine side by side (\code{speed\_cg29\_2026-11-05.txt},
   Table~\ref{tab:current}) and the end-to-end runs of cg29 on the CPU and the GPU
   (\code{rfsim\_e2e\_cg29\_2026-11-05.txt}, Table~\ref{tab:e2ecg29}), from which \code{paper/figures/tables.py}
-  writes those two tables and the speed table of \code{README.md}.
+  writes those two tables and the speed table of \code{README.md}. From 2026-11-10 and 2026-11-11: the common
+  benchmarks (\code{common\_benchmarks\_2026-11-10.txt}, Section~\ref{sec:common}) and the records of the current
+  build, cg31 (Section~\ref{sec:cg31}): its Metal engine against cg29's (\code{metal\_engine\_cg31\_2026-11-11.txt}),
+  the three builds on luikore's model (\code{engines\_on\_luikore\_model\_2026-11-11.txt}; with cg29 the night before,
+  \code{luikore\_compare\_cg29\_2026-11-11.txt}) and the pulse test (\code{pulse\_test\_2026-11-11.txt}).
 \item \code{scripts/} (one line per script in \code{scripts/README.md}): the standalone kernels (\code{kb\_idx.cpp},
   \code{kb\_tb.cpp}) with the GCC-against-clang comparison (\code{gcc\_vs\_clang.sh}) and the instruction count per
   loop iteration (\code{loop\_insns.py} with the program-counter sampler \code{pc\_sampler.cpp}), the cache-valley
@@ -279,8 +316,11 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   the Metal diamond engine's bit-identity check against the multithreaded engine with \code{OPENEMS\_FTZ=1}
   (\code{scripts/checks/diamond\_check.sh} with \code{diamond\_box.py} and \code{diamond\_compare.py}), the
   GPU-against-CPU size sweep (\code{scripts/gpu\_crossover/}: \code{sweep.sh}, \code{tiles.py}, \code{cells.py},
-  \code{analyze.py}, and \code{mkresult.py} with \code{header.txt}), and the builds and runs of the other engines
-  (\code{scripts/others/}: \code{run\_others.sh}, \code{bench\_ext.py}, \code{xcompare.py}).
+  \code{analyze.py}, and \code{mkresult.py} with \code{header.txt}), the builds and runs of the other engines
+  (\code{scripts/others/}: \code{run\_others.sh}, \code{bench\_ext.py}, \code{xcompare.py}), and from 2026-11-10 and
+  2026-11-11 the common benchmarks (\code{scripts/common\_bench/}), the three builds on luikore's model
+  (\code{scripts/luikore\_compare/}), the closed cylinder (\code{scripts/cylinder\_closed/}) and the pulse test
+  (\code{scripts/pulse/}).
 \item \code{swift\_engine/}: the Metal kernel, with its diamond mode (\code{--diamond K}), its model builder and field
   compare.
 \item \code{Package.swift}, \code{Sources/} and \code{Tests/}: fdtdKit's command line \code{emskit fdtd} (version
@@ -298,8 +338,8 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   (Section~\ref{sec:method}) were run with it.
 \item \code{paper/}: this report, its figures and the scripts that draw them, and \code{code\_notes.md}, the
   description of every code change of patches 0001--0006 written from the diffs (Section~\ref{sec:engine}; the later
-  patches are described by their commit messages, \code{CHANGELOG.md} and Sections~\ref{sec:gpu}
-  and~\ref{sec:cg29}). Six figure scripts read
+  patches are described by their commit messages, \code{CHANGELOG.md} and Sections~\ref{sec:gpu},
+  \ref{sec:cg29} and~\ref{sec:cg31}). Six figure scripts read
   \code{results/}: the cache-valley figure reads its two sweep files, the crossover figure
   \code{gpu\_crossover\_cg29\_2026-11-05.txt}, and the speed, thread, progress and bandwidth
   figures read \code{summary.json} (written by \code{figures/parse\_results.py}); the bandwidth figure adds four bars
@@ -363,6 +403,11 @@ From the evening of 2026-11-09 the main session ran on Claude Fable 5.2: its age
 the command line in a read-only workflow (four reviewers, a refuting verifier for each, a critic), and on 2026-11-10
 agents of a second workflow fixed the confirmed findings and reviewed the fixes, three times; the main session ran the
 checks.
+After that period, on 2026-11-11, the main session (Claude Fable 5.2) made the build cg31 (patches 0028--0039), its
+measurements and Section~\ref{sec:cg31}; the search for the bottlenecks before it was the work of four read-only
+reviewers, each followed by a checker that tried to refute its findings (agents of the same model in a workflow of
+the main session), and the day before one read-only checker had recomputed the numbers of the common benchmarks of
+Section~\ref{sec:common}.
 A separate Claude Opus 5.5 session in the
 repository's folder wrote the paragraph on concurrent work and measured two of the engines it lists (below); another
 Claude Opus 5.5 session wrote the work plan of 2026-11-04 (a working note that is not part of the published
@@ -418,7 +463,8 @@ Where the numbers come from: the benchmark tables (with the full checks of cg18,
 (Tables~\ref{tab:e2e}, \ref{tab:e2ecg29} and~\ref{tab:probeend}), the mesh sweep (Table~\ref{tab:mesh}), the valley
 sweeps, the kernel comparisons, the correctness checks of cg18, the validation runs, and the measurements of
 2026-11-04 and 2026-11-05 (the Metal diamond engine, the $K=1$ sweep, the other engines, the CPU items of cg29, the
-GPU-against-CPU size sweep of Figure~\ref{fig:crossover} and the table of the current build, Table~\ref{tab:current})
+GPU-against-CPU size sweep of Figure~\ref{fig:crossover} and the table of cg29 against stock, Table~\ref{tab:current})
+and the records of 2026-11-10 and 2026-11-11 that Sections~\ref{sec:common} and~\ref{sec:cg31} name
 are files in \code{results/}. So are the smaller checks made for this report during the final review, which are marked
 where they appear: the memory figures of Section~\ref{sec:cluster}, the time-step bound of Section~\ref{sec:future}
 and the placement test of Section~\ref{sec:valley} (all three on cg18), and the flush-to-zero check of

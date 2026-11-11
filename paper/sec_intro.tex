@@ -40,7 +40,8 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   background; on the notch tutorial, the GCPW line and patch x5 the base runs within 0.98--1.03$\times$ of stock
   (Section~\ref{sec:results}). Snapshot cg18 (patches 0001--0006, the build installed on the author's Mac from
   2026-11-04 to 2026-11-06) gives 3.1--6.8$\times$ on the same four models against the stock rows of its check
-  tables. Snapshot cg29 (patches 0001--0027, the installed build since 2026-11-06) adds the CPU items of a second
+  tables. Snapshot cg29 (patches 0001--0027, the installed build from 2026-11-06 to 2026-11-11) adds the CPU items
+  of a second
   review and ideas from other contributors' work (Section~\ref{sec:cg29}): an operator index per z-vector, neighbour
   flags in place of the two barriers per time step, a y-row path for UPML boxes, merged ADE updates for conducting
   sheets, geometry coefficient tables and line hooks for the steady-state detection and Debye materials. Paired with
@@ -60,7 +61,8 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   fused CPU sweep 49\,B, so the GPU drew more of the bus for about the same cell rate; no byte count was measured with
   hardware counters. On all six test models the CPU engine of cg14 and of cg18 is faster than that Metal engine
   (Section~\ref{sec:ceiling}). Upstream master's merged Metal engine and luikore's diamond-blocked one were built and
-  run here on 2026-11-04 (Section~\ref{sec:positioning}).
+  run here on 2026-11-04 (Section~\ref{sec:positioning}), and on 2026-11-11 next to cg31 on luikore's benchmark model
+  (Table~\ref{tab:threebuilds}).
 \item A diamond-blocked Metal engine (\code{--engine=metal-diamond}, opt-in, Apple only; patches 0007--0016,
   Section~\ref{sec:gpu}) that advances tiles of the grid several time steps at a time, with the tile schedule of
   luikore's openEMS pull request \#228~\cite{luikore228} (none of its code is used). All six models run on the GPU,
@@ -74,6 +76,9 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   notch tutorial), and the CPU engine is at its fastest between 0.6 and 1.9 million cells. Unblocked, as a fused sweep ($K=1$), the Metal engine runs the two large
   models at 1\,730--1\,840\,\MC, only 67--75\,\% of that sweep's traffic bound (cg27, medians of paired rounds with
   2.5--4 cores of other load; \code{results/fused\_sweep\_k1\_2026-11-04.txt}): the blocking carries the gain.
+  A later build, cg31 (patches 0028--0039 of 2026-11-11, the installed build since that day), raises the Metal
+  engine's rates on the six models by 1.07--1.53$\times$, which puts it ahead of the CPU engine on five of them and
+  level on the patch tutorial (Section~\ref{sec:cg31}).
 \item Two modelling-side levers (Section~\ref{sec:modelling}): a run-end criterion on the port probes
   (Table~\ref{tab:probeend}; the energy criterion stalls on the static charge left behind by openEMS's Gaussian pulse,
   which has a DC component, so the runs always went to their maximum time; upstream has since added an opt-in DC-free

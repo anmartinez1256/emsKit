@@ -41,7 +41,7 @@ import Testing
 
     @Test func registryEqualsBuildMdSection7() throws {
         let names = try Self.buildMdNames()
-        #expect(names.count == 30)
+        #expect(names.count == 38)
         #expect(FdtdKnobs.registry.map { $0.name } == names)
         #expect(Set(FdtdKnobs.registry.map { $0.name }).count == FdtdKnobs.registry.count)
     }

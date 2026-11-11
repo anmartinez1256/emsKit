@@ -12,8 +12,9 @@ bit-identical to stock on all six
 models; its best speeds differ from cg14's by $-2.7$ to $+1.6$\,\% on five models and by $+8.2$\,\% on the GCPW line
 (whose cg13 run had reached 1\,745\,\MC); on the four models of up to about a million cells it reaches
 1\,361--1\,961\,\MC, 3.1--6.8$\times$ the stock rows of the same tables. The cg17 tables in \code{results/} are
-correctness checks, run while the machine was loaded. The current build, cg29, is compared with stock on the CPU and
-on the Metal diamond engine in Section~\ref{sec:current}.
+correctness checks, run while the machine was loaded. Snapshot cg29 is compared with stock on the CPU and
+on the Metal diamond engine in Section~\ref{sec:current}, and the current build, cg31, with cg29 in
+Section~\ref{sec:cg31}.
 
 Part of the patch tutorial's factor is not the patches' (\code{results/*\_base.txt}, 2026-11-03, best of two runs on
 a quiet machine). The fork's base, upstream's \code{gpu-engine} branch at 7bb294f with stock's CSXCAD and nf2ff
@@ -80,10 +81,11 @@ P-core count \\
 \bottomrule
 \end{tabular}
 \caption{Snapshots. Each is a complete set of dylibs plus the cumulative patch, kept for bisection on the author's
-machine. \code{patches/openems/} publishes the fork as patches 0001--0027: 0001--0006 end at cg18 (0001 = cg8, 0002 =
+machine. \code{patches/openems/} publishes the fork as patches 0001--0039: 0001--0006 end at cg18 (0001 = cg8, 0002 =
 cg9, 0003 = cg10--cg15, 0004 = cg16, 0005 = cg17, 0006 = cg18), the build installed on the author's Mac from
 2026-11-04 to 2026-11-06; 0007--0016 are cg19--cg28, one per snapshot (Table~\ref{tab:gpucov}); 0017--0027 are cg29,
-one per topic (Table~\ref{tab:cg29}), the build installed there since 2026-11-06. A row lists what the snapshot added
+one per topic (Table~\ref{tab:cg29}), the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are cg31
+(Section~\ref{sec:cg31}), the build installed since, which has no row here. A row lists what the snapshot added
 over the row above; the intermediate snapshots cg3--cg5 and cg7 appear inside the cg6 and cg8
 rows.}\label{tab:snapshots}
 \end{table}
@@ -138,8 +140,9 @@ search itself costs 16--22\,\% (in the cg18 check the GCPW line's 2.4\,s automat
 whose neighbour flags replace the two barriers per time step (Section~\ref{sec:cg29}), 8 threads was the fastest
 setting measured on all six models, the smallest included (Section~\ref{sec:current}).
 
-\subsection{The current build on the CPU and on the GPU (cg29)}\label{sec:current}
-Table~\ref{tab:current} sets the current build, cg29 (patches 0001--0027), against stock v0.37.0 on the six models,
+\subsection{The build of 2026-11-05 on the CPU and on the GPU (cg29)}\label{sec:current}
+Table~\ref{tab:current} sets cg29 (patches 0001--0027; the current build until cg31 followed on 2026-11-11, whose
+rates are in Table~\ref{tab:cg31}) against stock v0.37.0 on the six models,
 on the CPU and on the Metal diamond engine of Section~\ref{sec:gpu}, in one paired interleaved run per model on
 2026-11-05 (\code{results/speed\_cg29\_2026-11-05.txt}; 4 rounds, the step counts of \code{bench/check.sh}). On the
 CPU, cg29's best setting of the three measured (4 and 8 threads and the automatic count) is 8 threads on every
@@ -254,8 +257,10 @@ columns are not a comparison with cg18: the GCPW line's default run took 5.6\,s 
 on cg18's quiet run of Table~\ref{tab:e2e}, while in bench runs that pair the two builds round by round (5 rounds,
 other processes on 0.4 cores) cg29's automatic thread count runs that board 1.30$\times$ and the SMA launch, on the
 same 0.871\,M mesh, 1.42$\times$ as fast as cg18's (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 4).
-Since 2026-11-06 cg29 is the installed build (Section~\ref{sec:method}), so the toolkit's runs, on the CPU engine with
-the automatic thread count and the probe end, run on it with no change on the toolkit's side; the Metal engine stays
+From 2026-11-06 cg29 was the installed build and since 2026-11-11 cg31 is (Section~\ref{sec:method}), so the
+toolkit's runs, on the CPU engine with
+the automatic thread count and the probe end, run on the fork with no change on the toolkit's side; the Metal
+engine stays
 opt-in, and the toolkit does not select it.
 
 \input{figures/tab_e2e_cg29}
@@ -264,8 +269,8 @@ opt-in, and the toolkit does not select it.
 The tables so far use this project's own models. Four measurements of 2026-11-10 use tests that readers outside the
 project know by name: upstream's own benchmark on current master, STREAM, a free-space cube after the gprMax benchmark
 models, and the radar cross-section of a metal sphere against the Mie series
-(\code{results/common\_benchmarks\_2026-11-10.txt}; \code{scripts/common\_bench/}). The fork is the installed build
-cg29 in all four.
+(\code{results/common\_benchmarks\_2026-11-10.txt}; \code{scripts/common\_bench/}). The fork is cg29, the installed
+build of that day, in all four.
 
 \paragraph{Upstream's benchmark, and master's new engine.}
 Upstream master has a benchmark tool, \code{benchmark/bench.py}: six cases (an empty box, a box with PML, an
@@ -303,7 +308,8 @@ cylindrical & M & 823 & 1\,012 & 1.23$\times$ & 921 & 1\,755 & 1\,590 \\
 \end{tabular}
 \caption{Upstream's \code{benchmark/bench.py} on the M5, 2026-11-10, in \MC: the better of 4 and 8 threads per
 cell of the table, each the median of three repeats as the tool reports it. Master: openEMS 1d710c2 with CSXCAD
-fdff4b5; fdtdKit: the installed cg29. Part B ran the two builds interleaved; part A ran master alone, 15 minutes
+fdff4b5; fdtdKit: cg29, as installed that day. Part B ran the two builds interleaved; part A ran master alone, 15
+minutes
 earlier, so its \code{cpu} and \code{gpu} columns are not paired with the fork. The tool's spread was below 5\,\%
 in most rows and above 10\,\% in ten of the 120 (master's dispersive S rows in part B, 23 and 26\,\%, among
 them); the file has every row.}\label{tab:upstream}
@@ -320,7 +326,9 @@ on the ideal case (0.97$\times$), 1.08--1.14$\times$ on pml, inhomogeneous and a
 cylindrical mesh and 2.5$\times$ on the dispersive case. At 1\,M cells the fork is ahead of the \code{cpu} engine on
 five cases (1.18--1.50$\times$ as measured) and behind on the dispersive one (0.52$\times$). So on large grids
 upstream's own new engine is level with or ahead of this fork's CPU engine, and well ahead with dispersive material;
-a paired run of the two, with the probes compared, has not been made. The fork's Metal diamond engine was not part of
+a paired run of the two on these cases, with the probes compared, has not been made (on another model, run
+interleaved on 2026-11-11, cg31's CPU engine was 1.27$\times$ master's \code{cpu} engine at 3.0\,M cells and
+0.86$\times$ at 17\,M; Table~\ref{tab:threebuilds}). The fork's Metal diamond engine was not part of
 this run: every case of the tool uses the steady-state detection, which that engine runs on its CPU loops
 (Section~\ref{sec:future}).
 
@@ -383,7 +391,9 @@ $N=400$ 14\,\%, and stock updates PML cells far more slowly than plain ones, so 
 439\,\MC\ with the size, the opposite of the six models. The fork's CPU engine stays at 1\,034--1\,339\,\MC, 2.4 to
 6.8 times stock. The Metal diamond engine passes the CPU engine at about 3\,M cells, as in
 Figure~\ref{fig:crossover}, and at 64\,M cells it runs 1.77$\times$ as fast, the largest lead in a paired run of
-this project; its rate still rises at the largest size.
+this project up to that day; its rate still rises at the largest size. With cg31 the Metal engine runs the 1.0 and
+8.0\,M-cell cubes at 1\,546 and 1\,839\,\MC, 1.58$\times$ and 1.24$\times$ its rates with cg29 in the same rounds and
+1.15$\times$ and 1.42$\times$ the CPU engine (Table~\ref{tab:cg31}).
 
 \paragraph{A metal sphere against the Mie series.}
 The monostatic radar cross-section of a perfectly conducting sphere has an exact series

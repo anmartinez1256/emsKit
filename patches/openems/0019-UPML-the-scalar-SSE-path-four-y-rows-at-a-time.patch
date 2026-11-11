@@ -1,7 +1,7 @@
 From 67e6f6efec4c5eb95a04ee1dc3ddb359eb85b7f7 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 19/27] UPML: the scalar SSE path four y-rows at a time
+Subject: [PATCH 19/39] UPML: the scalar SSE path four y-rows at a time
 
 A PML box that is not a full-z slab (the SMA launch's PML_8 at z-max) ran the scalar SSE path: per cell
 and component a lane offset, a table index, two coefficients, the flux and the field value, 13

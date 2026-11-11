@@ -1,5 +1,5 @@
 """tiles.py OUTDIR MODEL:SCALE[:STEPS] ...: one short metal-diamond run per point (verbose=1, 100 steps) to record the GPU
-engine's grid and the tile counts of its four tilings ('Engine_Metal_Diamond: ... cells ... tiles ...') in
+engine's grid and the tile counts of the tuner's tilings (four up to patch 0037, seven since 0038; 'Engine_Metal_Diamond: ... cells ... tiles ...') in
 OUTDIR/MODEL_sSCALE.txt, which analyze.py reads. Run with DYLD_LIBRARY_PATH set to the snapshot and a python3 that keeps it
 (not /usr/bin/python3); RFSIM_PATH for kgcpw. The timing of these runs means nothing."""
 import os, subprocess, sys

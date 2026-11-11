@@ -194,7 +194,31 @@ def build_cube(nrts=None, scale=1.0):
     return FDTD, [], np.linspace(1e8, 1.9e9, 201)
 
 
-MODELS = {'patch': build_patch, 'notch': build_notch, 'kgcpw': build_kgcpw, 'ksma': build_ksma, 'cube': build_cube}
+def build_lbox(nrts=None, scale=1.0):
+    """The benchmark model of luikore's Metal engine (openEMS pull request #228, macos/bench/bench_metal.py with
+    make_model of macos/tests/metal_fields.py, GPL): a uniform 1 mm grid with PEC walls, one dielectric box
+    (epsilon 3.66, kappa 0.02) from 0.2 to 0.45 of each edge, a Gaussian excitation (0 to 5 GHz) of one cell at the
+    centre with direction (1, 1, 1), no dumps. scale 1: 192 x 160 x 96 cells (3.0 M, their quick run, 600 steps);
+    scale 2: 256 x 256 x 256 (17.0 M, their large run, 1000 steps). Added here: one voltage probe, to compare runs."""
+    cells = {1: (192, 160, 96), 2: (256, 256, 256)}[int(round(scale))]
+    FDTD = openEMS(NrTS=int(nrts) if nrts else 600, EndCriteria=0)
+    FDTD.SetGaussExcite(0, 5e9)
+    FDTD.SetBoundaryCond(['PEC']*6)
+    CSX = ContinuousStructure()
+    FDTD.SetCSX(CSX)
+    mesh = CSX.GetGrid()
+    mesh.SetDeltaUnit(1e-3)
+    for d, n in zip('xyz', cells):
+        mesh.SetLines(d, np.arange(n + 1, dtype=float))
+    c = np.asarray(cells, dtype=float)/2
+    CSX.AddExcitation('excite', exc_type=0, exc_val=[1, 1, 1]).AddBox(c, c + 1)
+    CSX.AddMaterial('dielectric', epsilon=3.66, kappa=0.02).AddBox(np.asarray(cells)*0.2, np.asarray(cells)*0.45)
+    CSX.AddProbe('port_ut1', 0).AddBox([c[0] + 6, c[1], c[2]], [c[0] + 6, c[1], c[2] + 3])
+    return FDTD, [], np.linspace(1e8, 5e9, 201)
+
+
+MODELS = {'patch': build_patch, 'notch': build_notch, 'kgcpw': build_kgcpw, 'ksma': build_ksma, 'cube': build_cube,
+          'lbox': build_lbox}
 
 
 def sparams(name, sim_path, nrts=None, scale=1.0):

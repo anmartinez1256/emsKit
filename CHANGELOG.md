@@ -9,6 +9,49 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-11: the build cg31: the energy schedule, ten Metal engine commits, the cylinder on the fused sweep, three comparisons
+
+On the author's request ("all the GPU improvements first, then CPU") the main session (Claude Fable 5.2, Claude Code)
+first had four read-only reviewers look for the bottlenecks of the fork's Metal engine, of luikore's (openEMS pull
+request 228) and of the CPU engines, each followed by a second agent that tried to refute its findings, and then
+worked through the list. Twelve commits on `speed-m5-gpu` (72a6492 to ff2538a on 78fe656; patches 0028 to 0039, all 39
+regenerated: tree dc4a352, `git am` and the cumulative diff both checked), in eleven snapshots (0028 and 0029 together
+are cg30a), each of which passed `scripts/checks/diamond_check.sh` (72 of 72 identical) before the next was started.
+The author said "commit and install": cg31 is the installed build since 2026-11-11 05:30.
+
+- The energy schedule (0028) and the Metal diamond engine (0029 to 0038; `results/metal_engine_cg31_2026-11-11.txt`,
+  the paper's new section "After publication"): no energy schedule in a run without an end criteria; three dispatches
+  per block; Mur faces of one axis sharing a barrier; UPML a z-vector at a time for the x and y slabs and three
+  components at a time for the z slabs; dispersive materials three components at a time; index arithmetic without
+  run-time divisions; the extension offsets as kernel constants; a seven-tiling, two-stage tuner. Eight new switches
+  (`BUILD.md`, section 7; the command line's registry has 38 names now). On a quiet machine, four paired rounds, the Metal engine of cg31 against cg29's:
+  GCPW line x1.09, SMA launch x1.14, patch tutorial x1.08, notch tutorial x1.53, patch x5 x1.07, notch x3 x1.15, a
+  cube with a 10-cell PML x1.58 (1 M cells) and x1.24 (8 M). The figures measured before that with other sessions
+  running (in the same record, marked) were within about 1 point of these on the GCPW line, the SMA launch, patch x5
+  and notch x3 (x1.09, x1.15, x1.06, x1.14) and lower on the notch tutorial (x1.48) and the cube (x1.48 and x1.14),
+  which were measured on earlier snapshots; these replace them.
+- One build of the series was wrong and the check caught it: it computed reciprocals on the GPU, whose
+  `0xffffffff / 3` is wrong on the M5 (macOS 27.0.1). Dropped with numbers: the Pre stages of Mur and the dispersive
+  materials in the half-step before (identical fields, 2 to 4 % slower).
+- Not explained: on the GCPW line Mur and the sheets each cost about a quarter of the Metal engine's time when their
+  code is in the kernel, but skipping one of their stages at run time gives 2 to 7 %.
+- CPU (0039): line hooks for the cylinder extension, so a mesh closed in alpha runs the fused sweep: 1857-1891 to
+  2503-2553 MC/s at 8 threads on a closed cylinder with r = 0, fields bit-identical to the unfused plan and to stock's
+  probes (`scripts/cylinder_closed/`). The first version of that test had its source off the mesh lines, so every
+  probe was zero and it passed; the script now puts source and probes on mesh lines.
+- Three builds on luikore's benchmark model, interleaved (`scripts/luikore_compare/`,
+  `results/engines_on_luikore_model_2026-11-11.txt`): cg31's Metal engine 3981 and 3309 MC/s at 3.0 M and 17 M
+  cells, luikore's 3952 and 2829, master's gpu engine 1638 and 1566, master's cpu engine 1872 and 1933, cg31's
+  multithreaded engine 2371 and 1659. The author let the session build and run luikore's branch for this; the first
+  side-by-side, with cg29, he ran himself (`results/luikore_compare_cg29_2026-11-11.txt`). Master's cpu engine without
+  its temporal blocking runs upstream's ideal case 1.46 to 1.49 times slower: one cache-sized tile for all threads is
+  the next CPU item.
+- A shorter excitation pulse for the toolkit was tested and not adopted (`scripts/pulse/`,
+  `results/pulse_test_2026-11-11.txt`): a baseband Gaussian cuts the steps 1.52x (GCPW line) and 1.94x (SMA launch)
+  with S21 within 0.005 dB of the full run; boards without a DC path were not tested.
+- The models `cube` (committed the day before) and `lbox` (luikore's benchmark model) of `bench/models.py` are for
+  the harness only.
+
 ## 2026-11-11: four common benchmarks
 
 On the author's request the main session (Claude Fable 5.2, Claude Code) ran four tests on 2026-11-10 that readers

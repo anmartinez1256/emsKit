@@ -1,7 +1,7 @@
 From 11f1624d43184fc393c751a900e920b441de340a Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 23/27] Compressed engine: geometry coefficient tables when the
+Subject: [PATCH 23/39] Compressed engine: geometry coefficient tables when the
  packed ones exceed 4 MB
 
 The packed tables (cg13) keep all six coefficient f4vectors of an operator for each update, 192 B per operator.

@@ -1,0 +1,17 @@
+Pulse test, 2026-11-11 05:35-05:46, installed build cg31 (v0.37.0-57-gff2538a), CPU engine at 2 threads, toolkit unchanged (the pulse is set on the built model).
+std = the toolkit's Gaussian f0 = fc = f_max/2 (2.865 ns); base = baseband Gaussian f0 = 0, fc = f_max (half the length). Probe end -60 dB; hold in lengths of the pulse used.
+steps: gcpw full 94217, std default 34300, base hold 0.5 22540, base hold 1.0 27930; sma (0.871 M cells) full 118475, std default 50320, base hold 0.5 25900, base hold 1.0 34040.
+
+gcpw: reference = toolkit pulse, full run; S11 at 1 GHz -51.88 dB, worst S11 in band -40.00 dB, Z0 at 1 GHz 49.844 ohm
+run                        steps   run s  max dS21 dB  max dS11 dB max d|S11| lin  max dZ0 ohm max dphase S21 deg
+gcpw_base_hold05               ?     9.0      0.00421       0.7966       5.46e-04       0.0907             0.0262
+gcpw_base_hold10               ?    11.9      0.00162       0.3678       2.16e-04       0.1669             0.0150
+gcpw_std_default               ?    13.5      0.00071       0.1099       1.03e-04       0.0545             0.0106
+gcpw_std_full                  ?    45.4      0.00000       0.0000       0.00e+00       0.0000             0.0000
+
+sma: reference = toolkit pulse, full run; S11 at 1 GHz -22.69 dB, worst S11 in band -17.09 dB, Z0 at 1 GHz 50.901 ohm
+run                        steps   run s  max dS21 dB  max dS11 dB max d|S11| lin  max dZ0 ohm max dphase S21 deg
+sma_base_hold05                ?    76.6      0.00035       0.0167       4.80e-05       0.5280             0.0045
+sma_base_hold10                ?   104.1      0.00045       0.0196       4.20e-05       0.5075             0.0036
+sma_std_default                ?   163.1      0.00025       0.0040       2.07e-05       0.6621             0.0017
+sma_std_full                   ?   214.6      0.00000       0.0000       0.00e+00       0.0000             0.0000

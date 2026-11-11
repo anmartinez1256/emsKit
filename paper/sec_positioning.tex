@@ -48,7 +48,9 @@ arithmetic (invariants hoisted, the 12 coefficient tables) as a fused sweep on o
 (project log; Section~\ref{sec:rejected}); with the current engine's loops in the same set-up, trapezoidal blocking of
 two to four steps per sweep (after MrHighVoltage's fork, next paragraph) gained at most 6\,\% as an upper bound, measured
 without halo lines or extension hooks (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2), so the CPU engine
-stays unblocked, and wavefront or diamond blocking was not tried on the CPU. The Metal engine of
+stays unblocked, and wavefront or diamond blocking was not tried on the CPU (upstream master's new \code{cpu} engine
+blocks with one tile for all threads; Section~\ref{sec:threebuilds} has what that is worth on this machine).
+The Metal engine of
 Section~\ref{sec:gpu} does block over time steps, in diamond tiles on the schedule of another contributor's Metal
 engine (next paragraph). Both fdtdKit's CPU factors and the 2--6$\times$ above are measured against stock openEMS, whose
 sweep is unfused, and the two approaches are not exclusive. The FAQ~\cite{biergaizi29} also advises macOS users to
@@ -138,7 +140,11 @@ $2.6\times10^{-4}$\,dB in the $S$-parameters (notch tutorial; within $3\times10^
 models by the same printed figures as fdtdKit's Metal engine (Section~\ref{sec:policy}), and luikore's two paths, on
 the PEC variants, by the same figures as each other. None of them was compared with a CPU run with
 \code{OPENEMS\_FTZ=1}. fdtdKit's Metal engine was not run on the PEC variants, and luikore's diamond path refused the
-models as they are (its legacy path ran them), so the two diamond engines have not been compared head to head.
+models as they are (its legacy path ran them), so on these models the two diamond engines have not been compared head
+to head. They were on 2026-11-11, on luikore's own benchmark model and with master's engines beside them
+(Section~\ref{sec:threebuilds}, Table~\ref{tab:threebuilds}): fdtdKit's Metal engine (cg31) ran 3\,981 and
+3\,309\,\MC\ at 3.0 and 17.0 million cells, luikore's 3\,952 and 2\,829 and master's \code{gpu} engine 1\,638 and
+1\,566.
 
 Against this background the parts of fdtdKit that we have not found elsewhere are narrower than its speed-ups: the
 acceptance rule applied throughout (bit identity on six models, with the closed-form validation suite and its
@@ -153,7 +159,8 @@ to the CPU engine run with \code{OPENEMS\_FTZ=1} (Section~\ref{sec:gpu}).
 \paragraph{Where fdtdKit stands.} For printed-circuit-board RF models on the CPU of Apple silicon, fdtdKit is to our
 knowledge the fastest configuration of openEMS reported that keeps stock's results bit for bit: 3.2--6.9$\times$ stock
 on the four models of up to about a million cells with snapshot cg14 (Table~\ref{tab:final}, the SMA launch on its
-1.071\,M-cell mesh; Table~\ref{tab:current} has the current build), and, with the modelling levers of Section~\ref{sec:modelling}, 15$\times$ end to end on the
+1.071\,M-cell mesh; Table~\ref{tab:current} has cg29 and Table~\ref{tab:cg31} the current build, cg31), and,
+with the modelling levers of Section~\ref{sec:modelling}, 15$\times$ end to end on the
 SMA launch with the toolkit's defaults since 2026-11-04 (the 0.05\,mm mesh floor and a hold of 0.5, against stock's
 full run on the 0.02\,mm mesh; cg18, Table~\ref{tab:e2e}), or 5.8$\times$ with the toolkit's defaults until
 2026-11-04 (0.02\,mm and a hold of 1). On the GPU its opt-in Metal engine keeps the CPU engine's results bit for bit
@@ -161,8 +168,11 @@ when the CPU run also flushes subnormals, runs all six models on the GPU with ev
 (Section~\ref{sec:gpu}), and runs notch x3 and patch x5 at 3\,226 and 2\,917\,\MC\ (cg28, medians of five paired
 rounds on a quiet Mac: other processes on 0.5--1.3 cores and 2--4\,\% of the GPU;
 \code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}), where cg18's CPU engine reached 2\,046 and 1\,716 at
-best on 2026-11-03 (\code{results/*\_cg18.txt}). Of the other GPU engines measured on the M5, luikore's diamond path
-refused all six models and master's ran them at 0.42 to 1.06 times cg18's CPU engine. Whether diamond blocking on the
+best on 2026-11-03 (\code{results/*\_cg18.txt}); with cg31 it runs them at 3\,702 and 3\,100
+(Table~\ref{tab:cg31}). Of the other GPU engines measured on the M5, luikore's diamond path
+refused all six models and master's ran them at 0.42 to 1.06 times cg18's CPU engine; on luikore's own benchmark
+model cg31's Metal engine was level with luikore's at 3.0 million cells, 1.17$\times$ as fast at 17 million, and
+2.1--2.4$\times$ as fast as master's \code{gpu} engine (Table~\ref{tab:threebuilds}). Whether diamond blocking on the
 GPU keeps its gain on a base M5 and on PCB models is answered for fdtdKit's engine: on the M5 the fused, unblocked
 Metal sweep, with its best tile, ran notch x3 and patch x5 at 0.58 and 0.65 times the blocked one (paired runs, other
 processes on 2.5--4 cores) and the SMA launch (0.871\,M cells) and the GCPW line at 0.74 and 0.77 times (the faster
@@ -170,9 +180,11 @@ of two unpaired runs, other processes
 on 3.3--5.6 cores; \code{results/fused\_sweep\_k1\_2026-11-04.txt}).
 
 What is not shown: luikore's reported 4\,042--14\,734\,\MC\ on the M4 Pro and the M5 Max have no like-for-like fdtdKit
-figure, because fdtdKit was not run on luikore's model or machines and its diamond path ran here only on the PEC variants, next to
+figure, because fdtdKit was not run on luikore's machines (on luikore's model it was, on this M5:
+Table~\ref{tab:threebuilds}), and on the six models its diamond path ran here only on the PEC variants, next to
 cg18's CPU engine and not next to fdtdKit's Metal engine; and master's GPU engine, about level with cg18's CPU engine
-on patch x5 and the SMA launch, was not compared with cg29 or with fdtdKit's Metal engine. fdtdKit closes none of the
+on patch x5 and the SMA launch, was not run on the six models next to cg29, cg31 or fdtdKit's Metal engine (the same
+table has it on luikore's model). fdtdKit closes none of the
 functional gaps listed above; closing some of them (Cartesian sub-gridding, conformal conductors, automatic mesh
 convergence, PCB import) is the natural continuation and would need a different acceptance rule than bit identity,
 since stock openEMS has no reference to be identical to.

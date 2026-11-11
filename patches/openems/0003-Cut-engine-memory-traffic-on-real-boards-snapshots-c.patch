@@ -1,7 +1,7 @@
 From 487e684f4915f8c88adea3613b1924177fb5d338 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Sat, 31 Oct 2026 16:22:10 -0500
-Subject: [PATCH 03/27] Cut engine memory traffic on real boards (snapshots
+Subject: [PATCH 03/39] Cut engine memory traffic on real boards (snapshots
  cg10-cg15)
 
 - allocator: stagger large arrays by sub-page offsets so equal-size field

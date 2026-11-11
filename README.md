@@ -58,7 +58,7 @@ table it gains 1.37 to 1.38 times at 8 threads and with the automatic count (oth
 **Status.** Reviewed before publication: four read-only reviews on 2026-11-02 by fresh instances of Claude Fable 5.1,
 one of the two models that wrote the code (fixes in patch 0005), and a final review on 2026-11-03 with every finding
 checked by two verifiers, the nits by one (fixes in patch 0006 and in these documents); the corrections are listed in
-`CHANGELOG.md`. Of the code added since (patches 0007 to 0027), only the tiling tuner of patch 0016 had a correctness
+`CHANGELOG.md`. Of the code added since (patches 0007 to 0039), only the tiling tuner of patch 0016 had a correctness
 review, on its first version (three read-only reviewers, every finding checked by two verifiers; section 5 of
 `results/diamond_engine_cg28_tuner_2026-11-04.txt`); the rest rests on the checks below.
 Patch 0005 fixes a wrong-result bug of the fork in Debye materials found by the pre-publication review; it does not
@@ -74,16 +74,26 @@ suite, 15 of 15 both with the multithreaded engine at 4 threads and with the def
 small models, 461 comparisons identical and 10 that differ only in the stop step of the energy end criterion (one
 model, for the reason given in the first paragraph); `scripts/checks/diamond_check.sh`, 72 of 72; and the six models
 on `metal-diamond`, bit-identical to the multithreaded engine with `OPENEMS_FTZ=1` (`results/*_cg29gpu.txt`; all of
-them in section 3 of `results/cpu_items_cg29_2026-11-05.txt`). Since 2026-11-06 cg29 is the build installed on the
-author's Mac. That day the command line's release build (section "Command line") checked the installed library, on a
-Mac loaded by other programs, so only the verdicts count: `check --lite` all identical to stock on the six models (18
-of 18 rows exact), the Debye check (its fields also identical to those of snapshot cg29), `diamond-check` 72 of 72,
-the validation suite 15 of 15 with the default engine and with the multithreaded engine at 4 threads, and the GCPW
-line's end-to-end run at the toolkit's defaults, stopped by the probe end criterion at step 34300 as on cg18 and cg29
-before (`Docs/fdtdKit/PLAN.md`, section 16). On 2026-11-07 the 27 published patches were built from a fresh clone of
-upstream's superproject as `BUILD.md` describes, and that build passed `check.sh` (every run identical to stock on
-the six models), the Debye check, `diamond_check.sh` 72 of 72, the six models on `metal-diamond`, the validation
-suite 15 of 15 twice and the cylindrical multigrid, on a loaded Mac (`results/fresh_build_pub29_2026-11-07.txt`).
+them in section 3 of `results/cpu_items_cg29_2026-11-05.txt`). From 2026-11-06 to 2026-11-11 cg29 was the build
+installed on the author's Mac. On 2026-11-06 the command line's release build (section "Command line") checked the
+installed library, on a Mac loaded by other programs, so only the verdicts count: `check --lite` all identical to
+stock on the six models (18 of 18 rows exact), the Debye check (its fields also identical to those of snapshot
+cg29), `diamond-check` 72 of 72, the validation suite 15 of 15 with the default engine and with the multithreaded
+engine at 4 threads, and the GCPW line's end-to-end run at the toolkit's defaults, stopped by the probe end criterion
+at step 34300 as on cg18 and cg29 before (`Docs/fdtdKit/PLAN.md`, section 16). On 2026-11-07 the 27 patches
+published then (0001 to 0027) were built from a fresh clone of upstream's superproject as `BUILD.md` describes, and
+that build passed `check.sh` (every run identical to stock on the six models), the Debye check, `diamond_check.sh`
+72 of 72, the six models on `metal-diamond`, the validation suite 15 of 15 twice and the cylindrical multigrid, on a
+loaded Mac (`results/fresh_build_pub29_2026-11-07.txt`). Since 2026-11-11 the build installed on the author's Mac is cg31
+(patches 0001 to 0039). Its checks of that day are not the full check of `BUILD.md` section 9: each of its steps
+(snapshots cg30a to cg30l and cg31a) passed `diamond_check.sh`, 72 of 72; the snapshot of patches 0001 to 0038 passed
+`check --lite` (all identical to stock on the six models, 18 of 18 rows), the Debye check, the validation suite on
+the Metal diamond engine (15 of 15) and the GCPW line's end-to-end run on that engine; for patch 0039, a closed
+cylindrical mesh gave stock's probes and the same raw fields with and without the fused sweep and at 1, 4, 8 and 10
+threads, and the cylindrical multigrid tutorial 18 datasets equal to cg29's; and the installed library passed
+`check --lite` (18 of 18 rows), the Debye check, `diamond_check.sh` 72 of 72 and both boards' end-to-end runs at the
+toolkit's defaults, which stopped at the same steps as with cg29, 34300 (GCPW line) and 50320 (SMA launch)
+(`results/metal_engine_cg31_2026-11-11.txt`).
 The speed table below and the end-to-end runs come from files in
 `results/`; numbers marked "project log" come from the project's working log, which is not published.
 
@@ -99,6 +109,15 @@ The speed table below and the end-to-end runs come from files in
 
 (Snapshot cg29, measured on 2026-11-05 in one paired interleaved run per model, 4 rounds, `results/speed_cg29_2026-11-05.txt`: stock at 2, 4 and 8 threads, fdtdKit's multithreaded engine at 4 and 8 threads and with the automatic count, and its Metal diamond engine (`--engine=metal-diamond`), in turn, each round once the other processes used at most 1.5 cores and 10 % of the GPU, and run again, up to three times, when a run saw more; the SMA launch row comes from a re-run that repeats only the loaded runs (`--run-redo 3`). Rates are medians over the rounds, gains the median of the per-round ratios; stock and fdtdKit CPU at their best thread count in the run. The CPU runs are identical to stock bit for bit; the GPU runs differ by at most 9.4e-07 relative because the GPU flushes subnormal numbers (identical with `OPENEMS_FTZ=1` on the CPU). The SMA launch on the 1.071 M-cell mesh of the toolkit's former 0.02 mm floor. MC/s = million Yee cells updated per second.)
 <!-- END speed table -->
+
+**A later build.** The table above was not measured again. cg31 (patches 0028 to 0039, 2026-11-11) raised the rates
+of the Metal diamond engine: in four paired rounds on a quiet Mac it ran at 1.09 times cg29's rate on the GCPW line
+(2118 to 2307 MC/s), 1.14 times on the SMA launch (1854 to 2108, on its 0.871 M-cell mesh, not the table's), 1.08
+times on the patch tutorial (1753 to 1887), 1.53 times on the notch tutorial (1904 to 2907), 1.07 times on patch x5
+(2901 to 3100) and 1.15 times on notch x3 (3210 to 3702). That table, with cg31's CPU engine beside it, is in the
+paper's section "After publication" and in `results/metal_engine_cg31_2026-11-11.txt`. On the benchmark model of
+luikore's Metal engine, with three builds interleaved, cg31's Metal engine ran 3981 and 3309 MC/s at 3.0 M and
+17.0 M cells and luikore's 3952 and 2829 (`results/engines_on_luikore_model_2026-11-11.txt`).
 
 **Where the GPU overtakes the CPU.** Above about 1.5 to 2 M cells the GPU's lead grows with the grid; below that it depends on the model. In a size sweep on 2026-11-05
 (`results/gpu_crossover_cg29_2026-11-05.txt`: the patch antenna, the notch filter and the GCPW line at 25 points
@@ -130,21 +149,21 @@ domain-decomposed engine that openEMS does not have today (see `ROADMAP.md`).
 |---|---|
 | `paper/` | the technical report (LaTeX source, figures with their scripts, PDF) and `paper/code_notes.md`, notes on each code change of patches 0001 to 0006 written from the diffs (the later patches are described in `CHANGELOG.md`, the paper and their commit messages); `paper/figures/tables.py` writes the paper's two tables of cg29 and the speed table of this README from `results/` |
 | `patches/README.md` | what each patch folder applies to, in which order, and its licence |
-| `patches/openems/` | the fork as 27 `git am` patches on commit 7bb294f of upstream's former `gpu-engine` branch (`BASE_origin_gpu-engine.txt`), plus one cumulative diff: 0001 to 0006 = snapshot cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007 to 0016 = the Metal diamond engine (snapshots cg19 to cg28); 0017 to 0027 = the CPU items of snapshot cg29, the build installed there since 2026-11-06. They need the CSXCAD patch below (they do not build against a stock CSXCAD 0.7.0), and they apply to that base only: upstream has since merged a reworked GPU engine into master, deleted the branch and restructured the engines |
+| `patches/openems/` | the fork as 39 `git am` patches on commit 7bb294f of upstream's former `gpu-engine` branch (`BASE_origin_gpu-engine.txt`), plus one cumulative diff: 0001 to 0006 = snapshot cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007 to 0016 = the Metal diamond engine (snapshots cg19 to cg28); 0017 to 0027 = the CPU items of snapshot cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028 to 0039 = the commits of 2026-11-11 (0028 the energy schedule of a run without an end criterion, 0029 to 0038 the Metal diamond engine, 0039 line hooks for the cylinder extension), which make cg31, the build installed there since 2026-11-11. They need the CSXCAD patch below (they do not build against a stock CSXCAD 0.7.0), and they apply to that base only: upstream has since merged a reworked GPU engine into master, deleted the branch and restructured the engines |
 | `patches/csxcad/` | one patch on CSXCAD v0.7.0 (material lookups during operator setup), under LGPL-3.0-or-later like CSXCAD (`COPYING.LESSER`) |
-| `bench/` | the harness: `bench.py` (in-process runs with a fixed step count, S-parameter comparison; the GPU engines and `OPENEMS_FTZ` runs are compared but marked tolerant), `check.sh` (six models, five thread settings, bit-identity against stock), `abtest.py` (paired interleaved rounds, with waits for a quiet Mac), `usage.py` (the other processes' CPU and GPU use during each run), the models |
-| `bench/validation/` | a validation suite against closed-form references (dispersive slabs, a rectangular and a cylindrical cavity, a WR-90 guide, a microstrip line), with same-build engine comparisons on the dispersive slabs; its runs (`results/validation_*`): cg18, cg29 and the fresh build of the published patches of 2026-11-07 (`validation_pub29_*`) 15 of 15 each on the Mac, each with the multithreaded engine at 4 threads and with the default engine and thread count (`validation_cg29pre_*` is an earlier build of cg29's topics); the Metal diamond engine 15 of 15 on cg23 and on cg27 (its slabs equal to the basic engine; the cylindrical cavity runs on the cylindrical CPU engine); snapshot cg17 (patches 0001 to 0005) 15 of 15 with its defaults and at 8 threads (two runs made outside the project's log); stock v0.37.0 15 of 15 on the Mac and 12 of 12 on a Linux x86_64 VM (the suite's earlier version, without the engine comparisons); and two negative controls that fail their Debye checks as they should, a stock build with the Debye hooks disabled on the VM (2 of 3 checks pass) and a build of patches 0001 to 0004 (the Debye bug) on the Mac (4 of 6 pass). See `bench/validation/README.md` |
-| `results/` | the benchmark tables of the project (`MODEL_sSCALE_nSTEPS_SNAPSHOT.txt`; `*_cg18.txt`, `*_cg29.txt` and `*_pub29.txt` = the full checks of cg18, cg29 and a fresh build of the published patches (`fresh_build_pub29_2026-11-07.txt`), `*_cg2Ngpu.txt` and `*_pub29gpu.txt` = the Metal diamond engine of cg20 to cg29 and of that build against the multithreaded engine with `OPENEMS_FTZ=1` (cg20 to cg22 with the base's GPU engine as well), `*_base.txt` = the fork's base against stock), the speed table above (`speed_cg29_2026-11-05.txt`), the CPU items of cg29 with their paired runs and the comparison with cg18 (`cpu_items_cg29_2026-11-05.txt`), the Metal diamond engine's snapshots and checks (`diamond_engine_*`, `diamond_check_*`, `diamond_sweep_cg21_2026-11-04.txt`), the Swift prototype's diamond mode (`diamond_swift_2026-11-04.txt`), the fused unblocked Metal sweep (`fused_sweep_k1_2026-11-04.txt`), the GPU against the CPU by grid size (`gpu_crossover_cg29_2026-11-05.txt`), other openEMS builds run beside fdtdKit (`others_2026-11-04/`), `summary.json` (the best speed per model and snapshot, from every `MODEL_sSCALE_nSTEPS_SNAPSHOT.txt` table in `results/` itself up to pub29; the tables in `others_2026-11-04/` are not in it), the end-to-end runs (`rfsim_e2e_2026-11-03.txt` of cg18 and stock, `rfsim_e2e_gpu_2026-11-04.txt` of cg23 on the GPU, `rfsim_e2e_cg29_2026-11-05.txt`), the mesh sweep, the valley sweeps and the allocator placement test (`cache_valley_*`), the GCC/clang kernel comparison and the loop counts (`kernel_*`), the correctness checks of cg18, the memory and time-step checks, the initial optimisation review, the validation runs. The `*_cg17.txt`, `*_cg19.txt`, `*_cg21.txt`, `*_cg22.txt`, `*_cg2Ngpu.txt` and `*_pub29*.txt` tables were bit-identity checks, many of them on a loaded machine, and the speeds in the `*_cg29.txt` tables are the faster of two unpaired runs of a bit-identity check; none is a speed comparison (`*_cg29pre.*` = the checks of an earlier build of cg29's topics). In `summary.json` the entry of a `*_cg2Ngpu.txt` or `*_pub29gpu.txt` table is its multithreaded row with `OPENEMS_FTZ=1`. The files that the records place in the scratchpad were the assistant session's working files and are not published |
-| `scripts/` | the check and experiment scripts: standalone kernel benchmarks (with the GCC/clang comparison and the loop counts), the valley box, sweep and allocator placement test, cylindrical-multigrid check, Debye-material regression check, the Metal diamond engine's bit-identity check (`checks/diamond_check.sh` with its box and compare scripts), setup/nf2ff phase timing, probe-end check, z-padding check, SMA mesh sweep, end-to-end runs (`e2e/run_one.py` runs another engine with `E2E_ENGINE`, for example `metal-diamond`), the GPU-against-CPU size sweep (`gpu_crossover/`), the runs of other openEMS builds beside fdtdKit (`others/run_others.sh`), memory and time-step checks, HDF5 compare; `scripts/README.md` lists them |
+| `bench/` | the harness: `bench.py` (in-process runs with a fixed step count, S-parameter comparison; the GPU engines and `OPENEMS_FTZ` runs are compared but marked tolerant), `check.sh` (six models, five thread settings, bit-identity against stock), `abtest.py` (paired interleaved rounds, with waits for a quiet Mac), `usage.py` (the other processes' CPU and GPU use during each run), the models (`models.py`: the six benchmark models and two that only the harness runs, not `emskit fdtd`: `cube`, the free-space cube of the common benchmarks, in the records of 2026-11-10 and 2026-11-11, and `lbox`, the benchmark model of luikore's engine, in the record of 2026-11-11) |
+| `bench/validation/` | a validation suite against closed-form references (dispersive slabs, a rectangular and a cylindrical cavity, a WR-90 guide, a microstrip line), with same-build engine comparisons on the dispersive slabs; its runs (`results/validation_*`): cg18, cg29 and the fresh build of 2026-11-07 of the patches published then, 0001 to 0027 (`validation_pub29_*`), 15 of 15 each on the Mac, each with the multithreaded engine at 4 threads and with the default engine and thread count (`validation_cg29pre_*` is an earlier build of cg29's topics); the Metal diamond engine 15 of 15 on cg23 and on cg27 (its slabs equal to the basic engine; the cylindrical cavity runs on the cylindrical CPU engine); snapshot cg17 (patches 0001 to 0005) 15 of 15 with its defaults and at 8 threads (two runs made outside the project's log); stock v0.37.0 15 of 15 on the Mac and 12 of 12 on a Linux x86_64 VM (the suite's earlier version, without the engine comparisons); and two negative controls that fail their Debye checks as they should, a stock build with the Debye hooks disabled on the VM (2 of 3 checks pass) and a build of patches 0001 to 0004 (the Debye bug) on the Mac (4 of 6 pass). See `bench/validation/README.md` |
+| `results/` | the benchmark tables of the project (`MODEL_sSCALE_nSTEPS_SNAPSHOT.txt`; `*_cg18.txt`, `*_cg29.txt` and `*_pub29.txt` = the full checks of cg18, cg29 and a fresh build of the patches published on 2026-11-07, 0001 to 0027 (`fresh_build_pub29_2026-11-07.txt`), `*_cg2Ngpu.txt` and `*_pub29gpu.txt` = the Metal diamond engine of cg20 to cg29 and of that build against the multithreaded engine with `OPENEMS_FTZ=1` (cg20 to cg22 with the base's GPU engine as well), `*_base.txt` = the fork's base against stock), the speed table above (`speed_cg29_2026-11-05.txt`), the CPU items of cg29 with their paired runs and the comparison with cg18 (`cpu_items_cg29_2026-11-05.txt`), the Metal diamond engine's snapshots and checks (`diamond_engine_*`, `diamond_check_*`, `diamond_sweep_cg21_2026-11-04.txt`), the Swift prototype's diamond mode (`diamond_swift_2026-11-04.txt`), the fused unblocked Metal sweep (`fused_sweep_k1_2026-11-04.txt`), the GPU against the CPU by grid size (`gpu_crossover_cg29_2026-11-05.txt`), other openEMS builds run beside fdtdKit (`others_2026-11-04/`), four common benchmarks on cg29 (upstream's `benchmark/bench.py`, STREAM, a free-space cube, the Mie sphere; `common_benchmarks_2026-11-10.txt`), the Metal diamond engine's items of cg31 with the final table against cg29, the closed-cylinder check and the install checks (`metal_engine_cg31_2026-11-11.txt`), luikore's Metal engine, upstream master and cg31 on luikore's benchmark model (`engines_on_luikore_model_2026-11-11.txt`; with cg29 the night before, `luikore_compare_cg29_2026-11-11.txt`), the test of a shorter excitation pulse on the two boards (`pulse_test_2026-11-11.txt`), `summary.json` (the best speed per model and snapshot, from every `MODEL_sSCALE_nSTEPS_SNAPSHOT.txt` table in `results/` itself up to pub29; the tables in `others_2026-11-04/` are not in it), the end-to-end runs (`rfsim_e2e_2026-11-03.txt` of cg18 and stock, `rfsim_e2e_gpu_2026-11-04.txt` of cg23 on the GPU, `rfsim_e2e_cg29_2026-11-05.txt`), the mesh sweep, the valley sweeps and the allocator placement test (`cache_valley_*`), the GCC/clang kernel comparison and the loop counts (`kernel_*`), the correctness checks of cg18, the memory and time-step checks, the initial optimisation review, the validation runs. The `*_cg17.txt`, `*_cg19.txt`, `*_cg21.txt`, `*_cg22.txt`, `*_cg2Ngpu.txt` and `*_pub29*.txt` tables were bit-identity checks, many of them on a loaded machine, and the speeds in the `*_cg29.txt` tables are the faster of two unpaired runs of a bit-identity check; none is a speed comparison (`*_cg29pre.*` = the checks of an earlier build of cg29's topics). In `summary.json` the entry of a `*_cg2Ngpu.txt` or `*_pub29gpu.txt` table is its multithreaded row with `OPENEMS_FTZ=1`. The files that the records place in the scratchpad were the assistant session's working files and are not published |
+| `scripts/` | the check and experiment scripts: standalone kernel benchmarks (with the GCC/clang comparison and the loop counts), the valley box, sweep and allocator placement test, cylindrical-multigrid check, Debye-material regression check, the Metal diamond engine's bit-identity check (`checks/diamond_check.sh` with its box and compare scripts), setup/nf2ff phase timing, probe-end check, z-padding check, SMA mesh sweep, end-to-end runs (`e2e/run_one.py` runs another engine with `E2E_ENGINE`, for example `metal-diamond`), the GPU-against-CPU size sweep (`gpu_crossover/`), the runs of other openEMS builds beside fdtdKit (`others/run_others.sh`), the common benchmarks (`common_bench/`), the runs on luikore's benchmark model (`luikore_compare/`), the closed-cylinder check (`cylinder_closed/`), the pulse test (`pulse/`), memory and time-step checks, HDF5 compare; `scripts/README.md` lists them |
 | `swift_engine/` | a Swift + Metal FDTD kernel that runs an exported openEMS operator; bit-identical to the CPU engines on a 41^3 box, and on a 121^3 box to the SSE-based engines (sse, sse-compressed, multithreaded) with `OPENEMS_FTZ=1`, which the basic engine ignores (project log). Its diamond-blocked mode (`--diamond K`, 2026-11-04, the prototype of the Metal diamond engine) gives the same bits as cg18's multithreaded engine (with `OPENEMS_FTZ=1` on the two larger boxes) on 41^3, 121^3 and 201^3 boxes at every K tried (`results/diamond_swift_2026-11-04.txt`) |
 | `Package.swift`, `Sources/`, `Tests/` | the EMSKit Swift package: `Sources/fdtdKit` and `Sources/emskit-cli` make fdtdKit's command line `emskit fdtd` (section "Command line" below; with the Python launcher `Sources/fdtdKit/Python/fdtdkit_run.py`), `Tests/fdtdKitTests` holds its tests; the other kits add their own targets to the same package. Written on 2026-11-05 (the core modules, the first commands and the Python launcher) and 2026-11-06 (the remaining commands and the tests); built, tested and acceptance-run on 2026-11-06 (`Docs/fdtdKit/PLAN.md`, section 16) |
 | `BUILD.md` | how to build, install, verify and revert; the knobs; what differs from upstream |
-| `ROADMAP.md` | planned work: validation, upstreaming, workflow and solver features, the cluster outline, the Metal engine's open items, version 2 of the command line; what was done since its first version, the command line 0.1.0 among it |
+| `ROADMAP.md` | planned work: validation, upstreaming, workflow and solver features, the cluster outline, the engines' open items, version 2 of the command line; what was done since its first version, the command line 0.1.0 and the build of 2026-11-11 (cg31) among it |
 | `Docs/fdtdKit/PLAN.md` | the plan of the command line: its phases and acceptance runs, the facts it rests on, the commands, library identity, the child environment and the knobs, the JSON output and exit codes, load recording, stopping, distribution over several Macs, tests, and its log |
 
 The fork is also kept as two git branches with the same changes as commits: the openEMS fork's branch
-[`speed-m5-gpu`](https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu) holds the 27 commits of
-`patches/openems/` on 7bb294f, and the CSXCAD fork's branch
+[`speed-m5-gpu`](https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu) holds the 39 commits of
+`patches/openems/` on 7bb294f (head ff2538a), and the CSXCAD fork's branch
 [`speed-m5`](https://github.com/anmartinez1256/CSXCAD/tree/speed-m5) the one commit of `patches/csxcad/` on v0.7.0.
 
 The changes made in this project to the author's simulation toolkit (rfsim) are not published, since the toolkit itself
@@ -157,7 +176,8 @@ rows in the speed table above can therefore be checked against `results/` but no
 with the 14 smoke runs against the real tools (suite `SmokeTests`, run only with `EMSKIT_FDTD_SMOKE=1`) there are 258
 tests in 28 suites. The smoke runs and the acceptance runs on snapshot cg29 passed on 2026-11-10 (`check cg29
 --lite`: all identical to stock v0.37.0 on the six models; `diamond-check cg29`: 72 of 72 comparisons identical;
-`e2e gcpw --lib cg29`: the run finishes). A cloud code review of 18 of the package's 31
+`e2e gcpw --lib cg29`: the run finishes). On 2026-11-11, after the knob registry grew to 38 names and cg31 was
+installed, the unit suite passed again; the smoke runs were not repeated that day. A cloud code review of 18 of the package's 31
 source files found one bug and five minor issues on 2026-11-08; all six are fixed (`CHANGELOG.md`, 2026-11-09). A
 second review of all 31 files on 2026-11-09 raised 28 findings; its confirmed ones are fixed or listed
 (`CHANGELOG.md`, 2026-11-10). The smoke and acceptance runs were last run before that day's later changes, which
@@ -247,8 +267,9 @@ interrupted.
 
 ## What changed in the engine (one line each; the paper has the details)
 
-Items 1 to 11 are in patches 0001 to 0006 (cg18), item 12 in patches 0007 to 0016 (cg19 to cg28) and items 13 to 18
-in patches 0017 to 0027 (cg29, the build installed on the author's Mac since 2026-11-06, which has all eighteen).
+Items 1 to 11 are in patches 0001 to 0006 (cg18), item 12 in patches 0007 to 0016 (cg19 to cg28), items 13 to 18 in
+patches 0017 to 0027 (cg29) and items 19 to 21 in patches 0028 to 0039 (cg31, the build installed on the author's Mac
+since 2026-11-11, which has all twenty-one).
 
 1. Spin barriers and a per-extension hook plan: stock passes 2 + 6N condition-variable barriers per timestep for N extensions, whether or not an extension uses the hook; the fork passes a handful.
 2. A rewritten inner loop: 94 to 41 instructions per loop iteration of the voltage update (95 to 42 for the currents), which updates the three field components of four cells (counted in the disassembly of the stock and the cg18 library, `results/kernel_loop_instructions_2026-11-03.txt`); in a standalone copy of the loops, on one thread, GCC 16 runs the stock loop 1.16 to 1.39x faster than Apple clang and the rewrite at about the same speed (`results/kernel_gcc_vs_clang_2026-11-03.txt`).
@@ -261,29 +282,35 @@ in patches 0017 to 0027 (cg29, the build installed on the author's Mac since 202
 9. Packed per-operator coefficient entries (one or two cache lines instead of six).
 10. Engine threads at user-initiated QoS on macOS.
 11. A probe end criterion (opt-in, `OPENEMS_PROBE_END_DB`): the run stops once every port and field probe has stayed below a fraction of its peak for a hold time. On the author's boards the energy criterion stalls on the static charge that the default Gaussian pulse leaves behind (it has a DC part); upstream master later added an opt-in DC-free pulse (d686f1d, after the fork's base), which avoids the stall by changing the excitation.
-12. A Metal engine for the GPU, `--engine=metal-diamond` (opt-in; macOS builds with `ENABLE_METAL`): diamond-shaped tiles that advance K timesteps per block (3 or 4, picked at run time); the tile schedule follows luikore's Metal engine ([openEMS PR #228](https://github.com/thliebig/openEMS/pull/228), GPL; no code of it is used). The fields are the engine's own arrays in shared Metal buffers, so probes, dumps and any extension left on the CPU use the same memory. On the GPU run the field updates, the excitation, Mur, lumped RLC elements, UPML, Drude/Lorentz materials with the conducting sheets and Debye materials, so all six benchmark models run there (since cg22); any other extension makes the run take the single-threaded CPU loops. A run-time tuner (patch 0016) times four tilings in the first command buffers and keeps the fastest. The results are bit-identical to the multithreaded engine run with `OPENEMS_FTZ=1`, not to stock (`BUILD.md` section 7).
+12. A Metal engine for the GPU, `--engine=metal-diamond` (opt-in; macOS builds with `ENABLE_METAL`): diamond-shaped tiles that advance K timesteps per block (3, 4 or 5, picked at run time); the tile schedule follows luikore's Metal engine ([openEMS PR #228](https://github.com/thliebig/openEMS/pull/228), GPL; no code of it is used). The fields are the engine's own arrays in shared Metal buffers, so probes, dumps and any extension left on the CPU use the same memory. On the GPU run the field updates, the excitation, Mur, lumped RLC elements, UPML, Drude/Lorentz materials with the conducting sheets and Debye materials, so all six benchmark models run there (since cg22); any other extension makes the run take the single-threaded CPU loops. A run-time tuner (patch 0016) times its tilings in the first command buffers and keeps the fastest: seven tilings in two stages since patch 0038 (item 20), four before. The results are bit-identical to the multithreaded engine run with `OPENEMS_FTZ=1`, not to stock (`BUILD.md` section 7).
 13. One operator index per z-vector (four cells) instead of one per cell: about 3 B per cell less memory, and on meshes of up to 42 z lines 3 B per cell less to stream.
 14. Conducting sheets: the ADE orders of a position back to back, four positions per f4vector, with a uniqueness guard that follows the strict-order check of upstream [PR #245](https://github.com/thliebig/openEMS/pull/245) by Roel Budé (unsettledroell404).
 15. UPML: the scalar-SSE path four y-rows at a time for boxes that are not full-z slabs (the SMA launch's), and the UPML operator coefficients computed on the setup threads, from upstream [PR #244](https://github.com/thliebig/openEMS/pull/244) by Noriaki Takashima (nori-proto).
 16. Line hooks for the steady-state detection (which every sinusoidal excitation adds) and for Debye materials, so such models, upstream's benchmark cases among them, run on the fused sweep.
 17. Geometry coefficient tables: when the packed tables of item 9 would exceed 4 MB, 100 B per operator instead of 192 (of the six models only the SMA launch).
 18. Neighbour flags instead of the two barriers per timestep of the fused sweep: a thread waits only for its two neighbours, the extensions read their own thread's timestep, lumped RLC takes its time slots from the timestep (as MrHighVoltage proposed in upstream [Discussion #492](https://github.com/thliebig/openEMS-Project/discussions/492)), the steady-state detection runs on the flags too, and the flag waits do not spin when the threads outnumber the performance cores; `OPENEMS_FUSED_STAT=1` prints the time split of the sweep per thread.
+19. No Nyquist-period energy estimates in a run without an end criterion (patch 0028): the fork's base summed the field energy on one thread every Nyquist period during the first minute of every run, the engine waiting, which was 4 to 6 % of the Metal diamond engine's loop on a benchmark model of 3 to 17 M cells with a Nyquist period of 51 steps; a run with `EndCriteria = 0` (a fixed number of steps) now estimates the energy with the progress report only, as v0.37.0 does (`--exact-endcriteria` still asks for the schedule), and its results do not change.
+20. The Metal diamond engine's items of 2026-11-11 (patches 0029 to 0038): three dispatches per block instead of four, Mur faces of one axis behind one barrier, UPML a z-vector at a time on the x and y slabs and three components of a cell at a time on the z slabs, dispersive materials three components at a time, index arithmetic without run-time divisions, the extension data's offsets and counts as constants of the kernel, and a tuner of seven tilings in two stages (it adds K=4 with 10,6 and 9,2 tiles and K=5 with 12,8). The fields do not change: every step passed `scripts/checks/diamond_check.sh` with 72 of 72 comparisons identical, and on the benchmark models every probe of cg31's Metal runs equals cg29's. The rates are in the paragraph "A later build" above.
+21. Line hooks for the cylinder extension (patch 0039), so a cylindrical mesh that is closed in alpha runs the fused sweep with the neighbour flags: 1857 and 1891 MC/s before, 2503 and 2553 after, at 8 threads on a closed cylinder of 61 x 72 x 41 lines with r = 0 (`results/metal_engine_cg31_2026-11-11.txt`); the cylindrical multigrid stays on the unfused plan.
 
-All items except the probe end criterion and the Metal diamond engine are on by default; the coefficient layout and
-the neighbour flags with their spin depend on the model and the thread count (`BUILD.md` section 7). Most can be
-switched off with environment variables (see `BUILD.md`; `OPENEMS_FUSED=0` also turns off every line hook, the
-dispersive ones included, and the neighbour flags); the hook plan and spin barriers, work stealing, the Mur and UPML
-vector paths (of these only the UPML y-rows of item 15 have a switch), the dump gather, the operator-setup changes
-(item 15's UPML coefficients on the setup threads among them) and the line hooks of item 16 have no switch of their
-own and rest on the bit-identity checks against the snapshot before them. The operator setup uses every core whatever
-`numThreads` says.
+All items except the probe end criterion and the Metal diamond engine (items 12 and 20) are on by default; the
+coefficient layout and the neighbour flags with their spin depend on the model and the thread count (`BUILD.md`
+section 7). Most can be switched off with environment variables (see `BUILD.md`; `OPENEMS_FUSED=0` also turns off
+every line hook, the dispersive ones included, and the neighbour flags); the hook plan and spin barriers, work
+stealing, the Mur and UPML vector paths (of these only the UPML y-rows of item 15 have a switch), the dump gather, the
+operator-setup changes (item 15's UPML coefficients on the setup threads among them), the line hooks of items 16 and
+21 and the change of item 19 have no switch of their own and rest on the bit-identity checks against the snapshot
+before them. Within the Metal diamond engine the changes of item 20 are on by default, with eight switches
+(`OPENEMS_DIAMOND_MERGE`, `_MURMERGE`, `_EVEN`, `_FASTIDX`, `_TGFLAG`, `_PML4`, `_PML3` and `_CAND`; the dispersive
+materials' pass and the kernel constants have none). The operator setup uses every core whatever `numThreads` says.
 
 ## Status and licence
 
-The fork is used daily by the author (as cg29, patches 0001 to 0027, since 2026-11-06, and as cg18, patches 0001 to
-0006, from 2026-11-04 to 2026-11-06; the author's toolkit runs it with no change on its side, on the CPU engine with
-the automatic thread count, and does not select the Metal diamond engine, which is in the installed build but
-opt-in); it has not been submitted upstream. The patches apply only to their base:
+The fork is used daily by the author (as cg31, patches 0001 to 0039, since 2026-11-11, as cg29, patches 0001 to 0027,
+from 2026-11-06 to 2026-11-11, and as cg18, patches 0001 to 0006, from 2026-11-04 to 2026-11-06; the author's toolkit
+runs it with no change on its side, on the CPU engine with the automatic thread count, and does not select the Metal
+diamond engine, which is in the installed build but opt-in); it has not been submitted upstream. The patches apply
+only to their base:
 upstream has since merged a reworked GPU engine into master (c3a956b, 2026-10-17), deleted the `gpu-engine` branch and
 restructured the engines (c0816a2, 2026-11-02), so a submission means porting each item to master and checking it
 against a stock build of master. Fixes made upstream after the base are not in the fork; `BUILD.md` lists them.
@@ -293,15 +320,23 @@ overlapping work: among it luikore's diamond-blocked Metal engine
 ([openEMS#228](https://github.com/thliebig/openEMS/pull/228)), whose tile schedule the fork's Metal diamond engine
 follows (no code of it is used), and CPU pull requests with identical results such as
 [#231](https://github.com/thliebig/openEMS/pull/231), [#244](https://github.com/thliebig/openEMS/pull/244) and
-[#245](https://github.com/thliebig/openEMS/pull/245); cg29 takes the UPML part of #244, follows the strict-order check
-of #245 and the lumped-RLC time slots that MrHighVoltage proposed in Discussion #492 (items 15, 14 and 18 above). On
+[#245](https://github.com/thliebig/openEMS/pull/245); since cg29 the fork takes the UPML part of #244, follows the
+strict-order check of #245 and the lumped-RLC time slots that MrHighVoltage proposed in Discussion #492 (items 15, 14
+and 18 above). On
 2026-11-04 upstream master's merged GPU engine and PR #228 were built and run here on the six models (on a Mac shared
 with other work, so the speeds are rough): master's GPU engine ran at 0.42 to 1.06 times the speed of cg18's CPU
 engine, and PR #228's diamond path refused all six models before stepping (it has not migrated their Mur boundaries,
 nor the GCPW line's conducting sheets); it ran only variants with every Mur face replaced by PEC, on which the fork's
-Metal diamond engine was not run, so the two diamond engines have not been compared head to head
-(`results/others_2026-11-04/README.md`). The paper's section "Positioning" lists this work (the paragraph on it was
-added on 2026-11-04 by Claude Opus 5.5, see `CHANGELOG.md`).
+Metal diamond engine was not run (`results/others_2026-11-04/README.md`). The two diamond engines were first compared
+head to head on 2026-11-11, on the benchmark model of luikore's engine (a uniform grid with PEC walls, one dielectric
+box and a point excitation), with luikore's build (55ce11b), upstream master (1d710c2) and cg31 interleaved on a
+quiet Mac: at 3.0 M and 17.0 M cells cg31's Metal diamond engine ran 3981 and 3309 MC/s, luikore's Metal engine 3952
+and 2829, master's `gpu` engine 1638 and 1566, master's new `cpu` engine at 8 threads 1872 and 1933, cg31's
+multithreaded engine 2371 and 1659 (the better of 8 and 10 threads) and master's 1246 and 1055 (8 threads)
+(`results/engines_on_luikore_model_2026-11-11.txt`; the paper's section "After publication"). It is one model, a
+regular grid without boundary work; luikore's diamond path still refuses the six benchmark models, so on those the
+two engines have not been compared. The paper's section "Positioning" lists the other contributors' work (the
+paragraph on it was added on 2026-11-04 by Claude Opus 5.5, see `CHANGELOG.md`).
 
 openEMS is under the GPL and CSXCAD under the LGPL, both version 3 or later. The openEMS patches are under the GPL like
 the files they change, and the CSXCAD patch under the LGPL like its files (`patches/csxcad/COPYING.LESSER`); files
@@ -343,7 +378,13 @@ what they found (one fix had dropped a fallback; the Ctrl-C handling of another 
 five tests and carried all of it into the repository. From the evening of 2026-11-09 the main session ran on
 Claude Fable 5.2: its agents reviewed all 31 source files in a read-only workflow, and on 2026-11-10 agents of a
 second workflow fixed the confirmed findings and reviewed the fixes, twice (`CHANGELOG.md`, 2026-11-10); the main
-session ran the checks. A separate Claude Opus 5.5 session in this folder wrote the
+session ran the checks. On 2026-11-10 the main session (Claude Fable 5.2) also ran the four common benchmarks, whose
+numbers a read-only checker recomputed, and on 2026-11-11, after four read-only reviewers had looked for the engines'
+bottlenecks, each followed by a checker that tried to refute its findings (agents of a workflow of the same session,
+on the same model), it wrote the twelve commits of cg31 (patches 0028 to 0039, whose trailers name Claude Fable 5.2)
+with their checks and measurements, ran the three-build comparison on luikore's model (the first side-by-side, with
+cg29, the author ran) and the pulse test, installed cg31 at the author's word and made that day's documentation
+update with agents of the same model. A separate Claude Opus 5.5 session in this folder wrote the
 paper's paragraph on concurrent work and built and measured upstream master and PR #228 on 2026-11-04; another Claude
 Opus 5.5 session wrote the work plan of 2026-11-04 (a working note that is not part of the published repository), which
 the author pasted into the session that did the work; the read-only reviews and research of 2026-11-04 and 2026-11-05

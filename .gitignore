@@ -27,6 +27,10 @@ scripts/sma_mesh/sweep.log
 scripts/cache_valley/valley.txt
 scripts/kernel/kb_idx
 scripts/kernel/kb_tb
+scripts/kernel/kb_tile
+# the build and the output of scripts/luikore_compare/run.zsh
+scripts/luikore_compare/work/
+scripts/luikore_compare/result.txt
 swift_engine/fdtd_swift
 # raw operator and field exports (OPENEMS_EXPORT_OPERATOR / OPENEMS_EXPORT_FIELDS, swift_engine/)
 *.f32

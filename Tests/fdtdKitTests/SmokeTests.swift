@@ -21,10 +21,15 @@ enum Smoke {
     /// Spec 4.2's identities: libopenEMS sha256 prefix, version string and LC_UUID prefix.
     static let stock = (sha: "7eaaee52", version: "v0.37.0", uuid: "B1A89DA1")
     static let cg29 = (sha: "3c859d81", version: "v0.37.0-44-g074a687", uuid: "40BC8CFF")
-    /// The installed libopenEMS as section 4.2 records it: cg18's build until 2026-11-06 and cg29's since, each in
-    /// other bytes than the snapshot's file.
+    /// The installed libopenEMS as section 4.2 records it: cg18's build until 2026-11-06, cg29's until 2026-11-11 and
+    /// cg31's since, each in other bytes than the snapshot's file.
     static let installs = [(sha: "819179a2", uuid: "24C8A7F2", build: "cg18"),
-                           (sha: "0d81372e", uuid: "40BC8CFF", build: "cg29")]
+                           (sha: "0d81372e", uuid: "40BC8CFF", build: "cg29"),
+                           (sha: "23630ed6", uuid: "499C07FD", build: "cg31")]
+    /// The knobs that came after cg29 (patches 0029 to 0038): cg29's libopenEMS does not have them.
+    static let afterCg29: Set<String> = ["OPENEMS_DIAMOND_MERGE", "OPENEMS_DIAMOND_MURMERGE", "OPENEMS_DIAMOND_EVEN",
+                                         "OPENEMS_DIAMOND_FASTIDX", "OPENEMS_DIAMOND_TGFLAG", "OPENEMS_DIAMOND_PML4",
+                                         "OPENEMS_DIAMOND_PML3", "OPENEMS_DIAMOND_CAND"]
 
     /// Spec 16.2: only through `--filter ...SmokeTests --no-parallel`, so that no other suite runs beside these runs
     /// and loads the Mac they measure. swift test hands both options to the testing helper this code runs in.
@@ -254,15 +259,15 @@ struct SmokeTests {
             #expect(strings(library?["sameBytes"]).contains(spec) && strings(library?["sameBuild"]).contains(spec),
                     "\(spec)")
         }
-        // section 4.2: stock has the five CPU engines and no knob; cg29 adds the GPU engines and has all 30 knobs
-        // (29 in libopenEMS, NF2FF_LEGACY in libnf2ff)
+        // section 4.2: stock has the five CPU engines and no knob; cg29 adds the GPU engines and has the 30 knobs of
+        // its time (29 in libopenEMS, NF2FF_LEGACY in libnf2ff), not the eight of patches 0029 to 0038
         let stock = snapshots.first { $0["spec"]?.string == "stock" }
         #expect(Set(strings(stock?["engines"])) == Set(FdtdEngine.cpuEngines.map(\.rawValue)))
         let stockKnobs = strings(stock?["knobs"])
         #expect(stockKnobs.isEmpty, "\(stockKnobs)")
         let cg29 = snapshots.first { $0["spec"]?.string == "cg29" }
         #expect(Set(strings(cg29?["engines"])) == Set(FdtdEngine.allCases.map(\.rawValue)))
-        #expect(Set(strings(cg29?["knobs"])) == Set(FdtdKnobs.registry.map(\.name)))
+        #expect(Set(strings(cg29?["knobs"])) == Set(FdtdKnobs.registry.map(\.name)).subtracting(Smoke.afterCg29))
         let installed = run.result["installed"]
         let installedSha = libopenEMS(installed)?["sha256"]?.string
         if let known = Smoke.installs.first(where: { installedSha?.hasPrefix($0.sha) == true }) {

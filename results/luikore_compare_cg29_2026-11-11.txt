@@ -1,0 +1,85 @@
+luikore's Metal engine (openEMS pull request 228, commit 55ce11b) against the fork, same Apple M5, 2026-11-11 01:27-01:40
+=====================================================================================================================
+scripts/luikore_compare/run.zsh: builds luikore's branch and runs both binaries interleaved on luikore's own benchmark model
+(macos/bench/bench_metal.py: a uniform 1 mm grid with PEC walls, one dielectric box, a Gaussian point excitation, no dumps; plus one
+voltage probe), three repetitions per configuration, each run after the other processes fell to 1.5 cores or less (or 10 minutes).
+The fork is the build installed that night, cg29 (v0.37.0-44-g074a687), i.e. BEFORE the Metal engine items of patches 0028 to 0038.
+Other processes before the runs: a median of 0.46 cores, 1.9 before the first run.
+The fork's base sums the field energy on one thread every Nyquist period (51 steps on this model) even without an end criteria, and
+luikore's tree does not: 4-6 % of the fork's loop time here (patch 0028 removes it). Lines as the script printed them:
+
+192x160x96_n600 r0 luikore metal            3675.5 MC/s   all processes before the run  188 % cpu
+192x160x96_n600 r0 luikore mt-8             1373.0 MC/s   all processes before the run   87 % cpu
+192x160x96_n600 r0 luikore mt-10            1379.2 MC/s   all processes before the run   41 % cpu
+192x160x96_n600 r0 fdtdKit metal-diamond    3154.7 MC/s   all processes before the run   56 % cpu
+192x160x96_n600 r0 fdtdKit mt-8             2501.9 MC/s   all processes before the run   30 % cpu
+192x160x96_n600 r0 fdtdKit mt-10            2547.7 MC/s   all processes before the run   70 % cpu
+192x160x96_n600 r1 luikore metal            3809.1 MC/s   all processes before the run  105 % cpu
+192x160x96_n600 r1 luikore mt-8             1353.7 MC/s   all processes before the run  109 % cpu
+192x160x96_n600 r1 luikore mt-10            1348.0 MC/s   all processes before the run   38 % cpu
+192x160x96_n600 r1 fdtdKit metal-diamond    3498.7 MC/s   all processes before the run   56 % cpu
+192x160x96_n600 r1 fdtdKit mt-8             2481.8 MC/s   all processes before the run   91 % cpu
+192x160x96_n600 r1 fdtdKit mt-10            2599.0 MC/s   all processes before the run   66 % cpu
+192x160x96_n600 r2 luikore metal            3781.1 MC/s   all processes before the run   41 % cpu
+192x160x96_n600 r2 luikore mt-8             1356.7 MC/s   all processes before the run  130 % cpu
+192x160x96_n600 r2 luikore mt-10            1316.3 MC/s   all processes before the run   37 % cpu
+192x160x96_n600 r2 fdtdKit metal-diamond    3616.0 MC/s   all processes before the run   64 % cpu
+192x160x96_n600 r2 fdtdKit mt-8             2499.4 MC/s   all processes before the run   23 % cpu
+192x160x96_n600 r2 fdtdKit mt-10            2656.1 MC/s   all processes before the run   63 % cpu
+# 192x160x96_n600: median MC/s [min-max], probe vs fdtdKit mt-8
+# luikore metal            3781.1 [3675-3809]  rel 8.7e-06  55ce11b  Metal: in-place diamond update: 4 timesteps/block, width 2, 2666664 auxiliary bytes; Metal: in-place diamond E/H pipeline: enabled
+# luikore mt-8             1356.7 [1354-1373]  identical  55ce11b  
+# luikore mt-10            1348.0 [1316-1379]  identical  55ce11b  
+# fdtdKit metal-diamond    3498.7 [3155-3616]  rel 7.5e-06  v0.37.0-44-g074a687  openEMS - enabled the diamond-blocked Metal engine; Create FDTD operator (compressed SSE, multithreaded setup, for the Metal diamond engine); Create FDTD engine
+# fdtdKit mt-8             2499.4 [2482-2502]  identical  v0.37.0-44-g074a687  
+# fdtdKit mt-10            2599.0 [2548-2656]  identical  v0.37.0-44-g074a687  
+192x160x96_n3000 r0 luikore metal            3978.5 MC/s   all processes before the run  103 % cpu
+192x160x96_n3000 r0 luikore mt-8             1293.6 MC/s   all processes before the run   28 % cpu
+192x160x96_n3000 r0 luikore mt-10            1275.4 MC/s   all processes before the run   42 % cpu
+192x160x96_n3000 r0 fdtdKit metal-diamond    3718.8 MC/s   all processes before the run   16 % cpu
+192x160x96_n3000 r0 fdtdKit mt-8             2330.5 MC/s   all processes before the run   22 % cpu
+192x160x96_n3000 r0 fdtdKit mt-10            2387.2 MC/s   all processes before the run   38 % cpu
+192x160x96_n3000 r1 luikore metal            3957.7 MC/s   all processes before the run   46 % cpu
+192x160x96_n3000 r1 luikore mt-8             1254.1 MC/s   all processes before the run   46 % cpu
+192x160x96_n3000 r1 luikore mt-10            1238.7 MC/s   all processes before the run   22 % cpu
+192x160x96_n3000 r1 fdtdKit metal-diamond    3760.3 MC/s   all processes before the run   34 % cpu
+192x160x96_n3000 r1 fdtdKit mt-8             2321.7 MC/s   all processes before the run   50 % cpu
+192x160x96_n3000 r1 fdtdKit mt-10            2329.2 MC/s   all processes before the run   26 % cpu
+192x160x96_n3000 r2 luikore metal            3933.6 MC/s   all processes before the run   52 % cpu
+192x160x96_n3000 r2 luikore mt-8             1231.9 MC/s   all processes before the run   55 % cpu
+192x160x96_n3000 r2 luikore mt-10            1233.6 MC/s   all processes before the run   38 % cpu
+192x160x96_n3000 r2 fdtdKit metal-diamond    3728.0 MC/s   all processes before the run   46 % cpu
+192x160x96_n3000 r2 fdtdKit mt-8             2280.5 MC/s   all processes before the run   36 % cpu
+192x160x96_n3000 r2 fdtdKit mt-10            2027.4 MC/s   all processes before the run  108 % cpu
+# 192x160x96_n3000: median MC/s [min-max], probe vs fdtdKit mt-8
+# luikore metal            3957.7 [3934-3978]  rel 2.8e-05  55ce11b  Metal: in-place diamond update: 4 timesteps/block, width 2, 2666664 auxiliary bytes; Metal: in-place diamond E/H pipeline: enabled
+# luikore mt-8             1254.1 [1232-1294]  identical  55ce11b  
+# luikore mt-10            1238.7 [1234-1275]  identical  55ce11b  
+# fdtdKit metal-diamond    3728.0 [3719-3760]  rel 2.5e-05  v0.37.0-44-g074a687  openEMS - enabled the diamond-blocked Metal engine; Create FDTD operator (compressed SSE, multithreaded setup, for the Metal diamond engine); Create FDTD engine
+# fdtdKit mt-8             2321.7 [2280-2331]  identical  v0.37.0-44-g074a687  
+# fdtdKit mt-10            2329.2 [2027-2387]  identical  v0.37.0-44-g074a687  
+256x256x256_n1000 r0 luikore metal            2848.1 MC/s   all processes before the run  124 % cpu
+256x256x256_n1000 r0 luikore mt-8             1033.8 MC/s   all processes before the run   10 % cpu
+256x256x256_n1000 r0 luikore mt-10            1000.3 MC/s   all processes before the run   41 % cpu
+256x256x256_n1000 r0 fdtdKit metal-diamond    3053.0 MC/s   all processes before the run   58 % cpu
+256x256x256_n1000 r0 fdtdKit mt-8             1624.4 MC/s   all processes before the run   41 % cpu
+256x256x256_n1000 r0 fdtdKit mt-10            1550.2 MC/s   all processes before the run   84 % cpu
+256x256x256_n1000 r1 luikore metal            2852.9 MC/s   all processes before the run  120 % cpu
+256x256x256_n1000 r1 luikore mt-8              968.3 MC/s   all processes before the run   43 % cpu
+256x256x256_n1000 r1 luikore mt-10             936.3 MC/s   all processes before the run  114 % cpu
+256x256x256_n1000 r1 fdtdKit metal-diamond    3091.9 MC/s   all processes before the run   40 % cpu
+256x256x256_n1000 r1 fdtdKit mt-8             1640.1 MC/s   all processes before the run   26 % cpu
+256x256x256_n1000 r1 fdtdKit mt-10            1662.5 MC/s   all processes before the run   62 % cpu
+256x256x256_n1000 r2 luikore metal            2848.1 MC/s   all processes before the run   47 % cpu
+256x256x256_n1000 r2 luikore mt-8             1003.2 MC/s   all processes before the run   31 % cpu
+256x256x256_n1000 r2 luikore mt-10            1036.3 MC/s   all processes before the run   67 % cpu
+256x256x256_n1000 r2 fdtdKit metal-diamond    3091.9 MC/s   all processes before the run   27 % cpu
+256x256x256_n1000 r2 fdtdKit mt-8             1667.4 MC/s   all processes before the run    8 % cpu
+256x256x256_n1000 r2 fdtdKit mt-10            1648.0 MC/s   all processes before the run   58 % cpu
+# 256x256x256_n1000: median MC/s [min-max], probe vs fdtdKit mt-8
+# luikore metal            2848.1 [2848-2853]  rel 6.8e-06  55ce11b  Metal: in-place diamond update: 4 timesteps/block, width 2, 5570728 auxiliary bytes; Metal: in-place diamond E/H pipeline: enabled
+# luikore mt-8             1003.2 [968-1034]  identical  55ce11b  
+# luikore mt-10            1000.3 [936-1036]  identical  55ce11b  
+# fdtdKit metal-diamond    3091.9 [3053-3092]  rel 1.1e-05  v0.37.0-44-g074a687  openEMS - enabled the diamond-blocked Metal engine; Create FDTD operator (compressed SSE, multithreaded setup, for the Metal diamond engine); Create FDTD engine
+# fdtdKit mt-8             1640.1 [1624-1667]  identical  v0.37.0-44-g074a687  
+# fdtdKit mt-10            1648.0 [1550-1663]  identical  v0.37.0-44-g074a687  

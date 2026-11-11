@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The knob registry (spec 4.3): the 30 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
+// The knob registry (spec 4.3): the 38 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
 // once per process, the commands that take them, and the library file their name is searched in. For bench and ab a
 // knob travels only inside the CFGs; for validate, e2e and run it goes into the Python process's environment.
 // check, debye-check and diamond-check take none.
@@ -62,7 +62,7 @@ struct FdtdKnobInfo: Codable, Sendable, Equatable {
 
 /// The registry and the knob rules.
 enum FdtdKnobs {
-    /// The 30 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
+    /// The 38 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
     static let registry: [FdtdKnob] = [
         entry("OPENEMS_FUSED", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_FUSED_BLOCK", .integer(min: 1), "integer >= 1"),
@@ -94,6 +94,14 @@ enum FdtdKnobs {
         entry("OPENEMS_DIAMOND_BATCH", .integer(min: 1), "integer >= 1"),
         entry("OPENEMS_DIAMOND_TIMING", .oneOf(["0", "1", "2"]), "0, 1, 2"),
         entry("OPENEMS_DIAMOND_COEF", .oneOf(["packed", "split"]), "packed, split"),
+        entry("OPENEMS_DIAMOND_MERGE", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_MURMERGE", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_EVEN", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_FASTIDX", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_TGFLAG", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_PML4", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_PML3", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_DIAMOND_CAND", .integer(min: 0), "integer >= 0"),
     ]
 
     /// The commands of every knob but EXPORT_* and PROBE_END_*, which only `run` takes (e2e's core.run owns the

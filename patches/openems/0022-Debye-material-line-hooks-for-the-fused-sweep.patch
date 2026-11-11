@@ -1,7 +1,7 @@
 From 8d792c5df0f480c7d076459f230a43c50e057d1a Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 22/27] Debye material: line hooks for the fused sweep
+Subject: [PATCH 22/39] Debye material: line hooks for the fused sweep
 
 Engine_Ext_DebyeMaterial has its own pre and post voltage hooks (the poles' ADE states), which had no
 line versions, so a Debye material kept the multithreaded engine on the unfused plan with these two

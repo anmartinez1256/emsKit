@@ -14,7 +14,8 @@ master reorganised these classes on 2026-11-02, and the patches do not apply to 
 the repository (Section~\ref{sec:repro}), \code{paper/code\_notes.md}, written from the diffs by an AI review agent,
 gives file names, line counts and code fragments for every item of patches 0001--0006 (cg18); it does not cover the
 later patches, whose commit messages describe them: the Metal diamond engine of patches 0007--0016 is in
-Section~\ref{sec:gpu}, the CPU items of patches 0017--0027 (cg29) in Section~\ref{sec:cg29}. This section keeps to the
+Section~\ref{sec:gpu}, the CPU items of patches 0017--0027 (cg29) in Section~\ref{sec:cg29}, patches 0028--0039
+(cg31) in Section~\ref{sec:cg31}. This section keeps to the
 mechanisms.
 
 \paragraph{Memory layout, for reference.} The SSE engines store each field as a 4-D array of \code{f4vector}s in
@@ -155,8 +156,9 @@ whole-grid ones, touching only its own lines (an x-face Mur line that reads the 
 once and run their unchanged bodies on the entries of a block (up to cg28 the RLC's per-step container rotation was
 done by whichever thread arrived first, under a time-step stamp; cg29 takes the three slots from the time step). Mur,
 UPML, excitation, RLC, since cg12 the Drude/Lorentz extension, which also carries the conducting sheets, and since
-cg29 the Debye extension and the steady-state detection have line hooks. Any extension without them (Debye materials
-from patch 0005 to cg28, the cylinder extension of cylindrical meshes closed in alpha, the cylindrical multigrid,
+cg29 the Debye extension and the steady-state detection have line hooks, and since cg31 the cylinder extension of
+cylindrical meshes closed in alpha (Section~\ref{sec:cg31cyl}). Any extension without them (Debye materials
+from patch 0005 to cg28, the cylinder extension up to cg29, the cylindrical multigrid,
 TFSF, the steady-state detection up to cg28, the \code{Absorbing\_BC} extension) puts the whole run on the unfused
 plan, and a verbose message names it (once per level engine of a cylindrical multigrid since patch 0006). The fused
 sweep also needs the packed coefficient tables of cg13 (or, since cg29, the geometry tables of

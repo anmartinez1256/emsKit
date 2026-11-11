@@ -16,7 +16,8 @@ settling after the fact from the port files. Upstream master has since added an 
 d686f1d, 2026-10-24: \code{SetGaussExcite(f0, fc, dc\_free=True)}, a sine instead of a cosine carrier); it is not in
 v0.37.0 or in the fork's base. It leaves no static charge, so the energy criterion can fire, but it changes the
 excitation: its spectrum falls to zero at DC, so the bottom of the band (50\,MHz for these boards) is driven more
-weakly. The criterion below keeps the model and its pulse as they are.
+weakly. The criterion below keeps the model and its pulse as they are. A baseband pulse of half the length was
+tested with it on 2026-11-11 and not adopted (Section~\ref{sec:pulse}).
 
 The fork adds a second criterion, off unless \code{OPENEMS\_PROBE\_END\_DB} is set to a negative level in dB; an
 invalid value of it or of \code{OPENEMS\_PROBE\_END\_HOLD} prints a warning. Every integral probe (port voltages and

@@ -1,7 +1,7 @@
 From ae21bd18dece1daff3f45fc35ec4d8a223d4b42e Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 24/27] Multithreaded engine: OPENEMS_FUSED_STAT, the time
+Subject: [PATCH 24/39] Multithreaded engine: OPENEMS_FUSED_STAT, the time
  split of the fused sweep per thread
 
 OPENEMS_FUSED_STAT=1 times every thread of the fused sweep: its sweep, the wait at the first barrier, the

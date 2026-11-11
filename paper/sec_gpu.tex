@@ -13,7 +13,9 @@ Apple-only: it is built with the base's Metal option (\code{ENABLE\_METAL}), and
 multithreaded CPU engine. The code is \code{FDTD/engine\_metal\_diamond.h} and
 \code{FDTD/metal/engine\_metal\_diamond.mm}; against cg18 the ten patches change 19 files, $+1\,717/-1$ lines, of which
 the Objective-C++ file has 1\,592 (\code{git diff --stat cb168f7 68c1c82} in the fork). Snapshot cg29 leaves these
-files unchanged; its CPU changes were checked against the engine (below).
+files unchanged; its CPU changes were checked against the engine (below). The build of 2026-11-11, cg31 (patches
+0028--0039, of which 0029--0038 are the engine's), changes the engine again: this section describes and measures it
+as of cg29, and Section~\ref{sec:cg31} has what changed and the rates since.
 
 \subsection{Design}
 \paragraph{Fields in shared memory.} \code{Engine\_Metal\_Diamond} is a subclass of the sse-compressed engine, and its
@@ -35,7 +37,8 @@ $[l+\lfloor s/2\rfloor,\,h-\lceil s/2\rceil)$, so every value it reads at its ed
 valley between two mountains, with $l$ the end of the mountain before it and $h$ the start of the one after, grows by
 the same rule, $[l-\lceil s/2\rceil,\,h+\lfloor s/2\rfloor)$, and completes what the mountains left. With tiles in x
 and in y, a block of $K$ steps takes four dispatches, one per kind of tile: mountain in x and in y, mountain in x and
-valley in y, valley in x and mountain in y, valley in both. The tiles of one dispatch are independent of each other.
+valley in y, valley in x and mountain in y, valley in both (three since cg31, which sends the two mixed kinds
+together; Section~\ref{sec:cg31}). The tiles of one dispatch are independent of each other.
 Inside a tile a threadgroup barrier on device memory separates the stages, and the voltage half step from the current
 half step. Threadgroup memory is not used: the reuse across the $K$ steps comes from the GPU's caches, and there are
 no halo copies. The first mountain starts at line 2 and the last ends at line $n-2$ at the latest, so the two lines at
@@ -68,14 +71,18 @@ The stages in brackets only read the field and run before one barrier.
   the Apply order together with the Mur faces.
 \item \textbf{UPML} (cg21): per component and cell an index into a table of distinct coefficient sets, as in the
   CPU's compressed PML tables (cg14). One barrier serves a stage of all boxes, so the boxes must not overlap; openEMS's
-  do not (\code{Create\_UPML} leaves out the edges and corners that another box has).
+  do not (\code{Create\_UPML} leaves out the edges and corners that another box has). Up to cg29 a stage was a loop
+  over single floats; since cg31 it takes a z-vector at a time in the x and y slabs and the three components of a
+  cell together in a z slab (Section~\ref{sec:cg31}).
 \item \textbf{Drude/Lorentz materials and conducting sheets} (cg22, \code{Engine\_Ext\_LorentzMaterial}: voltage and
   current ADEs) and \textbf{Debye materials} (cg23, \code{Engine\_Ext\_DebyeMaterial}), each only as exactly that
   class (\code{typeid}), not as a subclass. Since cg25 the ADE elements of one cell form one run, as the excitation's
   entries do.
 \end{itemize}
 The extension data sit in three buffers (read-only words, read-only floats, state) with a table of offsets, because
-the kernel had used 29 of Metal's 31 buffer slots before the UPML came (cg21).
+the kernel had used 29 of Metal's 31 buffer slots before the UPML came (cg21). Since cg31 the offsets and counts
+are constants of the kernel, which is compiled after the data are packed, and a tiling's per-tile lists have a buffer
+of their own (Section~\ref{sec:cg31}).
 
 \paragraph{Coefficients, constants and the tuner.} The packed tables of cg13 hold six \code{f4vector}s per operator
 for the voltages and six for the currents, 192\,B per operator. That suits the uniform tutorial meshes, which repeat a
@@ -94,7 +101,9 @@ chosen at run time. The engine builds four tilings, $(K,M,V) = (4,8,8)$, the for
 $(3,6,6)$, each with its own tile buffers, threads per tile and per-tile lists; the extension floats and the state
 are shared. While it tunes, the command buffers take the tilings in turn, in half batches of 32 steps (33 at $K=3$)
 with at most two in flight, and per tiling the engine keeps the least GPU time per step of four timed buffers; then it runs the
-fastest tiling and releases the others. Only full batches and whole calls are timed and take a turn: a first version
+fastest tiling and releases the others (since cg31 seven tilings, timed in two stages: $(4,10,6)$, $(4,9,2)$ and
+$(5,12,8)$ are added; Section~\ref{sec:cg31}).
+Only full batches and whole calls are timed and take a turn: a first version
 that also gave the short last buffer of each call a turn handed one tiling that buffer on every call of notch x3, and
 other call lengths could have starved a tiling for a whole run
 (\code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}, section 4). Threads per tile follow the tile's work: the
@@ -107,7 +116,8 @@ $K=4$, $8{:}8$ without tuning), \code{OPENEMS\_DIAMOND\_TG} the threads per tile
 steps per command buffer (64, rounded up to whole $K$-step blocks), \code{OPENEMS\_DIAMOND\_COEF=packed|split} the
 coefficient layout, and
 \code{OPENEMS\_DIAMOND\_TIMING=1} or \code{2} prints the GPU time, per phase with \code{2} (which also fixes one
-tiling). Whatever the engine does not
+tiling). cg31 adds eight switches for its changes (Section~\ref{sec:cg31}; all in \code{BUILD.md}, section 7).
+Whatever the engine does not
 cover runs on the CPU, on the same memory, with a message: an extension without a GPU stage (named in the message;
 TFSF, the steady-state detection, any subclass of the dispersive extensions), overlapping UPML boxes, more than
 65\,535 lines in x or y, $2^{32}$ or more floats per field, no Metal device or a failed allocation; more than 32 Mur
@@ -170,18 +180,20 @@ flushes subnormal floats to zero, while the CPU cores keep them unless \code{OPE
   Debye blocks. Each runs at $K=1$, 2, 3, 4 and 8 and with an odd tile (7,0), 96 threads and batches of 3 steps, and
   since cg28 also with the tuner changing tilings during the run. Every comparison was identical, 18 at cg19, 24 at
   cg20, 36 at cg21, 48 at cg22, 54 at cg23 to cg27 (cg24's in its commit message), 72 at cg28 and cg29
-  (Table~\ref{tab:gpucov}).
+  (Table~\ref{tab:gpucov}), and 72 at every snapshot of cg31 (Section~\ref{sec:cg31}).
 \item The six benchmark models: port probes and $S$-parameters identical to the multithreaded engine with
   \code{OPENEMS\_FTZ=1} on every model that ran on the GPU, two at cg20, five at cg21 and all six from cg22 on
   (\code{results/*\_cg2Ngpu.txt}; for cg29 \code{results/*\_cg29gpu.txt}). The 180 runs of the cg24--cg27 session were
   all identical to the first run of cg24, and the 190 runs of the two cg28 sessions to the first run of cg27
   (\code{results/diamond\_engine\_cg24\_cg27\_2026-11-04.txt}, section 3;
-  \code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}, section 1).
+  \code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}, section 1). The Metal runs of cg31 give the probes of
+  cg29's (\code{results/metal\_engine\_cg31\_2026-11-11.txt}).
 \item The nf2ff time-domain dumps of the patch tutorial (984 datasets) and of patch x5 (120) are identical when both
   runs set \code{OPENEMS\_FTZ=1}. With the switch in the CPU run only, 27 of the tutorial's 984 differed while the
   fields were identical, because openEMS computes the dumps on the creating thread, which the switch also flushes
   (\code{results/diamond\_engine\_cg20\_2026-11-04.txt}).
-\item The closed-form validation suite (\code{bench/validation/}) passes 15 of 15 on the engine at cg23 and at cg27.
+\item The closed-form validation suite (\code{bench/validation/}) passes 15 of 15 on the engine at cg23 and at cg27
+  (and at cg30l, the snapshot of patches 0001--0038 on the way to cg31, Section~\ref{sec:cg31}).
   The Debye, Drude and Lorentz slabs, the rectangular cavity, the WR-90 guide with PML and the microstrip line ran on
   the GPU without a fallback, and the three dispersive slabs equal the basic engine (difference 0); the cylindrical
   cavity runs openEMS's cylinder engine (\code{results/validation\_cg23\_metal.md},
@@ -210,8 +222,10 @@ $121^3$ cells and 2\,775 on $201^3$, against 1\,795 and 1\,579 for the multithre
 code of cg18) at 8 threads and 1\,472 and 1\,446 for the base's GPU engine. On $61^3$ cells (0.23\,M) the CPU at 4
 threads was faster, 2\,281 against 2\,099 (\code{results/diamond\_engine\_cg19\_2026-11-04.txt}, section 3): that model
 did not fill the GPU, and whether a small model loses on the GPU also depends on the CPU's rate there (on cg29 the
-GPU led on the GCPW line at 0.11\,M cells, below). The six models' current rates on this engine, next to stock and cg29 on the CPU, are in
-Table~\ref{tab:current}, which runs the SMA launch on its 1.071\,M-cell mesh.
+GPU led on the GCPW line at 0.11\,M cells, below). The six models' rates on this engine at cg29, next to stock and
+cg29 on the CPU, are in
+Table~\ref{tab:current}, which runs the SMA launch on its 1.071\,M-cell mesh; their rates at cg31 are in
+Table~\ref{tab:cg31}.
 
 \paragraph{Where the GPU overtakes the CPU.} There is no single size at which the GPU becomes the faster engine; it
 depends on the model. Three models were run at several mesh scales on cg29 (Figure~\ref{fig:crossover};
@@ -277,8 +291,10 @@ of them, and the SMA launch and the patch tutorial with a
 $K=2$ tiling, 0.3 and 1.2\,\% faster than the best of the four; in a $K$ sweep on cg27 (the faster of two runs, not
 paired; \code{results/fused\_sweep\_k1\_2026-11-04.txt}, part B) the default $K=4$ with 8:8 tiles beat $K=2$ with 4:4 tiles
 and every $K=1$ tiling on all six models. $K=2$ with 6:4 tiles, the SMA launch's best in the paired runs of cg24
-(against 1.065$\times$ for $K=3$ with 8:6 tiles), is not among the four and was not timed after cg24
-(\code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}, header).
+(against 1.065$\times$ for $K=3$ with 8:6 tiles), is not among the four, nor among the seven of cg31
+(Section~\ref{sec:cg31}), and was not timed after cg24 up to cg29; the record of the sweep of thirteen tilings of
+2026-11-11 does not list its tilings (\code{results/diamond\_engine\_cg28\_tuner\_2026-11-04.txt}, header;
+\code{results/metal\_engine\_cg31\_2026-11-11.txt}).
 The earlier fixed 1\,024 threads per tile cost 44\,\% on the notch tutorial and 21\,\% on the SMA launch against the
 rule above (loaded Mac; \code{results/diamond\_engine\_cg21\_2026-11-04.txt}, section 4).
 
@@ -382,30 +398,42 @@ its session's first run, and so the multithreaded engine with \code{OPENEMS\_FTZ
 \item \textbf{One machine.} Everything here ran on the base M5 with its 10 GPU cores, whose bus the CPU shares. The M5
   Pro (307\,GB/s~\cite{macmini}), the M5 Max and the M5 Ultra (1.2\,TB/s~\cite{studiom5}) were not measured; for
   luikore's engine, 1.3--4.2$\times$ its own unfused path is reported on an M4 Pro and an M5 Max~\cite{luikore228}.
-\item \textbf{No head-to-head with luikore's engine.} On this M5 its diamond path refused all six models (Mur faces;
-  on the GCPW line also the conducting sheets) and ran only variants with every Mur face replaced by PEC, on which
-  this engine was not run (\code{results/others\_2026-11-04/}, Section~\ref{sec:ceiling}).
+\item \textbf{No head-to-head with luikore's engine on the six models.} On this M5 its diamond path refused all six
+  models (Mur faces; on the GCPW line also the conducting sheets) and ran only variants with every Mur face replaced
+  by PEC, on which this engine was not run (\code{results/others\_2026-11-04/}, Section~\ref{sec:ceiling}). Since
+  2026-11-11 there is one on luikore's own benchmark model, a uniform grid with PEC walls: cg31's engine ran 3\,981
+  and 3\,309\,\MC\ at 3.0 and 17.0\,M cells, luikore's 3\,952 and 2\,829 (Section~\ref{sec:threebuilds},
+  Table~\ref{tab:threebuilds}). Its diamond path still refuses the six models.
 \item \textbf{No bytes per cell.} The traffic model of Section~\ref{sec:fused} gives the bytes of a sweep that streams
   every array once or twice per step. With $K$ steps per tile the traffic depends on what the caches keep, and it was
   not measured with hardware counters, so this engine has no bytes-per-cell figure and no bar in
   Figure~\ref{fig:bandwidth}. Its rates above the bound show only that it moves less than 49\,B per cell update.
-\item \textbf{GPU memory} was not measured: the shared field buffers, the four tilings' buffers while tuning, the
-  extension buffers. Only the coefficient tables are known (above).
+  Section~\ref{sec:cg31} adds a count from the tile schedule, 20--29\,B of field per cell and step for a tile that
+  stays cached through its block; it is a count, not a measurement.
+\item \textbf{GPU memory} was not measured: the shared field buffers, the four tilings' buffers while tuning (seven
+  tilings since cg31), the extension buffers. Only the coefficient tables are known (above).
 \item \textbf{Graded meshes and extension work.} The boards run below the large uniform models, for their UPML, sheet
   and excitation work and their many distinct operators (the ablation above), and for their size: refined to 3.2 and
   5.1\,M cells, the GCPW line ran between patch x5 and notch x3 (Figure~\ref{fig:crossover}). The SMA launch,
   1\,829\,\MC\ at 1.07\,M cells in Table~\ref{tab:current} against 2\,747--2\,812 for the GCPW line and the patch
   antenna at 1.1--1.4\,M cells in the size sweep (another session), was not scaled. The tuner picks among four tilings
-  only.
+  only. Since cg31 (Section~\ref{sec:cg31}) a block takes three dispatches, the UPML and the dispersive stages take a
+  z-vector or the three components of a cell at a time, Mur faces of one axis share a barrier and the tuner has seven
+  tilings: the GCPW line and the SMA launch (0.871\,M cells) gained 1.09$\times$ and 1.14$\times$
+  (Table~\ref{tab:cg31}). The extensions still cost, and the cost is tied to their code being compiled into the
+  kernel, not to the loops over their cells; that is not explained.
 \item \textbf{Coverage.} TFSF, steady-state detection and subclasses of the dispersive extensions put a model on the
   one-thread CPU loops; probes and dumps run on the CPU between calls, which, with the start and finish of each call's
   command buffers, left the GPU idle for about a quarter of the loop on the two tutorials at cg24, and at cg29 still for 18--27\,\% on the patch tutorial (3\,\% on the notch
-  tutorial; Figure~\ref{fig:crossover}).
+  tutorial; Figure~\ref{fig:crossover}). Up to cg29 the engine also waited for the base's energy estimate, one CPU
+  thread over both fields every Nyquist period of a run's first 60\,s; since cg31 a run without an end criteria makes
+  none (Section~\ref{sec:cg31}).
 \item \textbf{fp16 field storage} was not tried: late-run currents of $10^{-6}$\,A lie below the half-precision normal
   range, which ends at $6\times10^{-5}$ (project log), so the fields would need scaling, and the result could not be
   bit-identical.
 \item \textbf{Load.} The speeds of cg19 to cg27 and of the $K=1$ runs come from a loaded Mac (each with its load
-  above). Of the GPU-against-GPU comparisons only cg28's is quiet; the GPU against the CPU engine and stock is
+  above). Of the GPU-against-GPU comparisons of this section only cg28's is quiet (that of cg31 with cg29,
+  Table~\ref{tab:cg31}, ran with the other sessions paused); the GPU against the CPU engine and stock is
   Table~\ref{tab:current}, and against the CPU engine by grid size the size sweep, which waited for a quiet Mac
   before every run; its ratios on grids below 0.3\,M cells still moved by up to 16\,\% between sessions.
 \end{itemize}

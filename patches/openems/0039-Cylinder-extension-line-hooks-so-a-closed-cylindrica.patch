@@ -1,0 +1,135 @@
+From ff2538aaf7230b0467739d9002068c2a36b81610 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 05:25:21 -0600
+Subject: [PATCH 39/39] Cylinder extension: line hooks, so a closed cylindrical
+ mesh runs the fused sweep (snapshot cg31a)
+
+Engine_Ext_Cylinder declared no hooks, so a mesh closed in alpha ran the unfused plan with its two Post hooks on
+one thread. Both hooks write the fields on the x-line (r-line) they read and keep no state: they are line hooks now
+(POST_VOLT | POST_CURR | PREPOST_WRITES_FIELDS | LINE_HOOKS | TS_LOCAL), the r=0 part on x-line 0, which the fused
+sweep reaches before it updates that line's currents. A closed cylinder of 61 x 72 x 41 lines with r=0 ran 834 MC/s
+before and 1241 MC/s at 4 threads (one run each, loaded machine). Five probes equal stock v0.37.0's, the raw fields
+are bit-identical to the unfused plan and at 1, 4, 8 and 10 threads, also without r=0; the cylindrical multigrid
+tutorial, which stays unfused, has 18 datasets with 0 differences against cg29.
+
+Generated-by: Claude Fable 5.2 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/engine_ext_cylinder.cpp | 36 ++++++++++++++++++++-----
+ FDTD/extensions/engine_ext_cylinder.h   | 12 +++++++--
+ 2 files changed, 39 insertions(+), 9 deletions(-)
+
+diff --git a/FDTD/extensions/engine_ext_cylinder.cpp b/FDTD/extensions/engine_ext_cylinder.cpp
+index 57a3662..ba21b71 100644
+--- a/FDTD/extensions/engine_ext_cylinder.cpp
++++ b/FDTD/extensions/engine_ext_cylinder.cpp
+@@ -35,12 +35,22 @@ Engine_Ext_Cylinder::Engine_Ext_Cylinder(Operator_Ext_Cylinder* op_ext) : Engine
+ 	m_Priority = ENG_EXT_PRIO_CYLINDER;
+ }
+ 
++unsigned int Engine_Ext_Cylinder::GetUsedHooks() const
++{
++	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Cylinder);
++	// r=0 reads the alpha currents of x-line 0 before the engine updates them (the fused sweep updates the currents of a
++	// line after the voltage hooks of that line), everything else stays on one x-line
++	return POST_VOLT | POST_CURR | PREPOST_WRITES_FIELDS | LINE_HOOKS | TS_LOCAL;
++}
++
+ template <typename EngType>
+-void Engine_Ext_Cylinder::DoPostVoltageUpdatesImpl(EngType* eng)
++void Engine_Ext_Cylinder::DoPostVoltageUpdatesImpl(EngType* eng, unsigned int x0, unsigned int x1)
+ {
+ 	if (CC_closedAlpha==false) return;
++	if (x1>numLines[0])
++		x1 = numLines[0];
+ 
+-	if (CC_R0_included)
++	if (CC_R0_included && (x0==0) && (x1>0))
+ 	{
+ 		unsigned int pos[3];
+ 		pos[0] = 0;
+@@ -67,7 +77,7 @@ void Engine_Ext_Cylinder::DoPostVoltageUpdatesImpl(EngType* eng)
+ 	unsigned int pos[3];
+ 	// copy tangential voltages from last alpha-plane to first
+ 	unsigned int last_A_Line = numLines[1]-2;
+-	for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
++	for (pos[0]=x0; pos[0]<x1; ++pos[0])
+ 	{
+ 		for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
+ 		{
+@@ -78,14 +88,16 @@ void Engine_Ext_Cylinder::DoPostVoltageUpdatesImpl(EngType* eng)
+ }
+ 
+ template <typename EngType>
+-void Engine_Ext_Cylinder::DoPostCurrentUpdatesImpl(EngType* eng)
++void Engine_Ext_Cylinder::DoPostCurrentUpdatesImpl(EngType* eng, unsigned int x0, unsigned int x1)
+ {
+ 	if (CC_closedAlpha==false) return;
++	if (x1>numLines[0]-1)
++		x1 = numLines[0]-1;
+ 
+ 	//close alpha
+ 	unsigned int pos[3];
+ 	// copy tangential currents from first alpha-plane to last
+-	for (pos[0]=0; pos[0]<numLines[0]-1; ++pos[0])
++	for (pos[0]=x0; pos[0]<x1; ++pos[0])
+ 	{
+ 		unsigned int last_A_Line = numLines[1]-2;
+ 		for (pos[2]=0; pos[2]<numLines[2]-1; ++pos[2])
+@@ -98,10 +110,20 @@ void Engine_Ext_Cylinder::DoPostCurrentUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_Cylinder::DoPostVoltageUpdates()
+ {
+-	ENG_DISPATCH(DoPostVoltageUpdatesImpl);
++	ENG_DISPATCH_ARGS(DoPostVoltageUpdatesImpl, 0u, numLines[0]);
+ }
+ 
+ void Engine_Ext_Cylinder::DoPostCurrentUpdates()
+ {
+-	ENG_DISPATCH(DoPostCurrentUpdatesImpl);
++	ENG_DISPATCH_ARGS(DoPostCurrentUpdatesImpl, 0u, numLines[0]);
++}
++
++void Engine_Ext_Cylinder::DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	ENG_DISPATCH_ARGS(DoPostVoltageUpdatesImpl, x0, x1);
++}
++
++void Engine_Ext_Cylinder::DoPostCurrentUpdatesLines(unsigned int x0, unsigned int x1)
++{
++	ENG_DISPATCH_ARGS(DoPostCurrentUpdatesImpl, x0, x1);
+ }
+diff --git a/FDTD/extensions/engine_ext_cylinder.h b/FDTD/extensions/engine_ext_cylinder.h
+index eea420a..d6b27cd 100644
+--- a/FDTD/extensions/engine_ext_cylinder.h
++++ b/FDTD/extensions/engine_ext_cylinder.h
+@@ -29,16 +29,24 @@ class Engine_Ext_Cylinder : public Engine_Extension
+ public:
+ 	Engine_Ext_Cylinder(Operator_Ext_Cylinder* op_ext);
+ 
++	//! The two Post hooks write the fields (the alpha copy, r=0), each on the x-line (r-line) it reads, and keep no
++	//! state: line hooks for the fused sweep, at any timestep (TS_LOCAL)
++	virtual unsigned int GetUsedHooks() const;
++
+ 	virtual void DoPostVoltageUpdates();
+ 
+ 	virtual void DoPostCurrentUpdates();
+ 
++	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	virtual void DoPostCurrentUpdatesLines(unsigned int x0, unsigned int x1);
++
+ protected:
++	//! for the x-lines [x0, x1)
+ 	template <typename EngType>
+-	void DoPostVoltageUpdatesImpl(EngType* eng);
++	void DoPostVoltageUpdatesImpl(EngType* eng, unsigned int x0, unsigned int x1);
+ 
+ 	template <typename EngType>
+-	void DoPostCurrentUpdatesImpl(EngType* eng);
++	void DoPostCurrentUpdatesImpl(EngType* eng, unsigned int x0, unsigned int x1);
+ 
+ 	Operator_Ext_Cylinder* cyl_Op;
+ 
+-- 
+2.54.0 (Apple Git-157)
+

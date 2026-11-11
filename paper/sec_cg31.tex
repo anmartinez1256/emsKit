@@ -1,0 +1,205 @@
+\section{After publication: the build of 2026-11-11 (cg31)}\label{sec:cg31}
+
+Every table before this section is of snapshot cg29 or earlier. On 2026-11-11, the day after the repository was
+published, twelve commits followed (patches 0028 to 0039): one on the energy schedule of a run without an end criteria
+(0028), ten on the Metal diamond engine (0029 to 0038) and one on the cylinder extension (0039). The build, cg31, has
+been the installed one on the author's Mac since that day. This section records what was looked for, what changed and
+what it gave (\code{results/metal\_engine\_cg31\_2026-11-11.txt}).
+
+\subsection{Where the Metal engine's time went}
+Three observations set the work list.
+
+\emph{An energy sum on one thread.} The fork's base estimates the field energy every Nyquist period during the first
+60\,s of a run, so that a run with an end criteria stops at a reproducible step. The estimate is one pass of one CPU
+thread over both fields, and the engine waits for it. On a benchmark model with a Nyquist period of 51 steps this was
+4--6\,\% of the time-stepping loop on 3--17\,M cells; with a period of 519 steps the time lost outside the engine fell
+from 0.23\,s to 0.03\,s per 3\,000 steps (project log). A run with a fixed number of steps and no end criteria has
+nothing to stop on, so it now makes no such estimates (patch 0028), as in v0.37.0. The author's board runs have a
+criteria and Nyquist periods above a thousand steps: for them the estimate costs 0.1--0.2\,\% (project log) and stays.
+
+\emph{Extensions cost by being present.} In a timing-only build that leaves parts of the kernel out (results wrong by
+design), the GCPW line ran 1.35$\times$ as fast without its Mur faces, 1.32$\times$ without its conducting sheets and
+2.0$\times$ without any extension; the SMA launch 1.69$\times$ without its UPML slab on one z face.
+But on a later snapshot, where the same builds of the GCPW line gave 1.26$\times$, 1.22$\times$ and 1.94$\times$,
+skipping one stage at run time, with the code still in the kernel, gave only 1.02--1.07$\times$ each (the sheets' Pre
+and Apply, Mur's Pre and Post). The cost is tied to the code being compiled into the kernel, not
+to the loops over the few cells it handles; what in the GPU's execution makes it so was not found. Empty extra barriers
+cost nothing measurable, and moving the Pre stages of Mur and of the sheets into the half-step before, beside the cell
+update, which saves one barrier per half-step with identical fields, ran 2--4\,\% \emph{slower} and was dropped.
+
+\emph{Not at the bus on mid-size grids.} Counted from the tile schedule, a tile that stays cached for its block loads
+and stores 20--29 bytes of field per cell and time step, which at the measured rates is 79--105\,GB/s at 3\,M cells,
+below the 125--138\,GB/s that STREAM measures on this machine (Section~\ref{sec:common}); the count assumes perfect
+reuse within a block and was not measured. At 17\,M cells with 257 z lines a tile is 0.9--1.5\,MB, because a tile
+holds every z line, and the shallower $K=3$ tilings win although they move more bytes (the byte counts and tile sizes
+of this paragraph are from the project log).
+
+\subsection{What changed}
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lp{0.60\textwidth}l@{}}
+\toprule
+patch & change & switch (default on) \\
+\midrule
+0028 & no energy schedule in a run without an end criteria & \\
+0029, 0032 & Mur faces of one axis share a barrier; Post and Apply in one pass where a tile's faces are on one axis &
+  \code{DIAMOND\_MURMERGE} \\
+0029 & a call's rest in blocks of nearly equal depth (10 steps at $K=4$: 4, 3, 3) & \code{DIAMOND\_EVEN} \\
+0030 & three dispatches per block: the mountain$\times$valley and valley$\times$mountain tiles do not depend on each
+  other and go together & \code{DIAMOND\_MERGE} \\
+0031, 0032, 0034 & no divergent branch for the z neighbour; divisions by run-time widths as multiplications by
+  reciprocals from the host; threads without work leave a Mur stage early & \code{DIAMOND\_FASTIDX} \\
+0031 & the pipeline is told that a threadgroup is a whole number of SIMD groups & \code{DIAMOND\_TGFLAG} \\
+0033 & UPML of the boxes with every z line (the x and y slabs) a z-vector at a time & \code{DIAMOND\_PML4} \\
+0035 & UPML of the z slabs three components of a cell at a time & \code{DIAMOND\_PML3} \\
+0036 & dispersive materials (sheets, Drude/Lorentz, Debye) three components of a cell at a time & \\
+0037 & offsets and counts of the extension data as constants of the kernel, which is compiled after the data are
+  packed & \\
+0038 & seven tilings in a two-stage tuner (adds $K=4$ with 10,6 and 9,2 tiles and $K=5$ with 12,8); the per-tile
+  lists in their own buffer & \code{DIAMOND\_CAND} \\
+0039 & line hooks for the cylinder extension (Section~\ref{sec:cg31cyl}) & \\
+\bottomrule
+\end{tabular}
+\caption{The commits of 2026-11-11. Switch names carry the prefix \code{OPENEMS\_}; \code{=0} restores the earlier
+behaviour (\code{DIAMOND\_CAND=4}: the four tilings of patch 0016). Every step was a snapshot of its own (cg30a to
+cg30l, cg31a) that passed \code{scripts/checks/diamond\_check.sh} with 72 of 72 comparisons
+identical.}\label{tab:cg31items}
+\end{table}
+
+The mountain$\times$valley and the valley$\times$mountain tiles of a block can share a dispatch because a mountain
+cell reads only cells that were mountain cells one half-step earlier, in both directions: a cell leaves its x mountain
+or its y mountain first, so it is updated by one of the two kinds only, and neither kind reads what the other writes
+within the block. The UPML stages were scalar loops over single floats, three components and up to four lanes apart;
+an x or y slab has every z line, so its cells fill whole z-vectors and one pass can update a float4 of one component
+with the same operations per lane, while a z slab has one lane of a z-vector per cell and its pass now takes the
+three components of a cell together. One build in this series was wrong: it computed the reciprocals for the
+divisions on the GPU, and on this M5 (macOS 27.0.1) the GPU's own \code{0xffffffff / w} returns 3\,579\,139\,454 for
+$w=3$, where 1\,431\,655\,765 is right. The identity check caught it as wrong fields on the Mur cases; the
+reciprocals now come from the host.
+
+\subsection{What it gave}
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{Metal diamond engine} & \multicolumn{2}{c}{CPU engine, cg31} & Metal / \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}
+model & cg29 & cg31 & cg31 / cg29 & 8 threads & 4 threads & CPU best \\
+\midrule
+GCPW line, 0.24\,M & 2\,118 & 2\,307 & 1.09$\times$ & 2\,000 & 1\,816 & 1.15$\times$ \\
+SMA launch, 0.87\,M & 1\,854 & 2\,108 & 1.14$\times$ & 1\,955 & 1\,509 & 1.08$\times$ \\
+patch tutorial, 0.10\,M & 1\,753 & 1\,887 & 1.08$\times$ & 1\,910 & 1\,868 & 0.99$\times$ \\
+notch tutorial, 0.27\,M & 1\,904 & 2\,907 & 1.53$\times$ & 2\,129 & 1\,909 & 1.37$\times$ \\
+patch x5, 7.86\,M & 2\,901 & 3\,100 & 1.07$\times$ & 2\,104 & 1\,802 & 1.47$\times$ \\
+notch x3, 5.25\,M & 3\,210 & 3\,702 & 1.15$\times$ & 2\,330 & 1\,853 & 1.59$\times$ \\
+\addlinespace
+PEC box, 3.0\,M & 3\,692 & 4\,408 & 1.19$\times$ & 2\,614 & 2\,156 & 1.69$\times$ \\
+PEC box, 17\,M & 3\,056 & 3\,507 & 1.15$\times$ & 1\,736 & 1\,550 & 2.02$\times$ \\
+cube with 10-cell PML, 1.0\,M & 980 & 1\,546 & 1.58$\times$ & 1\,343 & 1\,012 & 1.15$\times$ \\
+cube with 10-cell PML, 8.0\,M & 1\,483 & 1\,839 & 1.24$\times$ & 1\,293 & 1\,049 & 1.42$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{The Metal diamond engine before (cg29) and after (cg31) the commits of 2026-11-11, with cg31's CPU engine
+beside it: median \MC\ of four paired rounds per model on 2026-11-11 with the other sessions on the machine paused
+(the other processes used 0.2--0.9 cores; a run that saw more than 1.5 cores was repeated once). cg31 / cg29: the
+median of the per-round ratios, which over the rounds stayed within 3\,\% of the value shown except on the patch
+tutorial (0.92--1.13), the notch tutorial (1.42--1.53) and the two cubes (1.51--1.58 and 1.20--1.29). The PEC box is
+the benchmark model of luikore's engine (Table~\ref{tab:threebuilds}), the cube that of Table~\ref{tab:cube}. The SMA
+launch is on the toolkit's current mesh. Every cg31 Metal run's probes are identical to cg29's.}\label{tab:cg31}
+\end{table}
+
+The two boards gain 9 and 14\,\%; the notch tutorial and the PML cube gain the most (53\,\%, and 58 and 24\,\%), in
+good part from the UPML stages on whole faces (patch 0033); the two large tutorial models gain 7 and 15\,\% and the
+PEC box 19 and 15\,\%. With that the Metal engine is ahead of the CPU
+engine on every model but the patch tutorial, where the two are level. cg31 also passed, on the CPU side,
+\code{emskit fdtd check} on the six models against stock (all identical, 18 of 18 rows), the Debye check and both
+boards end to end, which stop at the same steps as with cg29 (34\,300 and 50\,320); the validation suite on the Metal
+engine (15 of 15) ran on the snapshot of patches 0001--0038 (cg30l), before the cylinder patch.
+
+\subsection{Three builds on one model}\label{sec:threebuilds}
+Section~\ref{sec:gpu} had no head-to-head with luikore's Metal engine~\cite{luikore228}: its diamond path refuses the
+six models. It does run its own benchmark model, a uniform grid with PEC walls, one dielectric box and a point
+excitation, so the three builds were run on that model, each binary from the same model file, interleaved, with the
+other sessions paused (Table~\ref{tab:threebuilds}; \code{scripts/luikore\_compare/},
+\code{results/engines\_on\_luikore\_model\_2026-11-11.txt}).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+engine & 3.0\,M cells & 17.0\,M cells \\
+\midrule
+fdtdKit (cg31), Metal diamond & 3\,981 & 3\,309 \\
+luikore PR \#228 (55ce11b), Metal & 3\,952 & 2\,829 \\
+master 1d710c2, \code{gpu} & 1\,638 & 1\,566 \\
+master 1d710c2, \code{cpu}, 8 threads & 1\,872 & 1\,933 \\
+fdtdKit (cg31), \code{multithreaded}, best of 8 and 10 threads & 2\,371 & 1\,659 \\
+luikore PR \#228, \code{multithreaded}, 8 threads & 1\,296 & 1\,042 \\
+master 1d710c2, \code{multithreaded}, 8 threads & 1\,246 & 1\,055 \\
+\bottomrule
+\end{tabular}
+\caption{Three builds on the benchmark model of luikore's engine, one Apple M5, 2026-11-11: median \MC\ of three
+interleaved repetitions (3\,000 steps at 3.0\,M cells, 1\,000 at 17.0\,M); the other processes used a median of 0.44
+cores before a run, at most 1.14. The \code{multithreaded} engines of the three builds give identical probes; the
+others differ from them by $7\times10^{-6}$ to $3\times10^{-5}$ relative.}\label{tab:threebuilds}
+\end{table}
+
+On its own model luikore's engine and cg31's are level at 3.0\,M cells (1.01$\times$) and cg31's is 1.17$\times$ as
+fast at 17\,M; the night before, cg29's had run 3\,728 and 3\,092, 0.94$\times$ and 1.09$\times$ luikore's in that
+run (3\,958 and 2\,848; \code{results/luikore\_compare\_cg29\_2026-11-11.txt}). cg31's engine is 2.4$\times$ and
+2.1$\times$ master's \code{gpu} engine here, luikore's 2.4$\times$ and 1.8$\times$.
+On the CPU, cg31 is 1.27$\times$ master's new \code{cpu} engine at 3.0\,M cells and 0.86$\times$ at 17\,M: on the large
+grid master's engine is ahead, as in Table~\ref{tab:upstream}. Two things qualify the table. It is one model, the best
+case of a GPU engine (a regular grid, no boundary work). And a model file whose \code{endCriteria} is 0 makes the
+\code{openEMS} program use its default of $-60$\,dB, so here the fork and master make the energy estimates of
+Section~\ref{sec:cg31} and luikore's build does not: run from Python, where 0 means no criteria, cg31's Metal engine
+does 4\,408 and 3\,507\,\MC\ on this model (Table~\ref{tab:cg31}).
+
+Master's \code{cpu} engine blocks in time: all threads work in one tile of the size of the performance cores' cache
+for up to eight steps. With that switched off (\code{OPENEMS\_CPU\_TBLOCK=0}) it ran upstream's ideal case at 8\,M
+cells at 1\,347 and 1\,436\,\MC\ (4 and 8 threads) against 2\,010 and 2\,099 blocked the day before, and the PML case
+at 891 and 1\,069 against 1\,117 and 1\,225: the blocking is worth 1.46--1.49$\times$ and 1.15--1.25$\times$ on this
+machine (two runs a day apart). The fork's fused sweep, at 1\,739 on the ideal case, is ahead of master's unblocked
+kernel and behind its blocked one. The experiment of Section~\ref{sec:rejected} that found no gain in temporal blocking
+on the CPU gave every thread a sub-grid of its own, which does not fit the cache four threads share; one tile for
+all threads is the next CPU item.
+
+\subsection{A closed cylinder on the fused sweep}\label{sec:cg31cyl}
+The cylinder extension, which closes a mesh in $\alpha$ and handles $r=0$, declared no hooks, so such a mesh ran the
+unfused plan with the extension's two Post hooks on one thread. Both hooks stay on the x-line (r-line) they read and
+keep no state, so they are line hooks now (patch 0039) and the mesh runs the fused sweep with the neighbour flags. On
+a closed cylinder of 61$\times$72$\times$41 lines with $r=0$ the engine ran 1\,857 and 1\,891\,\MC\ at 8 threads before
+and 2\,503 and 2\,553 after (two rounds in the quiet block; at 4 threads the rounds disagree, 2\,126 and 2\,176
+against 2\,125 and 2\,400; stock 464--474). Five probes on the axis and the $\alpha$ seam equal stock's, the raw
+fields are bit-identical to the unfused plan and at 1, 4, 8 and 10 threads, with and without $r=0$, and the
+cylindrical multigrid tutorial, which stays unfused, has 18 datasets with no difference
+(\code{scripts/cylinder\_closed/}). The first version of this test had its source between two mesh lines: every
+probe was zero and every comparison passed. The script now puts the source and the probes on mesh lines.
+
+\subsection{A shorter pulse (tested, not adopted)}\label{sec:pulse}
+The toolkit excites with a Gaussian of centre $f_{\max}/2$ and width $f_{\max}/2$. A baseband Gaussian (centre 0,
+width $f_{\max}$) covers the same band with half the length, and a toolkit run lasts the pulse plus a hold of half a
+pulse length. Both boards were run with both pulses and compared with the toolkit pulse run to the full time
+(Table~\ref{tab:pulse}; \code{scripts/pulse/}, \code{results/pulse\_test\_2026-11-11.txt}; the excitation was set on
+the built model, the toolkit was not changed).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+board & pulse, hold & steps & max $\Delta S_{21}$ & max $\Delta|S_{11}|$ & max $\Delta Z_0$ \\
+\midrule
+GCPW line & toolkit, 0.5 & 34\,300 & 0.0007\,dB & $1.0\times10^{-4}$ & 0.05\,$\Omega$ \\
+ & baseband, 0.5 & 22\,540 & 0.0042\,dB & $5.5\times10^{-4}$ & 0.09\,$\Omega$ \\
+ & baseband, 1.0 & 27\,930 & 0.0016\,dB & $2.2\times10^{-4}$ & 0.17\,$\Omega$ \\
+SMA launch & toolkit, 0.5 & 50\,320 & 0.0003\,dB & $2.1\times10^{-5}$ & 0.66\,$\Omega$ \\
+ & baseband, 0.5 & 25\,900 & 0.0004\,dB & $4.8\times10^{-5}$ & 0.53\,$\Omega$ \\
+ & baseband, 1.0 & 34\,040 & 0.0005\,dB & $4.2\times10^{-5}$ & 0.51\,$\Omega$ \\
+\bottomrule
+\end{tabular}
+\caption{The toolkit's pulse and a baseband pulse of half its length on the two boards, probe end at $-60$\,dB with
+the hold in lengths of the pulse used, against the toolkit pulse run to the full time (94\,217 and 118\,475 steps),
+50\,MHz to 2\,GHz. $|S_{11}|$ linear: the GCPW line's $S_{11}$ is $-40$ to $-52$\,dB, the SMA launch's $-17$ to
+$-23$\,dB.}\label{tab:pulse}
+\end{table}
+
+The baseband pulse cuts the steps 1.52$\times$ on the GCPW line and 1.94$\times$ on the SMA launch; the errors grow a
+few-fold and stay small ($S_{21}$ within 0.005\,dB, $|S_{11}|$ at the $-65$\,dB level and below). It is not the
+toolkit's default: a baseband pulse carries DC, and a board with a conductor that has no DC path, or a series
+capacitor, was not tested; there the signals may not settle and the run would go to its full time.

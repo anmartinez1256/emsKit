@@ -98,7 +98,7 @@
             "files" : [
               {
                 "name" : "libopenEMS.0.dylib",
-                "sha256" : "87a1d5a960dd353ca97c0ef8704d15e9767eb2c8fbb990eefb4bd162c956a694",
+                "sha256" : "cfbf8207521090df1705ee56ba8b34084f831f4bddbbb555b455e3fddb6c3a31",
                 "uuid" : "40BC8CFF-0000-4000-8000-000000000001"
               },
               {

@@ -1,0 +1,36 @@
+From 72a6492acc85e424394a8a8c592544b4d12c7ebd Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 05:25:20 -0600
+Subject: [PATCH 28/39] RunFDTD: no energy schedule without an end criteria
+
+A run with endCriteria = 0 (a fixed number of timesteps) has nothing to stop on, yet its energy was summed every
+Nyquist period during the first 60 s: one pass of one thread over both fields, during which the engine waits. With a
+Nyquist period of 51 timesteps that was 4-6 % of a run on 3-17 M cells on the Metal diamond engine and about 3 % on
+the multithreaded engine. Without an end criteria the energy is now estimated with the progress report only, as in
+v0.37.0; --exact-endcriteria still asks for the schedule. The results of a run do not change.
+
+Generated-by: Claude Fable 5.2 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ openems.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/openems.cpp b/openems.cpp
+index 9fe7210..fd84e0d 100644
+--- a/openems.cpp
++++ b/openems.cpp
+@@ -1712,7 +1712,10 @@ void openEMS::RunFDTD()
+ 	// After that only with the wall-clock progress report, which then is a small overshoot
+ 	// and saves the (full-domain) energy estimates -- unless --exact-endcriteria asks
+ 	// for a machine-independent stopping point.
+-	bool exactEndCrit = (Eng_Ext_SSD==NULL);
++	// A run without an end criteria (endCriteria = 0, a fixed number of timesteps) has nothing to stop on: no schedule,
++	// as in v0.37.0, and the energy only with the progress report. Each estimate is one pass of one thread over both
++	// fields, during which the engine waits (with a Nyquist period of 51 timesteps, 4-6 % of the run on 3-17 M cells).
++	bool exactEndCrit = (Eng_Ext_SSD==NULL) && ((endCrit>0) || m_exactEndCriteria);
+ 	if (exactEndCrit)
+ 	{
+ 		unsigned int endCritInterval = FDTD_Op->GetExcitationSignal()->GetNyquistNum();
+-- 
+2.54.0 (Apple Git-157)
+

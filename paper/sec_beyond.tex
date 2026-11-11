@@ -87,7 +87,10 @@ threads, 1\,446 on the base's GPU engine and 2\,775 on the diamond engine at $K=
   luikore's pull request differ from stock by $1.7\times10^{-7}$ to $1.3\times10^{-6}$ relative in the port probes
   (float rounding; on the SMA launch master differs by $1.5\times10^{-4}$, a change in its CPU engine since v0.37.0
   that its GPU engine shows too; Section~\ref{sec:policy}). The merged engine's structure was not examined here, and
-  \code{results/} has no run of it next to the diamond engine. On the PEC variant of the notch tutorial
+  \code{results/} has no run of it next to the diamond engine on these models; on luikore's benchmark model, on
+  2026-11-11, master's \code{gpu} engine (at 1d710c2) ran 1\,638 and 1\,566\,\MC\ at 3.0 and 17.0\,M cells against
+  3\,981 and 3\,309 for the diamond engine of cg31 (Table~\ref{tab:threebuilds}).
+  On the PEC variant of the notch tutorial
   (Section~\ref{sec:positioning}) it ran at 2\,374\,\MC\ against cg18's 2\,053, the faster of two runs (the other
   1\,452), above the roughly
   2\,000\,\MC\ that 74\,B per cell allow from the M5's memory (Section~\ref{sec:background}); whether its kernels fuse
@@ -123,7 +126,8 @@ prediction): 1.2--1.5 times the CPU engine of cg14 on the large models and about
 Until 2026-11-04 this section said that such a sweep was not tried and that it would need a grid-wide
 synchronisation between the voltage and the current update, or halo-tiled threadgroups. The diamond engine of
 Section~\ref{sec:gpu} needs neither: a tile updates its voltages and then its currents with a threadgroup barrier
-between them, and four dispatches per block of steps (mountain and valley tiles in x and y) complete the tile edges.
+between them, and four dispatches per block of steps (mountain and valley tiles in x and y; three since cg31,
+Section~\ref{sec:cg31}) complete the tile edges.
 Run with one time step per block ($K=1$) it is a fused, unblocked GPU sweep, and it reached 1\,716--1\,733\,\MC\ on
 notch x3 and up to 1\,844 on patch x5 (cg27; paired, 4 rounds, others' CPU 2.5--4 cores;
 \code{results/fused\_sweep\_k1\_2026-11-04.txt}), 67--75\,\% of the bound or 85--90\,GB/s at 49\,B per cell: the four
@@ -138,14 +142,19 @@ bit-identical by construction). On the CPU, two time steps per sweep gained 10--
 bound measured for cg29 on the fork's fused loops, with one independent sub-grid per thread and so without halos or
 extension hooks, gave at most 6\,\% for 2 to 4 steps (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2), and a
 real version was not built; deeper wavefront or diamond blocking~\cite{malas2015,fukaya2018} was not tried on the
-CPU. On the GPU, luikore's Metal engine~\cite{luikore228} advances a diamond of four time steps per block and reports
+CPU. Upstream master's \code{cpu} engine does block on the CPU, with all threads in one cache-sized tile, and on this
+machine the blocking is worth 1.15--1.49$\times$ to it (Section~\ref{sec:threebuilds}); the bound above is for one
+sub-grid per thread, not for that form.
+On the GPU, luikore's Metal engine~\cite{luikore228} advances a diamond of four time steps per block and reports
 1.3--4.2$\times$ its own unfused path on an M4 Pro and an M5 Max, on a uniform grid without conducting sheets
 (Section~\ref{sec:positioning}). It was built and run on this M5 on 2026-11-04 (\code{results/others\_2026-11-04/},
 best of two runs on a loaded Mac). Its diamond path refused all six models before stepping (it names the Mur
 extension, on the GCPW line the conducting sheets). On variants of five of them with every Mur face replaced by PEC,
 which are speed-only cases, it ran at 0.39 to 2.00 times cg18, and its legacy path was slower than cg18 on every
-model. The diamond engine of Section~\ref{sec:gpu} was not run on those variants, so the two diamond engines have not
-been compared head to head.
+model. The diamond engine of Section~\ref{sec:gpu} was not run on those variants, so on these models the two diamond
+engines have not been compared head to head. On luikore's own benchmark model they were, on 2026-11-11: cg31's
+engine was level with luikore's at 3.0\,M cells (3\,981 against 3\,952\,\MC) and 1.17$\times$ as fast at 17.0\,M
+(3\,309 against 2\,829; Table~\ref{tab:threebuilds}).
 
 \begin{figure}[htbp]\centering
 \includegraphics[width=0.9\textwidth]{fig_bandwidth}

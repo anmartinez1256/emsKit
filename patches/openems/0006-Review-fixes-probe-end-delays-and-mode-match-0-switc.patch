@@ -1,7 +1,7 @@
 From cb168f79e4807c2744c6bc276db6dd5fcbd18e96 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Tue, 3 Nov 2026 12:17:42 -0600
-Subject: [PATCH 06/27] Review fixes: probe end delays and mode match, =0
+Subject: [PATCH 06/39] Review fixes: probe end delays and mode match, =0
  switches, FTZ restore, size guard
 
 Fixes from a further AI-assisted read-only review of the fork, checked on the Apple M5

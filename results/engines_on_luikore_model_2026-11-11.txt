@@ -1,0 +1,100 @@
+Three builds on luikore's benchmark model, same Apple M5, interleaved, 2026-11-11 06:35-06:43 (quiet machine)
+================================================================================================================
+scripts/luikore_compare/compare3.py: luikore's Metal engine (openEMS pull request 228, commit 55ce11b), upstream master 1d710c2
+(engines gpu, cpu, multithreaded) and the fork as installed that morning (cg31, v0.37.0-57-gff2538a = patches 0001 to 0039) on
+luikore's own model (macos/bench/bench_metal.py: a uniform 1 mm grid with PEC walls, one dielectric box, a Gaussian point
+excitation, no dumps; plus one voltage probe), every binary run from the same model file with its own library, three repetitions
+per configuration, a run after the other processes fell to 1.5 cores or less. Other processes before the 48 runs: a median of
+0.44 cores, at most 1.14. The other sessions on the machine were paused for this.
+
+Median MC/s:                         3.0 M cells, 3000 steps     17.0 M cells, 1000 steps
+ fork, Metal diamond engine               3981                        3309
+ luikore, Metal engine                    3952                        2829
+ master, gpu engine                       1638                        1566
+ master, cpu engine, 8 threads            1872                        1933
+ fork, multithreaded, best of 8 and 10    2371                        1659
+ luikore, multithreaded, 8 threads        1296                        1042
+ master, multithreaded, 8 threads         1246                        1055
+Fork Metal against luikore Metal x1.01 and x1.17; against master gpu x2.43 and x2.11; fork CPU against master cpu x1.27 and x0.86.
+With the build of the night before (cg29, results/luikore_compare_cg29_2026-11-11.txt) the fork's Metal engine ran 3728 and 3092.
+A model file with endCriteria="0" makes the openEMS program use its default of -60 dB (openems.cpp, ParseFDTDSetup), so in these
+runs the fork and master estimate the energy every Nyquist period (51 steps here) during the first 60 s, one thread over both fields
+while the engine waits, and luikore's build only with the progress report: about 5 % of the fork's loop. From Python, where
+EndCriteria = 0 means none, the fork's Metal engine runs the same model at 4408 (3.0 M) and 3507 MC/s (17 M)
+(results/metal_engine_cg31_2026-11-11.txt, final table).
+The multithreaded engines of the three builds give identical probes; the Metal and gpu engines and master's cpu engine differ
+from them by 7e-6 to 3e-5 relative (they flush subnormals, or reorder).
+
+Lines as the script printed them:
+
+192x160x96_n3000 r0 luikore metal            3948.9 MC/s   all processes before the run   88 % cpu
+192x160x96_n3000 r0 luikore mt-8             1421.7 MC/s   all processes before the run   39 % cpu
+192x160x96_n3000 r0 master gpu               1635.1 MC/s   all processes before the run   65 % cpu
+192x160x96_n3000 r0 master cpu-8             1872.1 MC/s   all processes before the run   60 % cpu
+192x160x96_n3000 r0 master mt-8              1245.5 MC/s   all processes before the run   59 % cpu
+192x160x96_n3000 r0 fdtdKit metal-diamond    3827.3 MC/s   all processes before the run   34 % cpu
+192x160x96_n3000 r0 fdtdKit mt-8             2460.2 MC/s   all processes before the run   56 % cpu
+192x160x96_n3000 r0 fdtdKit mt-10            2526.9 MC/s   all processes before the run   42 % cpu
+192x160x96_n3000 r1 luikore metal            3951.8 MC/s   all processes before the run   53 % cpu
+192x160x96_n3000 r1 luikore mt-8             1295.5 MC/s   all processes before the run   34 % cpu
+192x160x96_n3000 r1 master gpu               1638.1 MC/s   all processes before the run   44 % cpu
+192x160x96_n3000 r1 master cpu-8             1860.5 MC/s   all processes before the run   42 % cpu
+192x160x96_n3000 r1 master mt-8              1240.4 MC/s   all processes before the run   44 % cpu
+192x160x96_n3000 r1 fdtdKit metal-diamond    3980.6 MC/s   all processes before the run   65 % cpu
+192x160x96_n3000 r1 fdtdKit mt-8             2315.1 MC/s   all processes before the run   55 % cpu
+192x160x96_n3000 r1 fdtdKit mt-10            2371.1 MC/s   all processes before the run   36 % cpu
+192x160x96_n3000 r2 luikore metal            3952.0 MC/s   all processes before the run   70 % cpu
+192x160x96_n3000 r2 luikore mt-8             1275.4 MC/s   all processes before the run   51 % cpu
+192x160x96_n3000 r2 master gpu               1641.1 MC/s   all processes before the run   31 % cpu
+192x160x96_n3000 r2 master cpu-8             1887.7 MC/s   all processes before the run   52 % cpu
+192x160x96_n3000 r2 master mt-8              1245.5 MC/s   all processes before the run   21 % cpu
+192x160x96_n3000 r2 fdtdKit metal-diamond    4077.7 MC/s   all processes before the run   28 % cpu
+192x160x96_n3000 r2 fdtdKit mt-8             2286.6 MC/s   all processes before the run   67 % cpu
+192x160x96_n3000 r2 fdtdKit mt-10            2360.2 MC/s   all processes before the run  114 % cpu
+# 192x160x96_n3000: median MC/s [min-max], probe vs fdtdKit mt-8
+# luikore metal            3951.8 [3949-3952]  rel 2.8e-05  55ce11b  Metal: in-place diamond update: 4 timesteps/block, width 2, 2666664 auxiliary bytes; Metal: in-place diamond E/H pipeline: enabled
+# luikore mt-8             1295.5 [1275-1422]  identical  55ce11b  
+# master gpu               1638.1 [1635-1641]  rel 2.5e-05  v0.37.0-50-g1d710c2  
+# master cpu-8             1872.1 [1861-1888]  rel 2.5e-05  v0.37.0-50-g1d710c2  
+# master mt-8              1245.5 [1240-1245]  identical  v0.37.0-50-g1d710c2  
+# fdtdKit metal-diamond    3980.6 [3827-4078]  rel 2.5e-05  v0.37.0-57-gff2538a  openEMS - enabled the diamond-blocked Metal engine; Create FDTD operator (compressed SSE, multithreaded setup, for the Metal diamond engine); Create FDTD engine
+# fdtdKit mt-8             2315.1 [2287-2460]  identical  v0.37.0-57-gff2538a  
+# fdtdKit mt-10            2371.1 [2360-2527]  identical  v0.37.0-57-gff2538a  
+256x256x256_n1000 r0 luikore metal            2746.7 MC/s   all processes before the run   39 % cpu
+256x256x256_n1000 r0 luikore mt-8             1048.5 MC/s   all processes before the run   93 % cpu
+256x256x256_n1000 r0 master gpu               1565.9 MC/s   all processes before the run   48 % cpu
+256x256x256_n1000 r0 master cpu-8             1942.2 MC/s   all processes before the run   21 % cpu
+256x256x256_n1000 r0 master mt-8              1055.0 MC/s   all processes before the run   51 % cpu
+256x256x256_n1000 r0 fdtdKit metal-diamond    3283.3 MC/s   all processes before the run   47 % cpu
+256x256x256_n1000 r0 fdtdKit mt-8             1659.3 MC/s   all processes before the run   26 % cpu
+256x256x256_n1000 r0 fdtdKit mt-10            1616.6 MC/s   all processes before the run   82 % cpu
+256x256x256_n1000 r1 luikore metal            2838.6 MC/s   all processes before the run   52 % cpu
+256x256x256_n1000 r1 luikore mt-8             1042.0 MC/s   all processes before the run   42 % cpu
+256x256x256_n1000 r1 master gpu               1570.3 MC/s   all processes before the run   74 % cpu
+256x256x256_n1000 r1 master cpu-8             1894.5 MC/s   all processes before the run   28 % cpu
+256x256x256_n1000 r1 master mt-8              1051.1 MC/s   all processes before the run   30 % cpu
+256x256x256_n1000 r1 fdtdKit metal-diamond    3328.4 MC/s   all processes before the run   84 % cpu
+256x256x256_n1000 r1 fdtdKit mt-8             1664.2 MC/s   all processes before the run   42 % cpu
+256x256x256_n1000 r1 fdtdKit mt-10            1633.7 MC/s   all processes before the run   48 % cpu
+256x256x256_n1000 r2 luikore metal            2829.1 MC/s   all processes before the run   69 % cpu
+256x256x256_n1000 r2 luikore mt-8             1017.1 MC/s   all processes before the run   17 % cpu
+256x256x256_n1000 r2 master gpu               1563.0 MC/s   all processes before the run   52 % cpu
+256x256x256_n1000 r2 master cpu-8             1933.3 MC/s   all processes before the run   38 % cpu
+256x256x256_n1000 r2 master mt-8              1055.6 MC/s   all processes before the run   43 % cpu
+256x256x256_n1000 r2 fdtdKit metal-diamond    3308.9 MC/s   all processes before the run   26 % cpu
+256x256x256_n1000 r2 fdtdKit mt-8             1607.4 MC/s   all processes before the run   38 % cpu
+256x256x256_n1000 r2 fdtdKit mt-10            1644.8 MC/s   all processes before the run   27 % cpu
+# 256x256x256_n1000: median MC/s [min-max], probe vs fdtdKit mt-8
+# luikore metal            2829.1 [2747-2839]  rel 6.8e-06  55ce11b  Metal: in-place diamond update: 4 timesteps/block, width 2, 5570728 auxiliary bytes; Metal: in-place diamond E/H pipeline: enabled
+# luikore mt-8             1042.0 [1017-1048]  identical  55ce11b  
+# master gpu               1565.9 [1563-1570]  rel 1.1e-05  v0.37.0-50-g1d710c2  
+# master cpu-8             1933.3 [1894-1942]  rel 1.0e-05  v0.37.0-50-g1d710c2  
+# master mt-8              1055.0 [1051-1056]  identical  v0.37.0-50-g1d710c2  
+# fdtdKit metal-diamond    3308.9 [3283-3328]  rel 1.1e-05  v0.37.0-57-gff2538a  openEMS - enabled the diamond-blocked Metal engine; Create FDTD operator (compressed SSE, multithreaded setup, for the Metal diamond engine); Create FDTD engine
+# fdtdKit mt-8             1659.3 [1607-1664]  identical  v0.37.0-57-gff2538a  
+# fdtdKit mt-10            1633.7 [1617-1645]  identical  v0.37.0-57-gff2538a  
+
+Master's cpu engine with and without its temporal blocking, upstream's benchmark/bench.py on master 1d710c2, size M (8 M cells), three
+repeats: blocked (2026-11-10 20:08-20:23, results/common_benchmarks_2026-11-10.txt) ideal 2010 MC/s at 4 threads and 2099 at 8, pml 1117
+and 1225; flat (OPENEMS_CPU_TBLOCK=0, 2026-11-11 07:18, quiet block) ideal 1347 and 1436, pml 891 and 1069. Blocked / flat x1.49 and
+x1.46 on the ideal case, x1.25 and x1.15 with PML; the two runs are a day apart. The fork's fused sweep ran the ideal case at 1739.

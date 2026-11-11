@@ -1,7 +1,7 @@
 From 4acfb6453971abc4826e2d7e73c1cfc9d0aa24c5 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 02:55:15 -0500
-Subject: [PATCH 02/27] Speed up operator setup and nf2ff, add engine export
+Subject: [PATCH 02/39] Speed up operator setup and nf2ff, add engine export
  hooks (snapshot cg9)
 
 Operator setup: CalcTimestep_Var3 and the Calc_ECOperatorPos loop run on

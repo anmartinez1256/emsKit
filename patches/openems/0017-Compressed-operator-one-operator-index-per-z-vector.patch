@@ -1,7 +1,7 @@
 From e1b83c6b58127d4498bb4c469cf40614fbb42d57 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:08 -0600
-Subject: [PATCH 17/27] Compressed operator: one operator index per z-vector
+Subject: [PATCH 17/39] Compressed operator: one operator index per z-vector
 
 Operator_SSE_Compressed allocated m_Op_index per cell (NX x NY x NZ 32-bit entries), although the operator
 and the engines only use the entries of the z-vectors (zv < numVectors). On meshes of up to 42 z lines

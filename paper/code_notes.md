@@ -8,7 +8,7 @@ cumulative diff against the base 7bb294f (upstream branch `gpu-engine`) as it st
 `patches/csxcad/0001` against CSXCAD v0.7.0. Totals through patch 0005:
 openEMS 43 files, +3098/−179 lines; CSXCAD 3 files, +9/−0. Every line count below is from that
 cumulative diff; patch 0006 (snapshot cg18, section "Final review fixes") changes some of them, and the file
-`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0027 (66 files, +6178/−256). Patch 0001 holds
+`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0039 (68 files, +6644/−266). Patch 0001 holds
 steps 2 and 3 (items A–E, Field_Gather_SSE, the Mur line hooks; snapshots ABCDEG to cg8), 0002 cg9,
 0003 cg10–cg15, 0004 cg16 and 0005 cg17. Through patch 0006 the GPU engine sources (`FDTD/engine_gpu*`,
 `gpu_backend*`, `FDTD/metal`, `FDTD/hip`, `operator_gpu*`) are **not touched** by the fork, and every
@@ -18,7 +18,8 @@ engine (`--engine=metal-diamond`, in the new files `FDTD/engine_metal_diamond.h`
 `FDTD/metal/engine_metal_diamond.mm`, with a friend declaration in 13 extension headers and small changes to
 `openems.cpp`, `openems.h`, `tools/arraylib/array_e.h` and `FDTD/CMakeLists.txt`: 19 files, +1717/−1 against
 cg18); patches 0017–0027 (snapshot cg29) are CPU items. These notes describe
-patches 0001–0006 only: 0007–0027 are described in the `CHANGELOG.md` entries of 2026-11-04 and 2026-11-05, in
+patches 0001–0006 only: 0028–0039 (the build cg31) are described in the `CHANGELOG.md` entry of 2026-11-11 and in the
+paper's Section "After publication"; 0007–0027 are described in the `CHANGELOG.md` entries of 2026-11-04 and 2026-11-05, in
 the paper's Section "A diamond-blocked Metal engine" and in its subsection "The second review's CPU items and
 other contributors' ideas (cg29, patches 0017–0027)", and in their commit messages. Numbers
 marked "project log" come from the unpublished log of the work, not from `results/`. The bench
