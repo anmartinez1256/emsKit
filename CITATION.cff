@@ -11,8 +11,8 @@ authors:
     affiliation: University of Texas at Austin
 license: GPL-3.0-or-later
 doi: 10.5281/zenodo.24118865
-version: 0.1.0
-date-released: "2026-11-10"
+version: 0.2.0
+date-released: "2026-11-12"
 repository-code: "https://github.com/anmartinez1256/emsKit"
 keywords:
   - FDTD
