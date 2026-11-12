@@ -113,11 +113,15 @@ to stock on all six models, \code{results/*\_pub29.txt}), \code{debye\_check.sh}
 72, the six models on the Metal engine, the validation suite 15 of 15 with the multithreaded engine at 4 threads and
 with the fastest engine, and the cylindrical multigrid (\code{results/fresh\_build\_pub29\_2026-11-07.txt}); other
 programs used up to 8.9 cores during \code{check.sh}, so here too only the verdicts count.
-The current build, cg31 (patches 0001--0039, installed in cg29's place on 2026-11-11), passed the reduced check
+The installed build, cg31 (patches 0001--0039, installed in cg29's place on 2026-11-11), passed the reduced check
 (identical to stock on all six models, 18 of 18 rows), \code{debye\_check.sh}, \code{diamond\_check.sh} (72 of 72 on
 each of its snapshots and on the installed library), the validation suite on the Metal engine (15 of 15, on snapshot
 cg30l, patches 0001--0038) and both boards end to end with the toolkit's defaults, which stopped at the steps of cg29
 (34\,300 and 50\,320; Section~\ref{sec:cg31}, \code{results/metal\_engine\_cg31\_2026-11-11.txt}).
+Patch 0040, the opt-in tiled sweep of the fork's head (snapshot cg32d, not installed), was checked both ways: with
+its switch unset the reduced check is identical to stock on all six models (18 of 18 rows), and with it set the
+probes of six models and the raw fields of a closed cylinder and of a steady-state run equal those of the fused
+sweep (Section~\ref{sec:tiled}, \code{results/tiled\_sweep\_cg32\_2026-11-11.txt}).
 
 \subsection{Verification policy}\label{sec:policy}
 \begin{itemize}
@@ -207,7 +211,8 @@ cg30l, patches 0001--0038) and both boards end to end with the toolkit's default
   (\code{--engine=metal-diamond}); \code{OPENEMS\_DIAMOND\_TUNE=0} turns off its run-time choice of the tiling, and
   \code{OPENEMS\_DIAMOND\_K}, \code{OPENEMS\_DIAMOND\_TILE} and \code{OPENEMS\_DIAMOND\_COEF} fix the tiling and the
   coefficient layout (Section~\ref{sec:gpu}); its changes of cg31 have eight switches of their own
-  (Section~\ref{sec:cg31}).
+  (Section~\ref{sec:cg31}). The tiled sweep of patch 0040 is opt-in too: it runs only when \code{OPENEMS\_TBLOCK}
+  is set (Section~\ref{sec:tiled}).
 \item \textbf{What ``bit-identical'' rests on.} Three rewrites depend on the compiler fusing a multiply-add the same
   way in the old and the new expression; this was verified by comparison on every model with Apple clang builds, not
   forced in the source (Section~\ref{sec:contract}). In the standalone kernel the rewritten inner loop matches the stock
@@ -260,8 +265,8 @@ notch tutorial (0.27\,M) &  51 & 117 & 133 & 318 (4) & 318 & 247 \\
 
 An initial read-only review of the source (kept as \code{results/fable\_optimization\_review.md}) ranked the
 candidates by expected gain per effort, using two micro-benchmarks it wrote for the purpose (\code{barrier\_bench.cpp}
-and \code{kernel\_bench.cpp}, named there; the later standalone kernels are \code{scripts/kernel/kb\_idx.cpp} and
-\code{kb\_tb.cpp}): a barrier diet, the inner loop, dynamic work distribution, the boundary paths, and, further out, a
+and \code{kernel\_bench.cpp}, named there; the later standalone kernels are \code{scripts/kernel/kb\_idx.cpp},
+\code{kb\_tb.cpp} and \code{kb\_tile.cpp}): a barrier diet, the inner loop, dynamic work distribution, the boundary paths, and, further out, a
 fused E/H sweep. That order was followed, and the estimates held up within their stated error except that the fused
 sweep mattered more and an unfused GPU engine less than predicted. The review's remark that a Metal engine would pay
 only with fp16 storage or with temporal blocking was borne out later by the diamond-blocked engine of

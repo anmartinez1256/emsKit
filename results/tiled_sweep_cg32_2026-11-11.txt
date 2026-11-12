@@ -1,0 +1,134 @@
+Tiled sweep of the multithreaded engine (OPENEMS_TBLOCK), snapshot cg32d = speed-m5-gpu 0ef186b = patch 0040
+====================================================================================================
+Committed on 2026-11-11 as 0ef186b on ff2538a (the fork's head until then, snapshot cg31, the installed build). Opt-in: with the
+variable unset the engine runs the fused sweep as before. NOT installed. Snapshot cg32d was built in the tree configured for cg31,
+so its library reports cg31's version string (v0.37.0-57-gff2538a); libopenEMS sha256 72e6d7ef..., 40 OPENEMS_* names.
+
+What it is
+  OPENEMS_TBLOCK=k runs k timesteps on one tile of x-lines before moving on, and every thread works in that same tile (its share
+  of the y lines), so the tile is read from memory once per k timesteps instead of once per timestep. Design after the cpu engine of
+  upstream master (one cache-sized tile shared by all threads); none of its code. Per block: every tile [a,b) shrinks by one x-line
+  per timestep on each inner side (a trapezoid), then the wedges between the tiles are filled. One spin barrier per task; the
+  extensions' line hooks run in stages between two updates, on all threads, the x-lines of a stage cut into one share per thread so
+  that all hooks of an x-line run on one thread in the one-thread order. No extension was changed.
+  Switches: OPENEMS_TBLOCK=k|auto, OPENEMS_TBLOCK_W=n (tile width in x-lines), OPENEMS_TBLOCK_HOOKS=0 (hook stages on one
+  thread; diagnostic), and the existing OPENEMS_BALANCE=0 (equal shares instead of measured ones).
+  auto: the deepest k <= 8 whose tile of 2k+1 x-lines (24 B a cell, z padded to whole vectors) stays within 90 % of the cache the
+  threads share (hw.perflevel0.l2cachesize, 16 MiB on the M5 and on the M5 Pro), a tile of at least 200000 cells; no tiling when
+  the fields fit that cache or two timesteps of a tile do not. Choices (verbose runs): GCPW line and notch tutorial "the fields fit
+  the cache"; SMA board k=8 W=32; 3 M box k=8 W=17; 1 M cube k=8 W=20; notch x3 k=8 W=27; patch x5 and the 8 M cube k=7 W=15;
+  256^3 box k=4 W=9; a 64 M cube "two timesteps of a tile do not fit the cache".
+  Refused, with a message: an extension that is not TS_LOCAL, coupled x-lines other than 0|1 and NX-2|NX-1, fewer x-lines than
+  two tiles. Engine_Extension::GetMaxBlockDepth() caps k (steady-state detection: one signal period).
+
+Results are identical to the fused sweep (scripts/tiled_sweep/check.zsh)
+  Apple M5 MacBook Air, macOS 27.0.1, 2026-11-11 morning, against cg31:
+   - probes of six models (GCPW line, SMA board, patch and notch tutorials, 3 M box, 1 M PML cube): 30 of 30 sets at 2 threads and
+     36 of 36 at 3, 4, 8 and 10 threads (k 2 to 7 and auto, set widths, hook stages on one thread, equal shares)
+   - closed cylinder (scripts/cylinder_closed): raw fields at 2, 8 and 10 threads (k 4, 6, 7)
+   - a sinusoidal run that stops by the steady-state criterion (scripts/tiled_sweep/ss_box.py; period 87 steps, stop at step 17580):
+     same stop step, probes and raw fields for k = 4, 8, 19, 5 at 1 to 10 threads
+   - Debye box (scripts/checks/debye_check.sh with OPENEMS_TBLOCK=3 and 4)
+   - variable unset: emskit fdtd check cg32d --lite, ALL IDENTICAL to stock v0.37.0, 18 of 18 rows on six models
+  Apple M5 Pro Mac mini (5 + 10 cores), macOS 27.2.1, 2026-11-11 evening, the same library files:
+   - probes of the six models at 5, 7, 10, 13 and 15 threads: 42 of 42 sets; cylinder raw fields at 15 and 13 threads; the
+     steady-state run at 5, 10, 15 and 7 threads; Debye box; check cg32d --lite ALL IDENTICAL, 18 of 18 rows
+   - scripts/tiled_sweep/check.zsh cg32d cg31 5 10 15 7 as it is in this repository: PASS (probes 48 of 48 sets on the six
+     models, cylinder raw fields, the steady-state run, Debye box)
+  Read-only review the same day (three reviewers, each finding handed to a second reader; the task plan and the hook shares
+  modelled in Python, about 20000 cases, seven seeded defects all caught): no result defect. Two faults found and fixed before
+  the commit: the share balance could latch a thread at zero y lines, and a depth of 2^30 or more passed the two-tile test.
+
+Speed on the Apple M5 MacBook Air (4 P + 6 E cores, 16 GB), macOS 27.2.1 (26B131), on power, 2026-11-11 21:31 to 21:57
+  bench/abtest.py, 3 paired interleaved rounds (scripts/tiled_sweep/time.zsh, first version), median MC/s. Other processes during
+  the runs: median 9 % of one core, highest row 63 %. The tables of the paper were measured on this machine under macOS 27.0.1;
+  these rows are from 27.2.1 and are compared only with each other. fused = cg31, tiled = cg32d with OPENEMS_TBLOCK=auto.
+
+model                               fused 4  fused 8 |  tiled 4  tiled 8 tiled 10 | best tiled setting        /fus.4 /best f
+patch x5, 7.86 M cells, Mur            1841     2138 |     2305     1872     1881 | K=auto, 4 thr              1.25x   1.08x
+notch x3, 5.25 M, PML at x ends       1963     2385 |     1861     1704     1741 | K=8,W=17, 4 thr            0.98x   0.81x
+PML cube 200^3, 8 M                    1092     1342 |     1138      937      896 | K=auto, 4 thr              1.04x   0.85x
+PEC box 256^3, 17 M                    1648     1867 |     2289     1995     1995 | K=auto, 4 thr              1.39x   1.23x
+SMA launch board                       1524     1998 |     1352      979      981 | K=8,W=65, 4 thr            0.93x   0.71x
+PEC box, 3.0 M                         2357     2792 |     2568     2186     2367 | K=auto, 4 thr              1.09x   0.92x
+
+  best tiled = the fastest of the six tiled settings of a row; /fus.4 = over the fused sweep at 4 threads; /best f = over the
+  faster of the fused sweep at 4 and at 8 threads.
+  - Against the fused sweep's best setting the tiled sweep is ahead on the two large grids with little extension work (patch x5
+    x1.08, the 16.8 M box x1.23) and behind on the other four (3 M box x0.92, PML cube x0.85, notch x3 x0.81, SMA board x0.71).
+  - It needs the 4 performance cores: at 8 or 10 threads it is behind the fused sweep at 8 threads on every model but the 16.8 M
+    box. Measured shares against equal ones (OPENEMS_BALANCE=0) at 8 threads: within 3 % on every model.
+  - The hook stages must run on all threads: on one thread (OPENEMS_TBLOCK_HOOKS=0) patch x5 2044 (all threads 2305), notch x3
+    1499 (1861), PML cube 617 (1138).
+  - The two boards of the project gain nothing: the GCPW line fits the cache (auto leaves the fused sweep), the SMA board loses.
+  - Under heavy load from other programs (5.6 other cores busy, the morning's identity runs) the tiled sweep at 8 to 10 threads
+    fell to 28 to 600 MC/s where the fused sweep at 4 threads held 730 to 1570: a barrier per task does not survive an
+    oversubscribed machine. Hence opt-in, not a default.
+  Standalone kernel before the engine work (scripts/kernel/kb_tile.cpp, 7.86 M cells, quiet, 2026-11-11 morning): 4 threads fused
+  1727, one shared tile k=7 W=15 2371 (x1.37); 8 threads 2088 against 2020; 10 threads 2025 against 1358. In the engine at 4
+  threads: 1841 against 2305 (x1.25).
+
+Per model, as abtest.py prints it (median MC/s [min-max], median paired ratio to c0 [min-max], others' CPU / GPU, result):
+
+patch x5 (209x209x180 = 7.86 M cells, Mur, nf2ff dump), 1000 steps
+  c0 cg31@multithreaded:4                                           1841.4 [1799-1854]  x1.000 [1.000-1.000]  others 17%/1%  identical,reference
+  c1 cg31@multithreaded:8                                           2138.4 [2096-2168]  x1.165 [1.161-1.169]  others 25%/1%  identical
+  c2 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto                      2305.4 [2273-2305]  x1.252 [1.243-1.263]  others 8%/1%  identical
+  c3 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto                      1872.0 [1863-1904]  x1.017 [1.005-1.058]  others 6%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     1881.0 [1877-1908]  x1.029 [1.019-1.045]  others 9%/0%  identical
+  c5 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0    1881.0 [1868-1881]  x1.022 [1.014-1.038]  others 6%/1%  identical
+  c6 cg32d@multithreaded:4#OPENEMS_TBLOCK=4                         2223.9 [2217-2239]  x1.204 [1.199-1.245]  others 9%/0%  identical
+  c7 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto,OPENEMS_TBLOCK_HOOKS=0   2043.7 [2040-2059]  x1.108 [1.102-1.144]  others 10%/1%  identical
+
+notch x3 (689x224x34 = 5.25 M cells, PML_8 at both x ends, Mur at the y faces and z-max), 1500 steps
+  c0 cg31@multithreaded:4                                           1962.9 [1963-1981]  x1.000 [1.000-1.000]  others 54%/1%  identical,reference
+  c1 cg31@multithreaded:8                                           2385.1 [2073-2442]  x1.204 [1.056-1.244]  others 57%/1%  identical
+  c2 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto                      1860.8 [1856-1865]  x0.946 [0.942-0.948]  others 63%/1%  identical
+  c3 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto                      1703.7 [1700-1715]  x0.866 [0.860-0.874]  others 8%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     1741.4 [1711-1753]  x0.885 [0.872-0.887]  others 6%/1%  identical
+  c5 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0    1729.9 [1726-1738]  x0.879 [0.877-0.881]  others 6%/1%  identical
+  c6 cg32d@multithreaded:4#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=17     1924.5 [1920-1929]  x0.980 [0.969-0.983]  others 8%/1%  identical
+  c7 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto,OPENEMS_TBLOCK_HOOKS=0   1499.3 [1485-1505]  x0.764 [0.750-0.767]  others 9%/1%  identical
+
+PML cube (200^3 = 8.0 M cells, PML_10 on all six faces), 600 steps
+  c0 cg31@multithreaded:4                                           1092.5 [1092-1095]  x1.000 [1.000-1.000]  others 8%/1%  identical,reference
+  c1 cg31@multithreaded:8                                           1341.5 [1306-1344]  x1.228 [1.193-1.230]  others 11%/1%  identical
+  c2 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto                      1138.4 [1123-1174]  x1.042 [1.028-1.072]  others 9%/1%  identical
+  c3 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto                       937.0 [932-941]  x0.858 [0.853-0.859]  others 9%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                      895.7 [878-902]  x0.820 [0.802-0.826]  others 8%/1%  identical
+  c5 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0     935.2 [932-937]  x0.856 [0.853-0.856]  others 6%/0%  identical
+  c6 cg32d@multithreaded:4#OPENEMS_TBLOCK=4                         1082.7 [1078-1088]  x0.991 [0.987-0.993]  others 13%/1%  identical
+  c7 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto,OPENEMS_TBLOCK_HOOKS=0    616.8 [614-617]  x0.563 [0.562-0.565]  others 12%/1%  identical
+
+PEC box with a dielectric block (256^3 = 16.8 M cells), 400 steps
+  c0 cg31@multithreaded:4                                           1648.0 [1632-1664]  x1.000 [1.000-1.000]  others 10%/1%  identical,reference
+  c1 cg31@multithreaded:8                                           1867.4 [1850-1872]  x1.125 [1.123-1.144]  others 9%/1%  identical
+  c2 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto                      2288.7 [2279-2307]  x1.386 [1.383-1.402]  others 8%/1%  identical
+  c3 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto                      1995.4 [1932-2012]  x1.209 [1.184-1.211]  others 7%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     1995.2 [1995-2015]  x1.211 [1.211-1.222]  others 6%/1%  identical
+  c5 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0    2016.5 [2015-2018]  x1.223 [1.213-1.235]  others 8%/1%  identical
+  c6 cg32d@multithreaded:4#OPENEMS_TBLOCK=3                         2215.9 [2199-2221]  x1.335 [1.334-1.358]  others 13%/1%  identical
+  c7 cg32d@multithreaded:4#OPENEMS_TBLOCK=2                         2050.6 [2031-2062]  x1.244 [1.232-1.251]  others 9%/1%  identical
+
+SMA launch board (138x107x59 = 0.87 M cells, Mur, PML_8 at z-max), 6000 steps
+  c0 cg31@multithreaded:4                                           1524.2 [1519-1628]  x1.000 [1.000-1.000]  others 9%/1%  identical,reference
+  c1 cg31@multithreaded:8                                           1998.3 [1991-2092]  x1.311 [1.285-1.311]  others 8%/1%  identical
+  c2 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto                      1352.1 [1351-1400]  x0.887 [0.860-0.889]  others 10%/1%  identical
+  c3 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto                       978.9 [975-979]  x0.642 [0.599-0.644]  others 5%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                      980.7 [959-983]  x0.629 [0.604-0.645]  others 10%/1%  identical
+  c5 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0     980.7 [975-981]  x0.643 [0.599-0.645]  others 7%/1%  identical
+  c6 cg32d@multithreaded:4#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=17     1201.6 [1193-1218]  x0.783 [0.749-0.791]  others 9%/1%  identical
+  c7 cg32d@multithreaded:4#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=65     1411.9 [1401-1449]  x0.922 [0.890-0.926]  others 10%/1%  identical
+
+PEC box with a dielectric block (192x160x96 = 2.95 M cells), 2000 steps
+  c0 cg31@multithreaded:4                                           2356.7 [2346-2360]  x1.000 [1.000-1.000]  others 11%/1%  identical,reference
+  c1 cg31@multithreaded:8                                           2791.8 [2791-2799]  x1.186 [1.184-1.190]  others 11%/1%  identical
+  c2 cg32d@multithreaded:4#OPENEMS_TBLOCK=auto                      2568.2 [2568-2577]  x1.094 [1.088-1.095]  others 10%/1%  identical
+  c3 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto                      2185.7 [2183-2186]  x0.927 [0.926-0.931]  others 6%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     2367.3 [2367-2416]  x1.009 [1.003-1.025]  others 4%/1%  identical
+  c5 cg32d@multithreaded:8#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0    2245.0 [2244-2247]  x0.952 [0.952-0.957]  others 8%/1%  identical
+  c6 cg32d@multithreaded:4#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=33     2474.8 [2474-2475]  x1.050 [1.049-1.055]  others 10%/1%  identical
+  c7 cg32d@multithreaded:4#OPENEMS_TBLOCK=4                         2475.1 [2456-2478]  x1.051 [1.041-1.055]  others 11%/1%  identical
+
+Not done here: a choice at run time (the thread tuner timing the fused sweep at 8 threads against the tiled sweep at 4). The
+timing on the M5 Pro is that machine's own record: results/m5pro_tiled_sweep_2026-11-12.txt (2026-11-12).

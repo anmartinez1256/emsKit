@@ -49,7 +49,10 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   the four models 4.73--6.89$\times$ and the two large ones 1.95$\times$ and 2.72$\times$ as fast as stock
   (Table~\ref{tab:current}); paired with cg18 in rounds of its own (5 rounds, other processes on 0.3--0.6 cores; the
   SMA launch on its 0.871\,M-cell mesh), 1.03--1.23$\times$ as fast at 4 threads and 1.13--1.44$\times$ at 8 over the
-  six models.
+  six models. An opt-in tiled sweep (patch 0040 of 2026-11-11, the fork's head, not in the installed build) runs
+  several time steps on one cache-sized tile that all threads share; at 4 threads it is ahead of the fused sweep at
+  its best on two large grids (1.08 and 1.23$\times$) and behind on four other models (0.71--0.92$\times$;
+  Section~\ref{sec:tiled}).
 \item Setup and post-processing: a threaded operator construction (4.1\,s to 0.9\,s on the 7.9-million-cell patch
   model), a far-field transform written as complex matrix products, one per plane and block of directions (17.9\,s to
   1.0\,s on the same model; this path needs Apple's Accelerate, other builds keep the original loop), and two small
@@ -90,12 +93,16 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   of the GCPW line from 76.5\,s to 5.2\,s (Table~\ref{tab:e2e}), and with cg29 the Metal engine ran these runs
   1.22$\times$ and 1.37$\times$ as fast as the CPU engine (Table~\ref{tab:e2ecg29}, paired per round, on a loaded
   machine).
-\item A list of things that did not work, with numbers (Section~\ref{sec:rejected}), and the artefact set
-  (Section~\ref{sec:repro}).
+\item A list of things that did not work, with numbers (Section~\ref{sec:rejected}), the installed build and the
+  tiled sweep measured again on a second machine, an M5 Pro Mac mini, as a set of their own
+  (Section~\ref{sec:m5pro}), and the artefact set (Section~\ref{sec:repro}).
 \end{itemize}
 
 \paragraph{Scope.} All numbers are from one machine, an Apple M5 MacBook with 16\,GB, macOS~27.0.1, Apple clang~21,
-except two validation-suite runs made on a Linux virtual machine (Section~\ref{sec:repro}).
+except two validation-suite runs made on a Linux virtual machine (Section~\ref{sec:repro}) and
+Section~\ref{sec:m5pro}, which measures the same library files on a second machine, a Mac mini with an M5 Pro (5 + 10
+cores, 24\,GB, macOS~27.2.1); its numbers are a set of their own and are not compared with the M5's. The table of
+Section~\ref{sec:tiled} was measured on the M5 under macOS~27.2.1.
 They were measured while the machine was also used for other work (the harness reports the load of other processes
 with every number: sampled in the second before each run and, since the cg27 tables of 2026-11-04, their CPU and GPU
 use during it,
@@ -109,15 +116,19 @@ a GCC-built stock the rewrite's one-thread gain in the kernel is 1.26--1.47$\tim
 the same kernel the rewrite gives the stock loop's results bit for bit under clang but not under GCC, which contracts
 it differently (Section~\ref{sec:contract}). A GCC build of openEMS itself was not made, so the factors of this paper
 are against stock built with Apple clang, the default compiler on macOS, and the bit-identity checks used clang builds.
-The synchronisation and hook changes do not depend on the compiler. Five details are platform-specific and guarded:
+The synchronisation and hook changes do not depend on the compiler. Six details are platform-specific and guarded:
 thread QoS (macOS), the starting point of the automatic thread search (the performance-core count on macOS, half the
 available hardware threads elsewhere; since cg29 the flag waits on macOS spin only while the thread count is at most
 that count, and other CPUs keep the barrier spin time), the separable far-field path (built only with Apple's
-Accelerate; other builds keep the original loop), the opt-in flush-to-zero of subnormals (any arm64 CPU) and the
-Metal diamond engine (Apple only, opt-in, built with \code{ENABLE\_METAL}). The fused sweep's mechanism, fewer
-passes over the fields, is not specific to this CPU, but it was measured only here. The allocation-placement valley
-depends on where the allocator puts the two field arrays and was seen only with the allocator of macOS~27.0.1 on the
-M5 (Section~\ref{sec:valley}); the stagger that avoids it is applied on every platform and costs nothing measurable
+Accelerate; other builds keep the original loop), the opt-in flush-to-zero of subnormals (any arm64 CPU), the
+Metal diamond engine (Apple only, opt-in, built with \code{ENABLE\_METAL}) and the cache size that the opt-in tiled
+sweep's \code{auto} rule reads (the performance cores' L2 cache on macOS, elsewhere the last-level cache where the C
+library reports one). The fused sweep's mechanism, fewer
+passes over the fields, is not specific to this CPU, but it was measured only on Apple silicon: on this M5 and, as a
+set of its own, on the M5 Pro of Section~\ref{sec:m5pro}. The allocation-placement valley
+depends on where the allocator puts the two field arrays and was seen only with macOS's allocator: under 27.0.1 on
+the M5 (Section~\ref{sec:valley}) and, on the GCPW line, under 27.2.1 on the M5 Pro (Section~\ref{sec:m5pro}); the
+stagger that avoids it is applied on every platform and costs nothing measurable
 outside the valley.
 
 \section{Background}\label{sec:background}
@@ -143,7 +154,7 @@ cell and time step. This is a traffic model, not a counter measurement, as are a
 paper; it counts the compact 1\,B of index, and Section~\ref{sec:engine} also gives the figures with the index as
 allocated. At 150\,GB/s, a sweep that moves these 74 bytes per cell from DRAM in every time step runs at
 2\,000\,\MC\ at best~\cite{roofline} (an engine that keeps a tile's fields on chip over several time steps moves fewer,
-Section~\ref{sec:gpu}); the stock engine's 1\,041\,\MC\ on a 7.9-million-cell model is 77\,GB/s, half the bus.
+Sections~\ref{sec:gpu} and~\ref{sec:tiled}); the stock engine's 1\,041\,\MC\ on a 7.9-million-cell model is 77\,GB/s, half the bus.
 Smaller models fit in part in a last-level cache
 of a few tens of MB and could in principle run faster; stock ran them \emph{slower} (277--318\,\MC), which is the
 first hint that something other than bandwidth dominated there.

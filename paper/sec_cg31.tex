@@ -4,7 +4,9 @@ Every table before this section is of snapshot cg29 or earlier. On 2026-11-11, t
 published, twelve commits followed (patches 0028 to 0039): one on the energy schedule of a run without an end criteria
 (0028), ten on the Metal diamond engine (0029 to 0038) and one on the cylinder extension (0039). The build, cg31, has
 been the installed one on the author's Mac since that day. This section records what was looked for, what changed and
-what it gave (\code{results/metal\_engine\_cg31\_2026-11-11.txt}).
+what it gave (\code{results/metal\_engine\_cg31\_2026-11-11.txt}). A thirteenth commit of that day, patch 0040, adds
+an opt-in tiled sweep to the CPU engine (Section~\ref{sec:tiled}); it is the fork's head and is not part of the
+installed build.
 
 \subsection{Where the Metal engine's time went}
 Three observations set the work list.
@@ -59,7 +61,8 @@ patch & change & switch (default on) \\
 0039 & line hooks for the cylinder extension (Section~\ref{sec:cg31cyl}) & \\
 \bottomrule
 \end{tabular}
-\caption{The commits of 2026-11-11. Switch names carry the prefix \code{OPENEMS\_}; \code{=0} restores the earlier
+\caption{The twelve commits of cg31, 2026-11-11 (the thirteenth of that day, patch 0040, is in
+Section~\ref{sec:tiled}). Switch names carry the prefix \code{OPENEMS\_}; \code{=0} restores the earlier
 behaviour (\code{DIAMOND\_CAND=4}: the four tilings of patch 0016). Every step was a snapshot of its own (cg30a to
 cg30l, cg31a) that passed \code{scripts/checks/diamond\_check.sh} with 72 of 72 comparisons
 identical.}\label{tab:cg31items}
@@ -159,7 +162,7 @@ at 891 and 1\,069 against 1\,117 and 1\,225: the blocking is worth 1.46--1.49$\t
 machine (two runs a day apart). The fork's fused sweep, at 1\,739 on the ideal case, is ahead of master's unblocked
 kernel and behind its blocked one. The experiment of Section~\ref{sec:rejected} that found no gain in temporal blocking
 on the CPU gave every thread a sub-grid of its own, which does not fit the cache four threads share; one tile for
-all threads is the next CPU item.
+all threads was built the same day as an opt-in sweep of the fork's CPU engine (patch 0040, Section~\ref{sec:tiled}).
 
 \subsection{A closed cylinder on the fused sweep}\label{sec:cg31cyl}
 The cylinder extension, which closes a mesh in $\alpha$ and handles $r=0$, declared no hooks, so such a mesh ran the
@@ -172,6 +175,107 @@ fields are bit-identical to the unfused plan and at 1, 4, 8 and 10 threads, with
 cylindrical multigrid tutorial, which stays unfused, has 18 datasets with no difference
 (\code{scripts/cylinder\_closed/}). The first version of this test had its source between two mesh lines: every
 probe was zero and every comparison passed. The script now puts the source and the probes on mesh lines.
+
+\subsection{A tiled sweep for the CPU engine (opt-in)}\label{sec:tiled}
+On a grid larger than the cache the fused sweep reads every field array from memory once per time step. With
+\code{OPENEMS\_TBLOCK=}$k$ (patch 0040) the multithreaded engine runs $k$ time steps on one tile of x-lines before it
+moves on, and every thread works in that same tile, on its share of the y lines, so a tile is read from memory once
+per $k$ steps. Within a block of $k$ steps a tile shrinks by one x-line per step on each inner side, and the wedges
+between the tiles are filled afterwards; each such range of x-lines is a task, and the threads meet at one spin
+barrier per task. The design follows the \code{cpu} engine of upstream master (one cache-sized tile shared by all
+threads, Section~\ref{sec:threebuilds}); none of its code is used. \code{OPENEMS\_TBLOCK=auto} takes the deepest
+$k\le8$ whose tile of $2k+1$ x-lines stays within 90\,\% of the cache the threads share (the performance cores' L2
+cache, 16\,MiB on the M5), with tiles of at least 200\,000 cells, and keeps the fused sweep when the fields fit that
+cache or two time steps of a tile do not. \code{OPENEMS\_TBLOCK\_W} sets the tile width in x-lines. With
+\code{OPENEMS\_TBLOCK} unset or 0 the engine runs the fused sweep as before.
+
+The line hooks of the extensions (Section~\ref{sec:fused}) stay exact because they run in stages between two updates:
+the Post and Apply hooks of the task before, then the Pre hooks of the task after, each at its own time step. A stage
+runs on all threads. Its x-lines are cut once into one share per thread, so all hooks of an x-line run on one thread
+in the order of a one-thread sweep, and the two pairs of lines that a hook may couple (lines 0 and 1, and the last
+two) are never separated. No extension was changed for this. One call was added: an extension can cap the depth of a
+block (\code{GetMaxBlockDepth()}), and the steady-state detection allows one signal period. The tiled sweep runs
+only where the fused sweep can (every extension has line hooks). The engine refuses it with a message, and runs the
+fused sweep, when an extension is not \code{TS\_LOCAL} (Section~\ref{sec:cg29}), when a hook couples other x-lines
+than those two pairs, or when the grid has fewer x-lines than two tiles.
+
+The results are identical to the fused sweep's in every test (\code{scripts/tiled\_sweep/check.zsh}). On the M5,
+against cg31: the probes of six models (the two boards, the patch and notch tutorials, the 3\,M-cell PEC box and the
+1\,M-cell PML cube), 30 of 30 comparisons at 2 threads and 36 of 36 at 3, 4, 8 and 10 threads, with $k$ from 2 to 7
+and \code{auto}, set tile widths, the hook stages on one thread and equal shares; the raw fields of the closed
+cylinder of Section~\ref{sec:cg31cyl} at 2, 8 and 10 threads; a sinusoidal run that ends by the steady-state
+criterion (a period of 87 steps), with the same stop step (17\,580), probes and raw fields for $k=4$, 5, 8 and 19 at
+1 to 10 threads; and the Debye check with $k=3$ and 4. With the variable unset the reduced check is identical to stock
+v0.37.0 on the six benchmark models (18 of 18 rows). On a second machine, a Mac mini with an M5 Pro (5 + 10 cores),
+the same library files gave the same verdicts at 5 to 15 threads (Section~\ref{sec:m5pro}). Three read-only reviewers, each finding handed to a
+second reader, found no defect in the results; the two faults they did find were fixed before the commit (the share
+balance could leave a thread without y lines for the rest of a run, and a depth of $2^{30}$ or more passed the test
+for two tiles).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+ & & \multicolumn{2}{c}{fused sweep (cg31)} & \multicolumn{3}{c}{tiled sweep, \code{auto}} & best tiled / \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-7}
+model & cells & 4 threads & 8 threads & 4 threads & 8 threads & 10 threads & best fused \\
+\midrule
+patch x5 (Mur) & 7.86\,M & 1\,841 & 2\,138 & 2\,305 & 1\,872 & 1\,881 & 1.08$\times$ \\
+notch x3 (PML at the x ends) & 5.25\,M & 1\,963 & 2\,385 & 1\,861 & 1\,704 & 1\,741 & 0.81$\times$ \\
+cube with 10-cell PML & 8.0\,M & 1\,092 & 1\,342 & 1\,138 & 937 & 896 & 0.85$\times$ \\
+PEC box & 16.8\,M & 1\,648 & 1\,867 & 2\,289 & 1\,995 & 1\,995 & 1.23$\times$ \\
+SMA launch & 0.87\,M & 1\,524 & 1\,998 & 1\,352 & 979 & 981 & 0.71$\times$ \\
+PEC box & 2.95\,M & 2\,357 & 2\,792 & 2\,568 & 2\,186 & 2\,367 & 0.92$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{The fused sweep (cg31) and the tiled sweep (snapshot cg32d, patch 0040, with \code{OPENEMS\_TBLOCK=auto})
+of the multithreaded engine, in \MC, on the Apple M5 of this report (4 performance and 6 efficiency cores, 16\,GB)
+under macOS~27.2.1 (the other M5 tables of this report: 27.0.1), 2026-11-11: medians of three paired interleaved
+rounds. The other processes used a median of 9\,\% of one core during the runs (the highest row 63\,\%). Best tiled:
+the fastest of the six tiled settings of a model, which is \code{auto} at 4 threads except on notch x3 ($k=8$ with
+tiles of 17 x-lines at 4 threads, 1\,925) and on the SMA launch ($k=8$ with tiles of 65 x-lines at 4 threads,
+1\,412); best fused: 8 threads on every model. The results of every run are identical to those of the fused sweep at
+4 threads. Notch x3 has \code{PML\_8} at both x ends. The PEC box is the benchmark model of luikore's engine
+(Table~\ref{tab:threebuilds}, there 3.0 and 17.0\,M cells), the cube that of Table~\ref{tab:cube}, with
+\code{PML\_10} on all six faces; the SMA launch is on the toolkit's current mesh. These rows
+are compared only with each other (\code{results/tiled\_sweep\_cg32\_2026-11-11.txt}).}\label{tab:tiled}
+\end{table}
+
+Against the fused sweep at its best setting, 8 threads, the tiled sweep is ahead on the two large grids with little
+extension work, patch x5 (1.08$\times$) and the 16.8\,M-cell box (1.23$\times$), and behind on the other four: the
+2.95\,M-cell box (0.92$\times$), the PML cube (0.85$\times$), notch x3 (0.81$\times$) and the SMA launch
+(0.71$\times$; Table~\ref{tab:tiled}). Against the fused sweep at the same 4 threads its best setting runs
+1.25$\times$, 1.39$\times$, 1.09$\times$, 1.04$\times$, 0.98$\times$ and 0.93$\times$ as fast, in that order of
+models. Four things limit it.
+\begin{itemize}
+\item \emph{It needs the four performance cores.} At 8 or 10 threads it is behind the fused sweep at 8 threads on
+  every model but the 16.8\,M-cell box. A task ends only when its slowest thread is done. The shares follow each
+  thread's measured speed, and against equal shares (\code{OPENEMS\_BALANCE=0}) that changed the rate at 8 threads
+  by less than 3\,\% on every model.
+\item \emph{The hook stages must run on all threads.} With them on one thread (\code{OPENEMS\_TBLOCK\_HOOKS=0}, a
+  diagnostic) patch x5 ran at 2\,044\,\MC\ instead of 2\,305, notch x3 at 1\,499 instead of 1\,861 and the PML cube
+  at 617 instead of 1\,138 (4 threads). Even with them on all threads, the three models with a PML stay behind the
+  fused sweep at its best.
+\item \emph{It does not survive a loaded machine.} During the identity runs of that morning, with 5.6 cores busy
+  with other programs, the tiled sweep at 8 to 10 threads fell to 28--600\,\MC\ where the fused sweep at 4 threads
+  held 730--1\,570: a barrier per task does not survive an oversubscribed machine.
+\item \emph{The two boards gain nothing.} The fields of the GCPW line fit the cache, so \code{auto} keeps the fused
+  sweep, and the SMA launch loses.
+\end{itemize}
+A standalone kernel had given the expectation that morning (\code{scripts/kernel/kb\_tile.cpp}, 7.86\,M cells, a
+quiet machine): at 4 threads one shared tile with $k=7$ and 15 x-lines ran at 2\,371\,\MC\ against 1\,727 for the
+fused sweep (1.37$\times$); at 8 threads the shared tile ran at 2\,020 against 2\,088, and at 10 threads at 1\,358
+against 2\,025. In the engine the gain at 4 threads on the model of that size is 1.25$\times$ (2\,305 against
+1\,841).
+
+On the M5 Pro of Section~\ref{sec:m5pro}, timed on its own at 5, 10 and 15 threads (Table~\ref{tab:m5protiled}),
+the tiled sweep wins only on the 16.8\,M-cell box, 1.43$\times$ the fused sweep at its best there, and loses on the
+other five models (0.41--0.97$\times$): there the fused sweep keeps gaining up to 15 threads, while the tiled sweep
+peaks at 10. The verdict below holds on that machine too.
+
+The verdict: the tiled sweep is a switch for large grids with little extension work on a quiet machine, not a
+default. The fused sweep stays the engine's default, and the installed build, cg31, does not have the switch. Not
+measured: the tiled sweep against upstream master's \code{cpu} engine in one paired run, so where it stands against
+that engine is not known. Not built: a choice between the two sweeps at run time.
 
 \subsection{A shorter pulse (tested, not adopted)}\label{sec:pulse}
 The toolkit excites with a Gaussian of centre $f_{\max}/2$ and width $f_{\max}/2$. A baseband Gaussian (centre 0,

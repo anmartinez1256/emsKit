@@ -9,6 +9,176 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-12: the fork on a second machine, an M5 Pro Mac mini
+
+The fork's libraries were measured on a second machine: a Mac mini with an Apple M5 Pro (Mac17,16; 5 "Super" cores,
+`hw.perflevel0`, sharing one L2 of 16 MiB, and 10 "Performance" cores, `hw.perflevel1`, with two L2 of 8 MiB; 24 GB;
+macOS 27.2.1, 26B131). The library files are the same as on the M5: cg31 (the fork's commit ff2538a, patches 0001 to
+0039, the installed build), cg32d (0ef186b, patch 0040, the opt-in tiled sweep; not installed) and stock v0.37.0. No
+patch changed. These numbers are a set of their own: they are compared only with each other, never with a number
+measured on the M5 MacBook Air, and no table of M5 numbers changed.
+
+- When and how: two blocks of a night queue on the machine, each with no other measured job beside it, on
+  2026-11-12: the tiled sweep from 03:36 to 04:16, the rest from 07:13 to 08:32 (`scripts/m5pro/`, stage B, then
+  stages A, C, D and E). The engine rates come from `bench/abtest.py` in interleaved rounds (3 for the tiled sweep,
+  4 or 5 for the rest), medians in MC/s, the port probes of every run compared with the reference run. The gate
+  (`scripts/m5pro/common.zsh`) waited up to 20 s before each of those runs for the other processes to use at most
+  300 % CPU (3 of the 15 cores) and ran a run once more when they used more. STREAM and the two kernels ran without
+  that gate; the end-to-end runs went through `emskit fdtd e2e`, one run each, after a wait of up to 240 s for the
+  other processes to use at most 70 % CPU. macOS's own indexing (mediaanalysisd, Spotlight) ran all night: a first
+  try of the tiled sweep's timing at 02:23 with a stricter gate (70 %, 240 s) waited its full time before nearly
+  every run (8 of 162 runs in 55 minutes) and was stopped. Most rows ran beside 0.1 to 0.4 cores of other load, and
+  the records give the load of every row. Near or above one core: the notch tutorial and patch x5 rows of the speed
+  table (1.15 and 1.27 cores) and its patch tutorial row with the automatic count (1.13); in the tiled sweep notch
+  x3's tiled row at 5 threads (1.14), the 2.95 M box with k=8 and 33 x-lines (3.25) and with k=4 (1.09), and on the
+  PML cube the fused rows and the rows with k=4 and with the hook stages on one thread (2.3 to 3.2 cores), while its
+  tiled `auto` rows ran beside 0.15 to 0.74. A job of another program (about 1.5 to 2 cores, 07:29 to 07:36) fell
+  on one round each of two thread sweeps (the GCPW line's sweep is given from its other three rounds; both versions
+  are printed).
+- Bandwidth: STREAM 5.10 Triad 131, 256, 244 and 259 GB/s at 1, 5, 10 and 15 threads; the five Super cores alone
+  reach the bus limit (about 256 to 262 GB/s). The standalone fused kernel (`scripts/kernel/kb_idx.cpp`, patch x5
+  size) ran 3183 to 3659 MC/s at 15 threads, and on 15 independent sub-grids (the baseline of `kb_tile.cpp`) 4561
+  MC/s, 223 GB/s at 49 B a cell, 86 % of Triad. One tile shared by all threads (`kb_tile.cpp`, k=8, W=17) gained
+  x1.30, x1.24 and x1.21 over the fused sweep on one sub-grid per thread (2685, 3553 and 4561 MC/s) at 5, 10 and 15
+  threads (3486, 4417 and 5512 MC/s), every configuration bit-identical.
+- Thread scaling of the CPU engine (cg31 at 1 to 15 threads, 4 rounds): notch x3, patch x5 and the GCPW line all run
+  fastest at 15 threads, 4860, 3965 and 4241 MC/s, x7.0, x5.1 and x7.5 over one thread. Patch x5 dips at 9 and 10
+  threads (3608 to 3618 against 3922 at 8; not explained). The engine's own choice (`numThreads` 0) starts at the
+  `hw.perflevel0` count, 5, and tries 5, 7, 9, ..., 15, then 3, then one count either side of the best: it took 15
+  threads in all four notch x3 rounds and 9 or 14 on patch x5 (the dip misleads it), and the GCPW line's 15000-step
+  run (about 1 s) ended before the search did. On these runs of 1 to 2.7 s it gave x0.81 (notch x3), x0.88 (patch
+  x5) and x0.72 (GCPW line) of the best fixed count: the search costs roughly 0.3 to 0.5 s a run.
+- Speed table (5 rounds; section 4 of `results/m5pro_speed_set_2026-11-12.txt`), MC/s as stock's best of 5 and 10
+  threads / cg31's CPU engine at 15 threads / cg31's Metal diamond engine: GCPW line 283 / 4123 / 4085, SMA launch
+  (0.87 M cells) 449 / 4307 / 3916, notch tutorial 270 / 4111 / 4836, notch x3 1124 / 4931 / 7140, patch tutorial
+  152 / 2633 / 2901, patch x5 1406 / 3857 / 6511. The CPU engine over stock: x14.6, x9.6, x15.2 (the notch tutorial's
+  stock runs spread from 220 to 350 MC/s, so x12 to x19), x4.39, x17.3 and x2.74; the GPU engine over the CPU engine:
+  x0.99, x0.91, x1.18, x1.45, x1.10 and x1.69. Stock runs slower at 10 threads than at 5 on four of the six models;
+  the fork's CPU engine is fastest at 15 threads on all six. The GPU engine leads on the two large grids and the two
+  tutorials; on the two boards the CPU engine at 15 threads is level (GCPW line) or ahead (SMA launch, x1.10).
+- End to end through the toolkit at its defaults (the engine picks the threads, the probe end at -60 dB with a hold
+  of 0.5, the SMA launch's 0.05 mm mesh floor; wall time of `FDTD.Run`): the GCPW line 75.8 s on stock (94217 steps,
+  to max_time), 2.8 s on cg31's CPU engine (34300 steps, probe end; x27) and 2.4 s on its Metal diamond engine (x32);
+  the SMA launch 281.2 s (118475 steps), 11.0 s (50320 steps; x25.6) and 11.2 s (x25.1). Stock has no probe-end
+  criterion, so these factors hold the steps that the probe end saves (x2.7 and x2.4) as well as the engine (x10.9
+  and x11.3 in MC/s). In these runs the engine's thread choice ran the GCPW line at 3281 MC/s, against 4123 at 15
+  fixed threads in the speed table: on a run of a few seconds the search costs about 20 %, on the 11 s SMA run (4147
+  against 4307) about 4 %.
+- The allocation-placement valley is still there on this chip and macOS 27.2.1, and the allocator's stagger still
+  removes it: the GCPW line on cg31 at 1 thread 563 MC/s, with `OPENEMS_NO_STAGGER=1` 191 (x0.34); at 5 threads 2482
+  and 915 (x0.37); stock 155 and 289.
+- Scheduling switches on notch x3 (4 rounds): `OPENEMS_FLAGS=0` (the two barriers instead of the neighbour flags)
+  x0.87 at 15 threads and x0.91 at 10; `OPENEMS_FLAGS_SPIN_US=50` and `OPENEMS_QOS=0` within 1 % of the default.
+- The tiled sweep (patch 0040; `results/m5pro_tiled_sweep_2026-11-12.txt`, 3 rounds, all 162 runs identical to the
+  reference run): cg32d with `OPENEMS_TBLOCK=auto` against cg31's fused sweep, both at 5, 10 and 15 threads. It led
+  only on the PEC box of 16.8 M cells, x1.43 (4752 against 3326 MC/s, both at 15 threads), the one grid on which the
+  fused sweep is nearly flat from 5 to 15 threads (2986 to 3326). On the other five its best setting ran x0.97 (patch
+  x5: 3945 at 10 threads against 4078 at 15), x0.68 (the PEC box of 2.95 M cells), x0.65 (the PML cube of 8 M cells,
+  whose fused rows ran beside 2.3 to 3.1 other cores and its tiled rows beside 0.15 to 0.74), x0.50 (notch x3) and
+  x0.41 (the SMA launch) of the fused sweep's best. On those five the fused sweep gains x1.4 to x2.1 from 5 to 15
+  threads, while the tiled sweep peaks at 10 threads and falls at 15; the standalone kernel gains x1.21 at 15
+  threads, so the engine loses something the kernel does not (not measured). The hook stages on one thread
+  (`OPENEMS_TBLOCK_HOOKS=0`) were slower everywhere they ran, and equal shares (`OPENEMS_BALANCE=0`) were within 3 %
+  of the measured ones except on the 2.95 M box at 15 threads. The verdict is the M5's: opt-in, never a default,
+  nothing for the two boards.
+- Correctness on this machine: on its first night (2026-11-11, 21:21 to 21:35) `emskit fdtd check installed --lite`
+  and `check cg32d --lite` were all identical to stock (18 of 18 rows each, six models), the validation suite passed
+  15 of 15 on the fastest engine and on `metal-diamond`, `diamond-check` gave 72 of 72 and the Debye check passed;
+  the tiled sweep's identity checks at 5 to 15 threads are in `results/tiled_sweep_cg32_2026-11-11.txt`. In the speed
+  set every CPU run of cg31 gave its reference run's probes, and the GPU rows are within 1e-6 relative (1.7e-7 to
+  9.4e-7: Apple's GPU flushes subnormals, the CPU reference does not).
+- Open (`ROADMAP.md`): a choice between the fused and the tiled sweep at run time; why the engine's tiled sweep peaks
+  at 10 threads on this chip while the standalone kernel gains x1.21 at 15; the cost of the engine's own thread
+  choice on short runs (about 0.3 to 0.5 s a run, about 20 % of the toolkit's GCPW run); the Max and Ultra chips,
+  which are still not measured.
+- In this repository: the records `results/m5pro_speed_set_2026-11-12.txt` (bandwidth, the two kernels, the thread
+  sweep, the speed table, the valley, the switches and the two boards end to end, in sections 1 to 7, with the raw
+  `abtest.py` output below them) and `results/m5pro_tiled_sweep_2026-11-12.txt`, and the scripts of both,
+  `scripts/m5pro/` (`common.zsh` with the gate, `stageA.zsh` to `stageE.zsh`, `wait_quiet.zsh`, `summarize.py`;
+  listed in `scripts/README.md`); the kernels ran with `KB_THREADS=1,5,10,15` and `5,10,15`. The last "Not done" line
+  of `results/tiled_sweep_cg32_2026-11-11.txt` now points to the M5 Pro record. The paper has a new section on this
+  machine, with tables of its own; its tables of M5 numbers are unchanged. `README.md` has a paragraph with this
+  machine's speed table and end-to-end runs; `ROADMAP.md`, `BUILD.md`, `scripts/README.md` and `paper/code_notes.md`
+  say what is now measured on it and what stays open.
+
+## 2026-11-11 (evening): an opt-in tiled sweep for the CPU engine (patch 0040), timed on the M5
+
+The CPU item that the entry below calls the next one is built. It is one commit on `speed-m5-gpu`, 0ef186b on
+ff2538a: "Multithreaded engine: opt-in tiled sweep, several timesteps per pass over one shared tile (snapshot
+cg32d)" (`git describe --tags` v0.37.0-58-g0ef186b, tree d7b66f1; its trailer names Claude Fable 5.2). It is patch
+0040 and the fork's head. It is not installed: the build installed on the author's Mac stays cg31 (patches 0001 to
+0039, ff2538a), and with the new switch unset the engine runs the fused sweep as before.
+
+- What it does: `OPENEMS_TBLOCK=k` runs k timesteps on one tile of x-lines before it moves to the next tile. All
+  threads work in the same tile, each on its share of the y lines, with one spin barrier per task (a task is the
+  update of the voltages or of the currents on one range of x-lines at one timestep of the block), so a tile comes
+  from memory once per k timesteps instead of once per timestep. The extensions' line hooks run in stages between two
+  updates, on all threads: the x-lines of a stage are cut into one share per thread, so all hooks of an x-line run on
+  one thread in the one-thread order. No extension changed, apart from one new virtual function,
+  `Engine_Extension::GetMaxBlockDepth()` (default: no limit; the steady-state detection returns one signal period).
+  The design follows the `cpu` engine of upstream master (one cache-sized tile shared by all threads); none of its
+  code is used.
+- Three switches (`BUILD.md`, section 7): `OPENEMS_TBLOCK=k` or `auto` (unset or `0`: the fused sweep),
+  `OPENEMS_TBLOCK_W=n` (the tile width in x-lines) and `OPENEMS_TBLOCK_HOOKS=0` (the hook stages on one thread; a
+  diagnostic, slower). `auto` takes the deepest k up to 8 whose tile of 2k+1 x-lines stays within 90 % of the cache
+  the threads share (16 MiB on the M5), with a tile of at least 200000 cells, and keeps the fused sweep when the
+  fields fit that cache or two timesteps of a tile do not. The existing `OPENEMS_BALANCE=0` gives the threads equal
+  shares instead of measured ones.
+- Checks (`scripts/tiled_sweep/check.zsh`, `results/tiled_sweep_cg32_2026-11-11.txt`): identical to the fused sweep
+  of cg31 in every test. On the M5: the probes of six models (the GCPW line, the SMA launch, the patch and notch
+  tutorials, a 3 M box, a 1 M PML cube), 30 of 30 sets at 2 threads and 36 of 36 at 3, 4, 8 and 10 threads (k from 2
+  to 7 and `auto`, set tile widths, the hook stages on one thread, equal shares); the raw fields of a closed cylinder
+  at 2, 8 and 10 threads; a sinusoidal run that stops by the steady-state criterion (the same stop step, 17580, the
+  same probes and raw fields for k = 4, 8, 19 and 5 at 1 to 10 threads); the Debye box; and, with the variable unset,
+  `emskit fdtd check cg32d --lite` all identical to stock v0.37.0 (18 of 18 rows on the six models). On an Apple M5
+  Pro Mac mini (5 + 10 cores) the same library files gave the same verdicts at 5 to 15 threads; no speed was
+  measured there yet. A read-only review the same day (three reviewers, each finding handed to a second reader)
+  found no result defect and two faults, fixed before the commit: the share balance could latch a thread at zero y
+  lines, and a depth of 2^30 or more passed the two-tile test.
+- Speed, on the Apple M5 MacBook Air of the paper (4 P + 6 E cores, 16 GB) under macOS 27.2.1 (the paper's other
+  tables: 27.0.1), 2026-11-11 21:31 to 21:57: `bench/abtest.py`, 3 paired interleaved rounds, medians, the other
+  processes at a median of 9 % of one core (highest row 63 %). Fused is cg31, tiled is cg32d with
+  `OPENEMS_TBLOCK=auto` unless a setting is named. The best tiled setting against the better of the fused sweep at 4
+  and at 8 threads: patch x5 (7.86 M cells, Mur) 2305 against 2138 MC/s, x1.08; a PEC box of 16.8 M cells 2289
+  against 1867, x1.23; a PEC box of 2.95 M cells 2568 against 2792, x0.92; a PML cube of 8.0 M cells 1138 against
+  1342, x0.85; notch x3 (5.25 M cells, PML at both x ends) 1925 (k=8, W=17) against 2385, x0.81; the SMA launch
+  (0.87 M cells) 1412 (k=8, W=65) against 1998, x0.71. Every best tiled setting is at 4 threads, every best fused one
+  at 8. Against the fused sweep at 4 threads the same six rows give x1.25, x1.39, x1.09, x1.04, x0.98 and x0.93.
+- Reading: the tiled sweep is ahead of the fused sweep's best setting on the two large grids with little extension
+  work (+8 % and +23 %) and behind on the other four (-8 % to -29 %). It needs the 4 performance cores: at 8 or 10
+  threads it is behind the fused sweep at 8 threads on every model but the 16.8 M box. The hook stages must run on
+  all threads: on one thread patch x5 ran 2044 MC/s (all threads: 2305), notch x3 1499 (1861) and the PML cube 617
+  (1138). Measured shares against equal ones at 8 threads: within 3 % on every model. The project's two boards gain
+  nothing: the GCPW line fits the cache, so `auto` keeps the fused sweep, and the SMA launch loses. Under heavy load
+  from other programs (5.6 other cores busy, during the morning's identity runs) it fell to 28 to 600 MC/s at 8 to
+  10 threads where the fused sweep at 4 threads held 730 to 1570. Hence opt-in, never a default.
+- The standalone kernel of the morning (`scripts/kernel/kb_tile.cpp`, 7.86 M cells, quiet machine) had given x1.37
+  at 4 threads (fused 1727 MC/s, one shared tile with k=7 and W=15 2371), 2088 against 2020 at 8 threads and 2025
+  against 1358 at 10. The engine gives x1.25 at 4 threads (1841 against 2305).
+- Not done: a choice between the two sweeps at run time (the thread tuner timing the fused sweep at 8 threads
+  against the tiled sweep at 4), and the same timing on the M5 Pro, which goes into that machine's own record (done
+  on 2026-11-12: the entry above). Not measured: the tiled sweep beside upstream master's `cpu` engine in one paired
+  run.
+- In this repository: `patches/openems/` has 40 patches. 0040 is new, and all 40 files were regenerated: 0001 to
+  0039 changed only in their subject numbering (`[PATCH nn/40]`). The cumulative diff was regenerated too (68 files,
+  +7042/-265). `git am` of the 40 patches on 7bb294f and `git apply` of the cumulative diff both give tree
+  d7b66f1066672597c3a37e79bac0950469a93830; 0001 to 0039 still give dc4a352, the tree of the installed build. The
+  CSXCAD patch did not change. New: the record `results/tiled_sweep_cg32_2026-11-11.txt` and `scripts/tiled_sweep/`
+  (`check.zsh`, `time.zsh`, `ss_box.py`). `scripts/kernel/kb_idx.cpp` (for its `KB_FUSED` runs) and `kb_tile.cpp`
+  take `KB_THREADS=a,b,c`, the thread counts of those runs (defaults unchanged: 1,4,8,10 and 4,8,10). The command
+  line's knob registry has 41 names (38 before), with a value rule for `OPENEMS_TBLOCK` (`auto` or an integer,
+  0 = off), and its suite 259 tests in 28 suites (258 before): one test for the three knobs, a row for cg32d among
+  the library rows, the three names in the smoke runs' list, and eight of the nine plan fixtures regenerated. The
+  unit suite passed on this tree that evening (245 tests run, the 14 smoke tests skipped); the smoke and acceptance
+  runs were not repeated. Snapshot cg32d was built in the tree
+  configured for cg31, so its library reports cg31's version string (v0.37.0-57-gff2538a); its libopenEMS has 40
+  `OPENEMS_*` names (cg31's: 37). `BUILD.md`, `README.md`, `ROADMAP.md`, `patches/README.md` and
+  `Docs/fdtdKit/PLAN.md` now count 40 patches and name 0ef186b as the fork's head, with cg31 as the installed build;
+  `.zenodo.json` counts 40 patches, and `scripts/README.md` lists the new scripts. The paper has a new subsection,
+  "A tiled sweep for the CPU engine (opt-in)", in its section "After publication", with one table (six models, the
+  fused sweep against the tiled one); seven other section files point to it, and the PDF has 62 pages.
+  `paper/code_notes.md` has a new section on patch 0040, written from its diff.
+
 ## 2026-11-11: the build cg31: the energy schedule, ten Metal engine commits, the cylinder on the fused sweep, three comparisons
 
 On the author's request ("all the GPU improvements first, then CPU") the main session (Claude Fable 5.2, Claude Code)

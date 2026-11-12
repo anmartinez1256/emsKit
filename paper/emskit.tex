@@ -26,7 +26,7 @@
 \title{\vspace{-1cm}fdtdKit: taking openEMS towards the memory ceiling of an Apple~M5\\
 \large A bit-identical speed-up of the EC-FDTD engine, and two run-length levers on the modelling side}
 \author{Angel Martinez\\ University of Texas at Austin}
-\date{Work of 2026-10-28 to 2026-11-11; draft of 2026-11-11}
+\date{Work of 2026-10-28 to 2026-11-12; draft of 2026-11-12}
 % PDF metadata: keep pdfauthor in step with the name in \author
 \hypersetup{pdftitle={fdtdKit: taking openEMS towards the memory ceiling of an Apple M5}, pdfauthor={Angel Martinez}}
 
@@ -69,7 +69,8 @@ faster than the CPU engine
 verification policy that made this safe, the mechanisms behind each gain (barriers and the neighbour flags that
 replaced them, the inner loop, work distribution, a fused E/H sweep that cuts the modelled DRAM traffic from 74 to 49
 bytes per cell, an allocation-placement valley, the boundary and dispersive-material paths, coefficient tables, the
-GPU's diamond tiles), and what did not work. Because the memory bus of one machine bounds the cell rate, we also
+GPU's diamond tiles), and what did not work, and repeat the main measurements, as a set of their own, on a second
+machine, an M5 Pro Mac mini. Because the memory bus of one machine bounds the cell rate, we also
 outline, without measurements, how a domain-decomposed engine (openEMS has none today) could spread one model over a
 Thunderbolt-connected cluster of Mac mini or Mac Studio machines, each adding its own unified memory and bus. The
 engine patches, the benchmark harness, the result tables, the scripts and a command line that runs the harness and
@@ -84,6 +85,7 @@ the checks (\code{emskit fdtd}) are published at \repourl.
 \input{sec_modelling}
 \input{sec_results}
 \input{sec_cg31}
+\input{sec_m5pro}
 \input{sec_positioning}
 \input{sec_closing}
 

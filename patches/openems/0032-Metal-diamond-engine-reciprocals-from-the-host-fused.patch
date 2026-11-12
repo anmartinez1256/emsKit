@@ -1,7 +1,7 @@
 From 32f3648b1e6c0fd00daed0c861450dbbc2ffb4bb Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 32/39] Metal diamond engine: reciprocals from the host; fused
+Subject: [PATCH 32/40] Metal diamond engine: reciprocals from the host; fused
  Mur Post and Apply beside sheets (snapshot cg30e)
 
 The divisions by run-time widths (the cell loop, the z faces of Mur, the UPML loop) use the high word of a product

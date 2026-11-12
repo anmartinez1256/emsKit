@@ -202,12 +202,14 @@ import Testing
     }
 
     /// The rows of spec 4.2: (snapshot, sha256 prefix, version, knob names in libopenEMS, UUID prefix). The knob
-    /// column counts libopenEMS; the record adds NF2FF_LEGACY from libnf2ff (cg18: 15 + 1, cg29: 29 + 1, cg31: 37 + 1).
+    /// column counts libopenEMS; the record adds NF2FF_LEGACY from libnf2ff (cg18: 15 + 1, cg29: 29 + 1, cg31: 37 + 1,
+    /// cg32d: 40 + 1; cg32d = patch 0040 built in the tree configured for cg31, so it reports cg31's version).
     static let rows: [(String, String, String, Int, String)] = [
         ("stock", "7eaaee52", "v0.37.0", 0, "B1A89DA1"),
         ("cg18", "0c32ad23", "v0.37.0-24-g087ce9e", 15, "24C8A7F2"),
         ("cg29", "3c859d81", "v0.37.0-44-g074a687", 29, "40BC8CFF"),
         ("cg31", "644198c2", "v0.37.0-57-gff2538a", 37, "499C07FD"),
+        ("cg32d", "72e6d7ef", "v0.37.0-57-gff2538a", 40, "530052B0"),
     ]
 
     /// The installed rows: the installed libopenEMS by sha256 prefix, with its version, UUID prefix and build. It was

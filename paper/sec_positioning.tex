@@ -47,9 +47,13 @@ without temporal tiling. Two time steps per sweep gained 10--14\,\% in our first
 arithmetic (invariants hoisted, the 12 coefficient tables) as a fused sweep on one independent sub-grid per thread
 (project log; Section~\ref{sec:rejected}); with the current engine's loops in the same set-up, trapezoidal blocking of
 two to four steps per sweep (after MrHighVoltage's fork, next paragraph) gained at most 6\,\% as an upper bound, measured
-without halo lines or extension hooks (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2), so the CPU engine
-stays unblocked, and wavefront or diamond blocking was not tried on the CPU (upstream master's new \code{cpu} engine
-blocks with one tile for all threads; Section~\ref{sec:threebuilds} has what that is worth on this machine).
+without halo lines or extension hooks (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2), so the CPU engine's
+default sweep stays unblocked. Upstream master's new \code{cpu} engine
+blocks with one tile for all threads (Section~\ref{sec:threebuilds} has what that is worth on this machine), and
+since 2026-11-11 the fork has that form as an opt-in tiled sweep, which at 4 threads is ahead of the fused sweep at
+its best on two large grids and behind on four other models (Section~\ref{sec:tiled}). Wavefront or diamond blocking
+beyond that sweep's
+trapezoids along x was not tried on the CPU.
 The Metal engine of
 Section~\ref{sec:gpu} does block over time steps, in diamond tiles on the schedule of another contributor's Metal
 engine (next paragraph). Both fdtdKit's CPU factors and the 2--6$\times$ above are measured against stock openEMS, whose
@@ -159,7 +163,7 @@ to the CPU engine run with \code{OPENEMS\_FTZ=1} (Section~\ref{sec:gpu}).
 \paragraph{Where fdtdKit stands.} For printed-circuit-board RF models on the CPU of Apple silicon, fdtdKit is to our
 knowledge the fastest configuration of openEMS reported that keeps stock's results bit for bit: 3.2--6.9$\times$ stock
 on the four models of up to about a million cells with snapshot cg14 (Table~\ref{tab:final}, the SMA launch on its
-1.071\,M-cell mesh; Table~\ref{tab:current} has cg29 and Table~\ref{tab:cg31} the current build, cg31), and,
+1.071\,M-cell mesh; Table~\ref{tab:current} has cg29 and Table~\ref{tab:cg31} the installed build, cg31), and,
 with the modelling levers of Section~\ref{sec:modelling}, 15$\times$ end to end on the
 SMA launch with the toolkit's defaults since 2026-11-04 (the 0.05\,mm mesh floor and a hold of 0.5, against stock's
 full run on the 0.02\,mm mesh; cg18, Table~\ref{tab:e2e}), or 5.8$\times$ with the toolkit's defaults until
@@ -191,13 +195,15 @@ since stock openEMS has no reference to be identical to.
 
 \subsection{Outlook: clusters of Apple-silicon machines}\label{sec:cluster}
 This subsection is an outlook: no cluster was built or run. Apart from the memory figures, which were measured for
-this report on small boxes, its numbers are published hardware figures or arithmetic on them. The result of
+this report on small boxes, and one STREAM figure of the M5 Pro (Section~\ref{sec:m5pro}), its numbers are published
+hardware figures or arithmetic on them. The result of
 Section~\ref{sec:ceiling} (on one machine the CPU engine is limited by one memory bus) points to the natural way to
 scale: add buses. Every Mac mini or Mac Studio brings its own unified memory and its own bus, and since macOS 26.2
 machines connected by Thunderbolt~5 can exchange data by remote direct memory access (RDMA)~\cite{rdmatb5}, over
 links with a nominal rate of 80\,Gb/s (real throughput is lower). Published figures for current machines: a Mac mini
 with M5 Pro has up to 64\,GB at 307\,GB/s~\cite{macmini}; a Mac Studio with M5 Ultra up to 512\,GB at
-1.2\,TB/s~\cite{studiom5}.
+1.2\,TB/s~\cite{studiom5}. On a 24\,GB Mac mini with M5 Pro, STREAM's Triad measured 259\,GB/s at 15 threads, and the
+five Super cores alone reached that limit (Section~\ref{sec:m5pro}).
 
 \paragraph{Parameter studies.} Two simulations side by side on one machine gain nothing, because they share the bus
 (Section~\ref{sec:rejected}). On separate machines they do not, so a sweep or an optimisation run spread over $n$

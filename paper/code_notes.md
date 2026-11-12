@@ -3,12 +3,13 @@
 Written from the diffs by an AI review agent (Claude, through Claude Code; see the paper's disclosure
 section) on 2026-11-01, updated for patch 0005 on 2026-11-02 and for the final review on 2026-11-03; this
 header and the snapshot names were brought up to date for patches 0007–0027 on 2026-11-05.
-"I" in these notes is that agent. Sources: the openEMS patches `patches/openems/0001`–`0005` and their
+"I" in these notes is that agent. The section on patch 0040 (the tiled sweep) was added on 2026-11-11 by another
+agent of the same kind, from that patch's diff; it does not use "I". Sources: the openEMS patches `patches/openems/0001`–`0005` and their
 cumulative diff against the base 7bb294f (upstream branch `gpu-engine`) as it stood on 2026-11-02, and
 `patches/csxcad/0001` against CSXCAD v0.7.0. Totals through patch 0005:
 openEMS 43 files, +3098/−179 lines; CSXCAD 3 files, +9/−0. Every line count below is from that
 cumulative diff; patch 0006 (snapshot cg18, section "Final review fixes") changes some of them, and the file
-`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0039 (68 files, +6644/−266). Patch 0001 holds
+`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0040 (68 files, +7042/−265). Patch 0001 holds
 steps 2 and 3 (items A–E, Field_Gather_SSE, the Mur line hooks; snapshots ABCDEG to cg8), 0002 cg9,
 0003 cg10–cg15, 0004 cg16 and 0005 cg17. Through patch 0006 the GPU engine sources (`FDTD/engine_gpu*`,
 `gpu_backend*`, `FDTD/metal`, `FDTD/hip`, `operator_gpu*`) are **not touched** by the fork, and every
@@ -18,7 +19,9 @@ engine (`--engine=metal-diamond`, in the new files `FDTD/engine_metal_diamond.h`
 `FDTD/metal/engine_metal_diamond.mm`, with a friend declaration in 13 extension headers and small changes to
 `openems.cpp`, `openems.h`, `tools/arraylib/array_e.h` and `FDTD/CMakeLists.txt`: 19 files, +1717/−1 against
 cg18); patches 0017–0027 (snapshot cg29) are CPU items. These notes describe
-patches 0001–0006 only: 0028–0039 (the build cg31) are described in the `CHANGELOG.md` entry of 2026-11-11 and in the
+patches 0001–0006 and, in the section "Tiled sweep of the multithreaded engine", patch 0040 (the fork's head, snapshot
+cg32d; not in the installed build, which is cg31 = patches 0001–0039). They do not describe the patches between:
+0028–0039 (the build cg31) are described in the `CHANGELOG.md` entry of 2026-11-11 and in the
 paper's Section "After publication"; 0007–0027 are described in the `CHANGELOG.md` entries of 2026-11-04 and 2026-11-05, in
 the paper's Section "A diamond-blocked Metal engine" and in its subsection "The second review's CPU items and
 other contributors' ideas (cg29, patches 0017–0027)", and in their commit messages. Numbers
@@ -1112,6 +1115,141 @@ Documented in BUILD.md, not changed:
   member and the staggered allocator); after any install over another build, both Python
   modules must be rebuilt.
 - The five earlier commit messages are not rewritten.
+
+## Tiled sweep of the multithreaded engine (cg32d, patch 0040, 2026-11-11)
+
+Written from the diff of patch 0040 alone (commit 0ef186b on ff2538a = cg31); the line counts are that patch's.
+The sweep is opt-in: `OPENEMS_TBLOCK=k` or `auto` turns it on, and with the variable unset, empty or `0` the
+engine runs the fused sweep of item E as before. The installed build (cg31, patches 0001–0039) does not have it.
+
+**Files.** `FDTD/engine_multithread.cpp` (+345/−6) and `.h` (+33): `TileCacheBytes`, `SetupTiled`, `TiledRun`,
+`TileHookShare`, `BalanceTiled`, `struct TileTask`, and the members `m_Tiled`, `m_TileK`, `m_TileW`,
+`m_TilePlan`, `m_TileCum`, `m_TileHooksAll`, `m_TiledMsg`. `FDTD/engine_sse_compressed.cpp` (+19/−9) and `.h`
+(+6/−2): `UpdateVoltagesY`, `UpdateCurrentsY`, and a y range in the two IJKN templates.
+`FDTD/extensions/engine_extension.h` (+4): `GetMaxBlockDepth()`.
+`FDTD/extensions/engine_ext_steadystate.cpp` (+6) and `.h` (+3): its override. Seven files, +416/−17.
+
+**Before (cg31).** The fused sweep gives every thread a slab of x-lines and passes over the whole grid once
+per timestep. On a grid larger than the cache both fields come from memory once per timestep (49 B/cell,
+item E).
+
+**New: the idea.** A block of k timesteps runs on one tile of x-lines before the engine moves to the next
+tile, and all threads work in that same tile, each on its share of the y lines. A tile is then read from
+memory once per k timesteps. The comment in `engine_multithread.h` names the model: upstream master's `cpu`
+engine, one cache-sized tile for all threads. None of its code is used.
+
+**New: the y-range loops (`engine_sse_compressed`).** `UpdateVoltages_IJKN_T` and `UpdateCurrents_IJKN_T` take
+`y0, y1`; their y loops run `for (y=y0; (y<y1) && (y<ny); ++y)` for the voltages and
+`(y<y1) && (y+1<ny)` for the currents (the last y line has no current update, as before). The loop bodies
+are untouched. `UpdateVoltagesY` / `UpdateCurrentsY(startX, numX, y0, y1)` pick the geometry or the packed
+coefficient tables as the old entry points did, and `UpdateVoltages_IJKN` / `UpdateCurrents_IJKN` now call
+them with the whole range `[0, numLines[1])`, so the fused sweep runs the same code as before.
+
+**New: the task plan (`SetupTiled`).** `SetupFused` clears `m_Tiled` at its start and calls
+`SetupTiled(coupled)` at its end, so the tiled sweep exists only where the fused sweep does, and the plan is
+rebuilt whenever `SetupFused` runs again (after a change of the thread count). With depth K and tile width W
+(at least 2K+1 x-lines) the tile edges are 0, W, 2W, …, NX; a last tile shorter than 2K+1 lines joins the
+one before. `m_TilePlan[d]` holds the tasks of a block of d timesteps for d = 1 … K, so the rest of a call
+that is shorter than K has a plan of its own depth. A task is `TileTask {volt, x0, x1, ts}`: the voltages or
+the currents of the x-lines [x0, x1) at timestep `ts` of the block. For a tile [a, b) and t = 0 … d−1 the
+plan has the voltages on [a+t, b−t) and the currents on [a+t, b−t−1); at a domain edge the range does not
+shrink (from 0, to NX for the voltages and NX−1 for the currents, since the currents of the last x-line are
+never updated). After the tiles, for every inner edge c and t = 0 … d−1, come the voltages on [c−t, c+t)
+(none at t = 0) and the currents on [c−t−1, c+t): the wedges between the tiles. Every range has the operands
+of its timestep final when it runs: V(x) reads I(x) and I(x−1), I(x) reads V(x) and V(x+1), as in item E.
+
+**New: running it (`TiledRun`).** A worker thread whose engine has `m_Tiled` calls `TiledRun(threadID,
+m_iterTS)` in place of the per-timestep loop. Its y lines [y0, y1) come from the shares `m_TileCum`
+(cumulative, in 1/65536). For every task it runs the hook stage before it (next paragraph), then
+`UpdateVoltagesY` or `UpdateCurrentsY(x0, x1−x0, y0, y1)`, then waits at `m_IterateBarrier`; after the last
+task of the call one more hook stage follows. The barriers do not count timesteps here: for the hooks of a
+stage the thread sets its own `t_TS` (the thread-local timestep of the `TS_LOCAL` hooks of cg29) to the
+call's first timestep plus the task's place in the call, and `RunTimesteps` adds the call's n to `numTS`
+afterwards, as it does for the neighbour flags. The flags themselves are not used by the tiled sweep. The time and the x-y lines of the
+updates go into `m_FusedStat[threadID]`.
+
+**New: hook stages on all threads (`TileHookShare`).** A stage runs the Post and Apply line hooks of the
+task before (hook groups 1, 2 or 4, 5) at that task's timestep, then the Pre hooks of the task after (group
+0 or 3) at its own. When no extension has such a hook the stage and its barrier are skipped; otherwise the
+stage ends at the barrier too. `TileHookShare` cuts the x-lines of the two tasks (one interval, or two with
+a gap) once into one share per thread, at the same `m_TileCum` shares as the y lines. The upper cut of one
+thread is the lower cut of the next (same formula), so the shares cover every line once. A cut between the
+lines 0 and 1 moves up by one and a cut between NX−2 and NX−1 down by one, so a pair that a hook may couple
+stays on one thread. All hooks of an x-line therefore run on one thread, in the order of a one-thread
+sweep; the hooks of other lines do not depend on them (the line hook contract in `engine_extension.h`). No
+extension was changed for this. `OPENEMS_TBLOCK_HOOKS=0` gives thread 0 all lines of every stage (a
+diagnostic; the other threads only wait).
+
+**New: shares (`BalanceTiled`).** Every task ends at a barrier, so the slowest share sets the pace, and a
+thread on an efficiency core is slower. Where the fused sweep calls `BalanceSlabs` (after every `IterateTS`
+piece, with `m_Balance`), the tiled sweep calls `BalanceTiled`: once the threads have 20 ms of update time
+each on average, a thread's new share is halfway between its old share and its part of the summed speeds
+(x-y lines per second), not below a quarter of the equal share, and every thread keeps one y line at least.
+The shares stay as they are when a thread has no measurement or the grid has fewer y lines than threads.
+`OPENEMS_BALANCE=0` keeps them equal. The shares start equal after every `SetupTiled`.
+
+**New: `auto` (`TileCacheBytes`).** The cache: `hw.perflevel0.l2cachesize` on macOS (the L2 cache that the
+performance cores share), then `hw.l3cachesize`; elsewhere `sysconf` for the level-3 and then the level-2
+cache where the C library defines them; 0 when unknown. One x-line of both fields is
+`24·Ny·4·numVectors` bytes (six floats a cell, z padded to whole vectors). With 90 % of the cache as the
+budget: no tiling when the whole grid fits ("the fields fit the cache"); else the deepest K ≤ 8 whose 2K+1
+lines fit; no tiling when that K is below 2 ("two timesteps of a tile do not fit the cache") or when the
+cache size is not known. When NX has no room for two tiles of that depth (NX/2 < 2K+1), K is lowered to
+(NX/2−1)/2, in integer arithmetic; only when that is below 2, which means NX < 10, is there no tiling ("too
+few x-lines for two tiles"). The tile is then widened to
+⌈200000/(Ny·Nz)⌉ lines (200 000 cells), but not past the budget and not past NX/2. With a set k and no
+width the tile is 2k+1 lines; `OPENEMS_TBLOCK_W=n` sets the width in both cases, raised to 2K+1 if smaller.
+
+**Depth cap (`GetMaxBlockDepth`).** New virtual of `Engine_Extension`, default `~0u` (no limit).
+`SetupTiled` takes the smallest value over the extensions, at least 1, also for a set k.
+`Engine_Ext_SteadyState` returns its signal period (`m_TS_period`, at least 1): a block then holds one
+evaluation step at most, and the lines that run ahead write into the third period of the records that cg29
+gave it. No other extension overrides it.
+
+**Refusals.** With a message at `verbose>0` (printed once per text), and the fused sweep then runs: an
+extension without `TS_LOCAL` in `GetUsedHooks()`; a coupled x-line (`GetCoupledLines`) other than 0 and
+NX−2, because only at the two domain edges, where a tile does not shrink, are both lines of a pair in one
+task at one timestep; and fewer x-lines than two tiles (2W > NX, compared in 64 bits). A value of
+`OPENEMS_TBLOCK` that is not `auto` and that `atoi` does not read as a positive number leaves the sweep off
+without a message.
+
+**Correctness.** The arithmetic of a cell is the IJKN loop body of item B, unchanged; only the order in
+which lines and timesteps are visited changes, and the plan gives every update the operands that the
+unfused update has. The hooks keep their per-line order as described above. Checked, not proved
+(`results/tiled_sweep_cg32_2026-11-11.txt`, `scripts/tiled_sweep/check.zsh`): against the fused sweep of
+cg31 the probes of six models are identical in 30 of 30 comparisons at 2 threads and 36 of 36 at 3, 4, 8 and
+10 threads (k 2 to 7 and `auto`, set widths, `OPENEMS_TBLOCK_HOOKS=0`, `OPENEMS_BALANCE=0`); the raw fields
+of a closed cylinder at 2, 8 and 10 threads; a sinusoidal run that stops by the steady-state criterion
+(period 87 steps) with the same stop step, 17 580, probes and raw fields for k = 4, 5, 8 and 19 at 1 to 10
+threads; the Debye box with k = 3 and 4; and, with the variable unset, the reduced check against stock
+v0.37.0, 18 of 18 rows on six models. The same library files passed the same checks on an M5 Pro at 5 to 15
+threads. A read-only review before the commit (three reviewers, each finding handed to a second reader)
+found no result defect and two faults that the commit already has fixed: the balance could leave a thread
+at zero y lines for the rest of a run (hence the one-line minimum), and a depth of 2^30 or more passed the
+two-tile test (hence the 64-bit compare).
+
+**Numbers** (same record; Apple M5, macOS 27.2.1, three paired rounds, median MC/s, other processes a
+median of 9 % of one core; fused = cg31, tiled = cg32d with `auto`). Patch x5 (7.86 M cells): fused 1841 at
+4 threads and 2138 at 8, tiled 2305 at 4, 1872 at 8, 1881 at 10. PEC box of 16.8 M cells: 1648 and 1867,
+tiled 2289, 1995, 1995. Against the fused sweep at 8 threads the best tiled setting is at 1.08× and 1.23×
+on these two and at 0.92× (PEC box, 2.95 M), 0.85× (PML cube, 8.0 M), 0.81× (notch x3) and 0.71× (ksma on
+its 0.871 M-cell mesh) on the others. Hook stages on one thread at 4 threads: patch x5 2044 instead of
+2305, notch x3 1499 instead of 1861, PML cube 617 instead of 1138. Measured against equal shares at 8
+threads: within 3 % on every model. Under heavy load from other programs (5.6 other cores busy) the tiled
+sweep at 8 to 10 threads fell to 28–600 MC/s where the fused sweep at 4 threads held 730–1570.
+
+**Reviewer notes.** The sweep pays only on large grids with little extension work, and most at the
+performance-core count (at 8 and 10 threads only the 16.8 M-cell box stays ahead of the fused sweep at 8:
+1995 against 1867), and a barrier per task does not survive a loaded machine; hence opt-in. kgcpw fits the
+cache, so `auto` leaves it on the fused sweep. A tile holds every y and z line of its x-lines, so a grid
+whose five x-lines exceed the budget cannot be tiled at all (a 400³ cube on the M5). On an M5 Pro (5 + 10
+cores, macOS 27.2.1; a set of its own, `results/m5pro_tiled_sweep_2026-11-12.txt`, three paired rounds at 5,
+10 and 15 threads, all 162 runs identical) the sweep led only on the PEC box of 16.8 M cells (4752 against
+3326 MC/s, 1.43×, both at 15 threads) and ran 0.41–0.97× the fused sweep's best on the other five models,
+where the fused sweep gains up to 15 threads and the tiled sweep peaks at 10, although the standalone kernel
+(`scripts/kernel/kb_tile.cpp`) gains 1.21× at 15 threads there; the verdict stays opt-in. Not measured: the
+sweep against upstream master's `cpu` engine in one paired run, and what the engine loses against the
+kernel at many threads. Not built: a choice between the two sweeps at run time.
 
 ## Numbers checked against the code
 

@@ -1,7 +1,7 @@
 From 5ea5ffdf903bf9195d9f6d7a3055b57baacf7bf7 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 09:01:05 -0600
-Subject: [PATCH 10/39] Metal diamond engine: Drude/Lorentz materials and
+Subject: [PATCH 10/40] Metal diamond engine: Drude/Lorentz materials and
  conducting sheets on the GPU (snapshot cg22)
 
 Engine_Ext_LorentzMaterial (exactly that class: Drude/Lorentz materials and the

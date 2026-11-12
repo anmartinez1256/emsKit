@@ -112,7 +112,9 @@ threads, 1\,446 on the base's GPU engine and 2\,775 on the diamond engine at $K=
   49 bytes per cell (92--109 with the full 4-B index); a standalone fused kernel of the patch x5 shape, with a compact
   index of 1\,B per cell, tops out at 1\,932\,\MC\ on 4 threads, and one independent sub-grid per thread (no neighbour
   exchange at all) at 2\,273 on 6, 111\,GB/s at 49\,B per cell (both from the project log): that is the ceiling the
-  cores see. Snapshot cg29 (Section~\ref{sec:cg29}) allocates the operator index per z-vector, as the model counts
+  cores see in a sweep that reads the fields from memory once per time step (the opt-in tiled sweep of
+  Section~\ref{sec:tiled}, which reads a tile once for several steps, ran patch x5 at 2\,305\,\MC\ at 4 threads on
+  2026-11-11). Snapshot cg29 (Section~\ref{sec:cg29}) allocates the operator index per z-vector, as the model counts
   it, and with its other CPU items runs notch x3 1.134$\times$ [1.018--1.140] and patch x5 1.257$\times$
   [1.232--1.269] faster than cg18 at 8 threads (paired, 5 rounds, others 0.6 cores;
   \code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 4); its rates are in Table~\ref{tab:current}, where its
@@ -141,10 +143,13 @@ bit-identical by construction). On the CPU, two time steps per sweep gained 10--
 2026-10-28 (project log), on top of a fused sweep that already reuses the fields between the two half steps. An upper
 bound measured for cg29 on the fork's fused loops, with one independent sub-grid per thread and so without halos or
 extension hooks, gave at most 6\,\% for 2 to 4 steps (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2), and a
-real version was not built; deeper wavefront or diamond blocking~\cite{malas2015,fukaya2018} was not tried on the
-CPU. Upstream master's \code{cpu} engine does block on the CPU, with all threads in one cache-sized tile, and on this
+real version of that design was not built. Upstream master's \code{cpu} engine does block on the CPU, with all
+threads in one cache-sized tile, and on this
 machine the blocking is worth 1.15--1.49$\times$ to it (Section~\ref{sec:threebuilds}); the bound above is for one
-sub-grid per thread, not for that form.
+sub-grid per thread, not for that form. The fork has had that form since 2026-11-11, as an opt-in tiled sweep (patch
+0040, Section~\ref{sec:tiled}): at 4 threads it ran patch x5 and a 16.8\,M-cell box 1.08 and 1.23$\times$ as fast as
+the fused sweep at its best, and four other models at 0.71--0.92$\times$. Wavefront or diamond
+blocking~\cite{malas2015,fukaya2018} beyond that sweep's trapezoids along x was not tried on the CPU.
 On the GPU, luikore's Metal engine~\cite{luikore228} advances a diamond of four time steps per block and reports
 1.3--4.2$\times$ its own unfused path on an M4 Pro and an M5 Max, on a uniform grid without conducting sheets
 (Section~\ref{sec:positioning}). It was built and run on this M5 on 2026-11-04 (\code{results/others\_2026-11-04/},

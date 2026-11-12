@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The knob registry (spec 4.3): the 38 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
+// The knob registry (spec 4.3): the 41 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
 // once per process, the commands that take them, and the library file their name is searched in. For bench and ab a
 // knob travels only inside the CFGs; for validate, e2e and run it goes into the Python process's environment.
 // check, debye-check and diamond-check take none.
@@ -14,6 +14,8 @@ enum FdtdKnobRule: Sendable, Equatable {
     case onlyOne
     /// An integer >= `min`, digits only.
     case integer(min: Int)
+    /// The word `auto`, or an integer >= `min`, digits only (TBLOCK, where 0 is off).
+    case integerOrAuto(min: Int)
     /// A finite number within the bounds (PROBE_END_DB <= 0, PROBE_END_HOLD >= 0).
     case number(min: Double?, max: Double?)
     /// An existing folder (EXPORT_OPERATOR, EXPORT_FIELDS).
@@ -62,7 +64,7 @@ struct FdtdKnobInfo: Codable, Sendable, Equatable {
 
 /// The registry and the knob rules.
 enum FdtdKnobs {
-    /// The 38 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
+    /// The 41 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
     static let registry: [FdtdKnob] = [
         entry("OPENEMS_FUSED", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_FUSED_BLOCK", .integer(min: 1), "integer >= 1"),
@@ -70,6 +72,9 @@ enum FdtdKnobs {
         entry("OPENEMS_FLAGS_SPIN_US", .integer(min: 0), "integer >= 0"),
         entry("OPENEMS_FUSED_STAT", .onlyOne, "1", once: true),
         entry("OPENEMS_BALANCE", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_TBLOCK", .integerOrAuto(min: 0), "auto, or an integer >= 0 (0 = off)"),
+        entry("OPENEMS_TBLOCK_W", .integer(min: 1), "integer >= 1"),
+        entry("OPENEMS_TBLOCK_HOOKS", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_NO_STAGGER", .onlyOne, "1", once: true),
         entry("OPENEMS_OP_INDEX_PER_CELL", .onlyOne, "1"),
         entry("OPENEMS_NO_PACKED_COEFF", .onlyOne, "1"),
@@ -291,6 +296,13 @@ enum FdtdKnobs {
             guard let number = plainInteger(value), number >= minimum else {
                 throw FdtdError(.knobValue, "\(text): the value must be an integer >= \(minimum), digits only",
                                 field: field)
+            }
+        case .integerOrAuto(let minimum):
+            let isNumber = plainInteger(value).map { $0 >= minimum } ?? false
+            guard value == "auto" || isNumber else {
+                throw FdtdError(.knobValue,
+                                "\(text): the value must be auto or an integer >= \(minimum), digits only",
+                                field: field, hint: value.lowercased() == "auto" ? knob.name + "=auto" : nil)
             }
         case .number(let low, let high):
             guard let number = Double(value), number.isFinite else {

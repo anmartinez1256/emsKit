@@ -1,7 +1,7 @@
 From 6b23756b7932bc7dc685e3158fbd989694fce2c4 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 06:16:32 -0600
-Subject: [PATCH 07/39] Metal diamond engine: --engine=metal-diamond with
+Subject: [PATCH 07/40] Metal diamond engine: --engine=metal-diamond with
  excitation and Mur (snapshot cg19)
 
 Engine_Metal_Diamond (derived from Engine_SSE_Compressed) runs the update

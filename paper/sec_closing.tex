@@ -12,7 +12,8 @@ measurements from the project log (not in \code{results/}) unless a result file 
   reuse of the line behind is lost with wider blocks. The knob stays at 1.
 \item \textbf{CPU field snapshots} so dumps could be evaluated in the background: $-3$\,\%; the 12 small nf2ff dumps
   evaluated concurrently: 0\,\%.
-\item \textbf{Two or more time steps per sweep} ($k$-step temporal blocking) on the CPU: +10--14\,\% for $k=2$ in the
+\item \textbf{Two or more time steps per sweep, with a sub-grid per thread} ($k$-step temporal blocking on the CPU;
+  the form with one tile for all threads came later, end of this item): +10--14\,\% for $k=2$ in the
   standalone kernel of 2026-10-28 (\code{scripts/kernel/kb\_tb.cpp}: the stock arithmetic with its invariants hoisted
   and the 12 coefficient tables, a fused sweep, $k=1$, against $k=2$, on one independent sub-grid per thread), while
   every extension hook would need rewriting; not pursued then.
@@ -22,12 +23,16 @@ measurements from the project log (not in \code{results/}) unless a result file 
   threads and 0.990--1.020$\times$ at 8 (0.5 cores of other load); on a 5.25\,M-cell grid 0.971--0.976$\times$ at 4
   threads and 1.055--1.059$\times$ at 8 (1.2 cores). At most +6\,\%, against the +10--14\,\% above; why the fork's
   loops gain less was not examined. A real version (halo lines per thread, every extension's line hooks per sub-step)
-  would gain less. Not built (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2). Deeper wavefront or diamond blocking on the
-  CPU~\cite{malas2015,fukaya2018} was not tried; on the GPU, diamond blocking is the fork's Metal engine
+  would gain less. Not built (\code{results/cpu\_items\_cg29\_2026-11-05.txt}, section 2). On the GPU, diamond
+  blocking is the fork's Metal engine
   (Section~\ref{sec:gpu}, with the tile schedule of luikore's engine, PR \#228~\cite{luikore228}). Both tests gave
-  every thread a sub-grid of its own. Upstream master's \code{cpu} engine blocks with all threads in one cache-sized
-  tile, which is worth 1.15--1.49$\times$ to it on this machine (Section~\ref{sec:threebuilds}); that form was not
-  tried and is open (Section~\ref{sec:future}).
+  every thread a sub-grid of its own, and they stand as the record of that design. Upstream master's \code{cpu}
+  engine blocks with all threads in one cache-sized
+  tile, which is worth 1.15--1.49$\times$ to it on this machine (Section~\ref{sec:threebuilds}). That form was built
+  on 2026-11-11 as an opt-in tiled sweep (patch 0040, Section~\ref{sec:tiled}): at 4 threads it ran patch x5 and a
+  16.8\,M-cell box 1.08 and 1.23$\times$ as fast as the fused sweep at its best, and four other models at
+  0.71--0.92$\times$, so it is a switch and the default sweep stays unblocked. Wavefront or diamond
+  blocking~\cite{malas2015,fukaya2018} beyond that sweep's trapezoids along x was not tried on the CPU.
 \item \textbf{Compiler flags}: \code{-mcpu=apple-m4} gives an identical instruction stream; link-time optimisation (LTO)
   was not tried; \code{-ffast-math} is ruled out (not bit-identical); GCC~16, measured at one thread in the standalone
   kernel only, runs the stock inner loop 1.16--1.39$\times$ faster than Apple clang but the rewritten one at about the
@@ -172,8 +177,12 @@ dispatches per block instead of four, UPML and dispersive stages that take a z-v
 cell at a time instead of single floats, Mur faces of one axis behind one barrier, seven tilings instead of four.
 Three items are open after it. On the CPU, temporal blocking with one cache-sized tile for all threads, as upstream
 master's \code{cpu} engine does it: the blocking is worth 1.15--1.49$\times$ to that engine on this machine, and on a
-17\,M-cell grid it is ahead of the fork's CPU engine (Section~\ref{sec:threebuilds}), while the tests of
-Section~\ref{sec:rejected} gave every thread a sub-grid of its own. In the Metal kernel, the cost of an extension
+17\,M-cell grid it is ahead of the fork's fused sweep (Section~\ref{sec:threebuilds}), while the tests of
+Section~\ref{sec:rejected} gave every thread a sub-grid of its own. The fork has had this form since 2026-11-11,
+as an opt-in tiled sweep (patch 0040, Section~\ref{sec:tiled}): at 4 threads it is ahead of the fused sweep at its
+best on two large grids (1.08 and 1.23$\times$) and behind on four other models (0.71--0.92$\times$); on the M5 Pro,
+timed as a set of its own, it pays only on the 16.8\,M-cell box (1.43$\times$; Section~\ref{sec:m5pro}). What stays
+open is a choice between the two sweeps at run time and a paired run against master's \code{cpu} engine. In the Metal kernel, the cost of an extension
 that is compiled in: in timing-only builds of two snapshots the GCPW line ran 1.26--1.35$\times$ as fast without its
 Mur faces and 1.22--1.32$\times$ without its sheets, but skipping one of their stages at run time (on the later of the
 two) gave 1.02--1.07$\times$, and what in the GPU's execution makes it so was not found. The third is a shorter excitation pulse (next paragraph).
@@ -193,8 +202,10 @@ extensions, which that bound leaves out, is not proven.
 
 Upstreaming: the CPU engine changes are platform-independent apart from a few guarded details: thread QoS and the
 P-core count that starts the thread search and, since cg29, ends the spin of the neighbour flags (macOS; other systems
-start at half the available hardware threads, and their flag waits spin like the barriers), and the opt-in
-flush-to-zero (arm64); the separable nf2ff path needs a CBLAS, and only Apple's Accelerate is wired in. The Metal
+start at half the available hardware threads, and their flag waits spin like the barriers), the opt-in
+flush-to-zero (arm64), and the cache size that \code{OPENEMS\_TBLOCK=auto} reads for the tiled sweep (the performance
+cores' L2 cache on macOS, elsewhere the last-level cache where the C library reports one; without a figure
+\code{auto} keeps the fused sweep); the separable nf2ff path needs a CBLAS, and only Apple's Accelerate is wired in. The Metal
 diamond engine is Apple-only: it is built with the base's Metal backend (\code{ENABLE\_METAL}, on by default on Apple)
 and runs only when \code{--engine=metal-diamond} asks for it. The allocator stagger is not guarded: it applies on
 every platform, although the valley it removes was seen only with the macOS allocator, and on the M5 it costs nothing
@@ -232,24 +243,27 @@ the repository and its folder keep that name, as do the result files, the patche
 The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
 \href{https://doi.org/10.5281/zenodo.24118865}{10.5281/zenodo.24118865}), contains:
 \begin{itemize}
-\item \code{patches/openems/}: the fork as \code{git am} patches 0001--0039 on commit 7bb294f of upstream's
+\item \code{patches/openems/}: the fork as \code{git am} patches 0001--0040 on commit 7bb294f of upstream's
   \code{gpu-engine} branch (\code{BASE\_origin\_gpu-engine.txt}; upstream has since deleted the branch, so
-  \code{BUILD.md} fetches the commit by its hash), and one cumulative diff that gives the same tree (dc4a352).
+  \code{BUILD.md} fetches the commit by its hash), and one cumulative diff that gives the same tree (d7b66f1).
   0001--0006 are
   cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007--0016 add the Metal diamond
   engine, one patch per snapshot cg19--cg28; 0017--0027 are the CPU items of cg29 (Section~\ref{sec:cg29}), so
-  0001--0027 give cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are the twelve commits
-  of 2026-11-11 (72a6492 to ff2538a, Section~\ref{sec:cg31}), so 0001--0039 give cg31, the build installed there
-  since; the result files carry these snapshot names. All 39 patch files were made again on 2026-11-11; in
-  0001--0027 only the numbering in the subject line changed.
+  0001--0027 give cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are the first twelve
+  commits of 2026-11-11 (72a6492 to ff2538a, Section~\ref{sec:cg31}), so 0001--0039 give cg31, the build installed there
+  since (tree dc4a352); 0040 (0ef186b, the fork's head, snapshot cg32d) adds the opt-in tiled sweep of
+  Section~\ref{sec:tiled} and is not installed; the result files carry these snapshot names. All 40 patch files
+  were made again on 2026-11-11, when 0040 was added; in
+  0001--0039 only the numbering in the subject line changed.
   The fork's commits up to cg29 were rewritten for publication on 2026-11-07, with the author's public identity,
   the trailers
   of upstream's AI policy and the same trees, and pushed that day; the result files made before then and the
   entries of \code{CHANGELOG.md} dated before then give their earlier hashes, which \code{CHANGELOG.md} maps to the
   published ones. The version strings that the libraries of those snapshots print keep the hashes at which their
   build folders were configured, from before the rewrite; the fresh build of 2026-11-07 (pub29) prints the hash of
-  its own \code{git am} commit, v0.37.0-45-g1d091c7, and the installed cg31 that of the fork's head,
-  v0.37.0-57-gff2538a.
+  its own \code{git am} commit, v0.37.0-45-g1d091c7, and the installed cg31 that of its commit,
+  v0.37.0-57-gff2538a. Snapshot cg32d was built in the folder configured for cg31 and prints cg31's string; the
+  fork's head is v0.37.0-58-g0ef186b.
   \code{patches/csxcad/}: one patch on v0.7.0 (+9 lines), which the openEMS patches need. The changes made in this
   project to the author's simulation toolkit (rfsim) are not published, since the toolkit itself is private;
   Section~\ref{sec:modelling} and \code{CHANGELOG.md} describe them.
@@ -302,12 +316,17 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   Table~\ref{tab:current}) and the end-to-end runs of cg29 on the CPU and the GPU
   (\code{rfsim\_e2e\_cg29\_2026-11-05.txt}, Table~\ref{tab:e2ecg29}), from which \code{paper/figures/tables.py}
   writes those two tables and the speed table of \code{README.md}. From 2026-11-10 and 2026-11-11: the common
-  benchmarks (\code{common\_benchmarks\_2026-11-10.txt}, Section~\ref{sec:common}) and the records of the current
+  benchmarks (\code{common\_benchmarks\_2026-11-10.txt}, Section~\ref{sec:common}) and the records of the installed
   build, cg31 (Section~\ref{sec:cg31}): its Metal engine against cg29's (\code{metal\_engine\_cg31\_2026-11-11.txt}),
   the three builds on luikore's model (\code{engines\_on\_luikore\_model\_2026-11-11.txt}; with cg29 the night before,
-  \code{luikore\_compare\_cg29\_2026-11-11.txt}) and the pulse test (\code{pulse\_test\_2026-11-11.txt}).
+  \code{luikore\_compare\_cg29\_2026-11-11.txt}) and the pulse test (\code{pulse\_test\_2026-11-11.txt}); and the
+  record of the tiled sweep of patch 0040 (\code{tiled\_sweep\_cg32\_2026-11-11.txt}, Section~\ref{sec:tiled}).
+  From 2026-11-12, the second machine, an M5 Pro Mac mini (Section~\ref{sec:m5pro}): bandwidth, kernels, thread
+  sweep, speed table, valley, switches and the two boards end to end (\code{m5pro\_speed\_set\_2026-11-12.txt}), and
+  the tiled sweep (\code{m5pro\_tiled\_sweep\_2026-11-12.txt}).
 \item \code{scripts/} (one line per script in \code{scripts/README.md}): the standalone kernels (\code{kb\_idx.cpp},
-  \code{kb\_tb.cpp}) with the GCC-against-clang comparison (\code{gcc\_vs\_clang.sh}) and the instruction count per
+  \code{kb\_tb.cpp} and, for the shared tile of Section~\ref{sec:tiled}, \code{kb\_tile.cpp}) with the
+  GCC-against-clang comparison (\code{gcc\_vs\_clang.sh}) and the instruction count per
   loop iteration (\code{loop\_insns.py} with the program-counter sampler \code{pc\_sampler.cpp}), the cache-valley
   box, sweep and placement test (\code{place.c}, \code{placement.sh}), the cylindrical-multigrid check, the
   setup/nf2ff phase timers, the probe-end and z-padding checks, the mesh sweep, the end-to-end runs
@@ -319,8 +338,10 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   \code{analyze.py}, and \code{mkresult.py} with \code{header.txt}), the builds and runs of the other engines
   (\code{scripts/others/}: \code{run\_others.sh}, \code{bench\_ext.py}, \code{xcompare.py}), and from 2026-11-10 and
   2026-11-11 the common benchmarks (\code{scripts/common\_bench/}), the three builds on luikore's model
-  (\code{scripts/luikore\_compare/}), the closed cylinder (\code{scripts/cylinder\_closed/}) and the pulse test
-  (\code{scripts/pulse/}).
+  (\code{scripts/luikore\_compare/}), the closed cylinder (\code{scripts/cylinder\_closed/}), the pulse test
+  (\code{scripts/pulse/}) and the identity check and the timing of the tiled sweep (\code{scripts/tiled\_sweep/}),
+  and from 2026-11-12 the stages of the M5 Pro set (\code{scripts/m5pro/}: \code{common.zsh} with the gate,
+  \code{stageA.zsh} to \code{stageE.zsh}, \code{wait\_quiet.zsh}, \code{summarize.py}).
 \item \code{swift\_engine/}: the Metal kernel, with its diamond mode (\code{--diamond K}), its model builder and field
   compare.
 \item \code{Package.swift}, \code{Sources/} and \code{Tests/}: fdtdKit's command line \code{emskit fdtd} (version
@@ -330,16 +351,18 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   prints carries the other processes' CPU and GPU use during that run, it installs nothing, and it refuses any
   location it would write inside the installed openEMS prefix or the snapshot folder. Its plan, with the log of its
   builds, tests and acceptance runs, is \code{Docs/fdtdKit/PLAN.md}. Written on 2026-11-05 and 2026-11-06 and
-  corrected on 2026-11-09 and 2026-11-10 after two code reviews (Section~\ref{sec:disclosure}), it was last built
-  and tested on 2026-11-10 with Swift~6.4.2 on macOS~27.0.1: its 244 unit tests pass (258 tests in 28 suites with
-  the 14 smoke runs against the real tools). The smoke runs passed last earlier that day, before the day's later
+  corrected on 2026-11-09 and 2026-11-10 after two code reviews (Section~\ref{sec:disclosure}), it was built
+  and tested on 2026-11-10 with Swift~6.4.2 on macOS~27.0.1: its 244 unit tests passed (258 tests in 28 suites with
+  the 14 smoke runs against the real tools). Since 2026-11-11 its list of the fork's switches has 41 names (the
+  eight of cg31 and the three of the tiled sweep were added) and the suite one test more: 245 unit tests, 259 tests
+  in 28 suites with the smoke runs. The smoke runs passed last on 2026-11-10, before that day's later
   corrections, as did the runs on cg29: \code{check --lite} gave results identical to stock on the six models,
   \code{diamond-check} 72 of 72, and the GCPW end-to-end run finished (34\,300 steps). The checks of the installed cg29
   (Section~\ref{sec:method}) were run with it.
 \item \code{paper/}: this report, its figures and the scripts that draw them, and \code{code\_notes.md}, the
-  description of every code change of patches 0001--0006 written from the diffs (Section~\ref{sec:engine}; the later
-  patches are described by their commit messages, \code{CHANGELOG.md} and Sections~\ref{sec:gpu},
-  \ref{sec:cg29} and~\ref{sec:cg31}). Six figure scripts read
+  description of every code change of patches 0001--0006 and of patch 0040, written from the diffs
+  (Section~\ref{sec:engine}; patches 0007--0039 are described by their commit messages, \code{CHANGELOG.md} and
+  Sections~\ref{sec:gpu}, \ref{sec:cg29} and~\ref{sec:cg31}). Six figure scripts read
   \code{results/}: the cache-valley figure reads its two sweep files, the crossover figure
   \code{gpu\_crossover\_cg29\_2026-11-05.txt}, and the speed, thread, progress and bandwidth
   figures read \code{summary.json} (written by \code{figures/parse\_results.py}); the bandwidth figure adds four bars
@@ -407,7 +430,15 @@ After that period, on 2026-11-11, the main session (Claude Fable 5.2) made the b
 measurements and Section~\ref{sec:cg31}; the search for the bottlenecks before it was the work of four read-only
 reviewers, each followed by a checker that tried to refute its findings (agents of the same model in a workflow of
 the main session), and the day before one read-only checker had recomputed the numbers of the common benchmarks of
-Section~\ref{sec:common}.
+Section~\ref{sec:common}. The tiled sweep of Section~\ref{sec:tiled} (patch 0040, whose trailer names Claude
+Fable 5.2), its checks and its measurements are of the same day; three read-only reviewers, each finding handed to
+a second reader (agents again), reviewed it before the commit (\code{results/tiled\_sweep\_cg32\_2026-11-11.txt}).
+On 2026-11-12 the main session, on Claude Opus 5.5 from the night before, ran the set of Section~\ref{sec:m5pro}
+on the M5 Pro in a night queue on the machine (the tiled sweep's timing and stages A to E of \code{scripts/m5pro/},
+which it had written that evening on Claude Fable 5.2) and wrote its two records; agents in a workflow of the main
+session (Claude Opus 5.5) wrote that section and brought the other documents
+up to date, and two read-only checkers and a fixer (agents again) checked that text against the two records and
+corrected it.
 A separate Claude Opus 5.5 session in the
 repository's folder wrote the paragraph on concurrent work and measured two of the engines it lists (below); another
 Claude Opus 5.5 session wrote the work plan of 2026-11-04 (a working note that is not part of the published
@@ -464,8 +495,8 @@ Where the numbers come from: the benchmark tables (with the full checks of cg18,
 sweeps, the kernel comparisons, the correctness checks of cg18, the validation runs, and the measurements of
 2026-11-04 and 2026-11-05 (the Metal diamond engine, the $K=1$ sweep, the other engines, the CPU items of cg29, the
 GPU-against-CPU size sweep of Figure~\ref{fig:crossover} and the table of cg29 against stock, Table~\ref{tab:current})
-and the records of 2026-11-10 and 2026-11-11 that Sections~\ref{sec:common} and~\ref{sec:cg31} name
-are files in \code{results/}. So are the smaller checks made for this report during the final review, which are marked
+and the records of 2026-11-10, 2026-11-11 and 2026-11-12 that Sections~\ref{sec:common}, \ref{sec:cg31}
+and~\ref{sec:m5pro} name are files in \code{results/}. So are the smaller checks made for this report during the final review, which are marked
 where they appear: the memory figures of Section~\ref{sec:cluster}, the time-step bound of Section~\ref{sec:future}
 and the placement test of Section~\ref{sec:valley} (all three on cg18), and the flush-to-zero check of
 Section~\ref{sec:policy} (snapshot cg17); only the rerun of the Debye check with 2 threads

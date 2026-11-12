@@ -12,10 +12,12 @@ reads as 0 (so \code{off} too), and an empty value of any of the fork's variable
 those of v0.37.0 and of the gpu-engine base 7bb294f that the patches apply to (Section~\ref{sec:baseline}); upstream
 master reorganised these classes on 2026-11-02, and the patches do not apply to it as they are. A companion document in
 the repository (Section~\ref{sec:repro}), \code{paper/code\_notes.md}, written from the diffs by an AI review agent,
-gives file names, line counts and code fragments for every item of patches 0001--0006 (cg18); it does not cover the
-later patches, whose commit messages describe them: the Metal diamond engine of patches 0007--0016 is in
+gives file names, line counts and code fragments for every item of patches 0001--0006 (cg18) and, in a section added
+on 2026-11-11, for patch 0040; it does not cover
+patches 0007--0039, whose commit messages describe them: the Metal diamond engine of patches 0007--0016 is in
 Section~\ref{sec:gpu}, the CPU items of patches 0017--0027 (cg29) in Section~\ref{sec:cg29}, patches 0028--0039
-(cg31) in Section~\ref{sec:cg31}. This section keeps to the
+(cg31) in Section~\ref{sec:cg31}, which also has the opt-in tiled sweep of patch 0040
+(Section~\ref{sec:tiled}). This section keeps to the
 mechanisms.
 
 \paragraph{Memory layout, for reference.} The SSE engines store each field as a 4-D array of \code{f4vector}s in
@@ -169,8 +171,11 @@ two passes. Notch x3 1\,153 to 1\,916\,\MC\ in the same build, patch x5 1\,348 t
 \code{results/}); tutorials unchanged (they fit in the cache). A standalone kernel of the same shape, but with a
 compact 1-B index (\code{scripts/kernel/kb\_idx.cpp}), reaches 1\,932\,\MC\ on 4 threads (95\,GB/s at 49\,B per cell,
 read:write 1:1), and one independent sub-grid per thread (\code{kb\_tb.cpp}) 2\,273 on 6: those are the ceilings (from
-the project log; the kernel output is not in \code{results/}). The remaining gap on patch x5 at 8 threads (20--25\,\%,
-project log) is P/E imbalance at the two barriers while macOS migrates threads and other sessions load the machine;
+the project log; the kernel output is not in \code{results/}) of a sweep that reads the fields from memory once per
+time step. The opt-in tiled sweep of patch 0040 reads a tile once for several steps, so they do not bound it: on
+2026-11-11, under macOS~27.2.1 and not paired with these kernel runs, it ran patch x5 at 2\,305\,\MC\ at 4 threads,
+and it was behind the fused sweep's best setting on four of six models (Section~\ref{sec:tiled}). The fused sweep's
+remaining gap on patch x5 at 8 threads (20--25\,\%, project log) is P/E imbalance at the two barriers while macOS migrates threads and other sessions load the machine;
 cg29 measured the wait (at 8 threads 24--27\,\% of the time at the two barriers, \code{OPENEMS\_FUSED\_STAT=1}) and
 replaces the barriers by neighbour flags (Section~\ref{sec:cg29}). Wider blocks (\code{OPENEMS\_FUSED\_BLOCK}) lose
 the L2 reuse and were measured slower (Section~\ref{sec:rejected}).
@@ -206,7 +211,8 @@ array starts that far into it, $k = 0, 1, \ldots$ counting such allocations in t
 256\,B, so any alignment up to 256\,B is kept); the base pointer is stored in the word before the array, where the
 free path finds it. \code{OPENEMS\_NO\_STAGGER=1} turns the stagger off. Outside the valley it changes nothing
 measurable (cg18, finer sweep: 867.7--899.7\,\MC\ with it at every size, 864.9--890.5 without it outside the
-valley). It is applied on every platform, but the valley was seen only with macOS~27.0.1's allocator on the M5;
+valley). It is applied on every platform, but the valley was seen only with macOS's allocator: under 27.0.1 on the
+M5 and, on the GCPW line, under 27.2.1 on the M5 Pro of Section~\ref{sec:m5pro}, where the stagger removes it too;
 other allocators place large blocks differently, so the size window, and whether there is one, depends on the
 platform. The allocator is a header, so this is an ABI change for code compiled against the old one
 (Section~\ref{sec:reviewfixes}). GCPW at 4 threads 505 (stagger off) to 881\,\MC\ in one session, 868 in another. The

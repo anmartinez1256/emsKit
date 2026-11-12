@@ -1,7 +1,7 @@
 From a5195dfe4d91c9c0444b95cbda75ccad7d8e0f17 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Sun, 1 Nov 2026 06:30:30 -0600
-Subject: [PATCH 04/39] Probe end criterion: stop once every probe has settled
+Subject: [PATCH 04/40] Probe end criterion: stop once every probe has settled
  (OPENEMS_PROBE_END_DB)
 
 The energy end criterion never fires on real boards: the pulse's static charge

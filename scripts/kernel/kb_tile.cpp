@@ -17,11 +17,13 @@
 // (LICENSE in emsKit); if not, see <https://www.gnu.org/licenses/>.
 //
 //   clang++ -std=c++17 -O3 -DNDEBUG kb_tile.cpp -o kb_tile && ./kb_tile [steps [Nx Ny Nz]]
+//   KB_THREADS=a,b,c: the thread counts (default 4,8,10).
 // A block of k steps on a tile [a, b) of x-lines: the core runs E_t on [a+t, b-t) and H_t on [a+t, b-t-1) for
 // t = 0 .. k-1 (no shrinking at a domain edge), then the wedge at every tile boundary c runs E_t on [c-t, c+t) and
 // H_t on [c-t-1, c+t). Each of these ranges is one task: every thread does its y rows of it, then all meet at a
 // barrier. The fields after the run are compared with a plain sweep (E everywhere, H everywhere) of one thread.
 // steps should be a multiple of 840 / gcd so that every k in the list divides it (the default 56 serves k = 1, 2, 4, 7, 8).
+#include <initializer_list>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -208,6 +210,19 @@ static f4vector* alloc_f4(size_t n) {
 
 struct Task { bool e; uint32_t x0, x1; };
 
+// KB_THREADS=a,b,c: the thread counts of the multi-thread runs (the defaults suit an Apple M5: 4 P + 6 E cores).
+static std::vector<unsigned> kbThreads(std::initializer_list<unsigned> def) {
+    std::vector<unsigned> v;
+    for (const char* p = getenv("KB_THREADS"); p && *p; ) {
+        char* q; unsigned long t = strtoul(p, &q, 10);
+        if (q == p) break;
+        if (t >= 1 && t <= 256) v.push_back((unsigned)t);
+        p = (*q == ',') ? q + 1 : q + strlen(q);
+    }
+    if (v.empty()) v.assign(def.begin(), def.end());
+    return v;
+}
+
 int main(int argc, char** argv) {
     int steps = argc > 1 ? atoi(argv[1]) : 56;
     const uint32_t Nx = argc > 2 ? atoi(argv[2]) : 209, Ny = argc > 3 ? atoi(argv[3]) : 209, Nz = argc > 4 ? atoi(argv[4]) : 180;
@@ -259,7 +274,7 @@ int main(int argc, char** argv) {
     for (int s = 0; s < steps; ++s) { eng.UpdateVoltagesY(0, Nx, 0, Ny); eng.UpdateCurrentsY(0, Nx-1, 0, Ny); }
     std::vector<f4vector> vref(volt.m_ptr, volt.m_ptr + nf4), cref(curr.m_ptr, curr.m_ptr + nf4);
 
-    for (unsigned T : {4u, 8u, 10u}) {
+    for (unsigned T : kbThreads({4u, 8u, 10u})) {
         // baseline: the fused k=1 sweep, one independent sub-grid per thread (as kb_tb.cpp)
         double base = 0;
         {

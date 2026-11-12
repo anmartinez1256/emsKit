@@ -1,7 +1,7 @@
 From 99e20fd3ea1ca5a97fa3be3bdeb459067ac4c448 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 20:48:22 -0600
-Subject: [PATCH 05/39] Review fixes: Debye hooks, probe end arming, setup
+Subject: [PATCH 05/40] Review fixes: Debye hooks, probe end arming, setup
  cache key, portability (snapshot cg17)
 
 Found by an independent read-only correctness review of the fork (2026-11-02):

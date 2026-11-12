@@ -26,10 +26,12 @@ enum Smoke {
     static let installs = [(sha: "819179a2", uuid: "24C8A7F2", build: "cg18"),
                            (sha: "0d81372e", uuid: "40BC8CFF", build: "cg29"),
                            (sha: "23630ed6", uuid: "499C07FD", build: "cg31")]
-    /// The knobs that came after cg29 (patches 0029 to 0038): cg29's libopenEMS does not have them.
+    /// The knobs that came after cg29 (patches 0029 to 0038, and the tiled sweep's three of patch 0040): cg29's
+    /// libopenEMS does not have them.
     static let afterCg29: Set<String> = ["OPENEMS_DIAMOND_MERGE", "OPENEMS_DIAMOND_MURMERGE", "OPENEMS_DIAMOND_EVEN",
                                          "OPENEMS_DIAMOND_FASTIDX", "OPENEMS_DIAMOND_TGFLAG", "OPENEMS_DIAMOND_PML4",
-                                         "OPENEMS_DIAMOND_PML3", "OPENEMS_DIAMOND_CAND"]
+                                         "OPENEMS_DIAMOND_PML3", "OPENEMS_DIAMOND_CAND", "OPENEMS_TBLOCK",
+                                         "OPENEMS_TBLOCK_W", "OPENEMS_TBLOCK_HOOKS"]
 
     /// Spec 16.2: only through `--filter ...SmokeTests --no-parallel`, so that no other suite runs beside these runs
     /// and loads the Mac they measure. swift test hands both options to the testing helper this code runs in.

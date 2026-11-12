@@ -16,7 +16,8 @@
 //   clang++ -std=c++17 -O3 -DNDEBUG kb_idx.cpp -o kb_idx && ./kb_idx [steps [Nx Ny Nz [extra_barriers]]]
 //   knobs: KB_NOPS (unique operators, default 4000), KB_RANDOM=1 (random operator indices), KB_PAD=bytes (offset the
 //   current array: the placement test of ../cache_valley), KB_FUSED=1 (fused E/H sweep), KB_ONE=1 (only the two one-thread runs,
-//   then a hash of the final fields, to compare builds with different compilers).
+//   then a hash of the final fields, to compare builds with different compilers), KB_THREADS=a,b,c (the thread counts of the
+//   KB_FUSED runs; default 1,4,8,10).
 // Same data layout as openEMS (ArrayENG I-J-K-N: f4vector[x][y][zvec][3], 4 z-cells per
 // f4vector, uint32 operator index per f4vector, 12 coefficient tables of f4vector).
 // "stock" = the copy of FDTD/engine_sse_compressed.cpp described above, with the same member
@@ -24,6 +25,7 @@
 // the same order (bit-identical) with invariants hoisted and pointer walking.
 // Threading: static x-slab split + mutex/condvar barrier (what engine_multithread.cpp does)
 // versus dynamic x-chunks (atomic counter) + spin barrier.
+#include <initializer_list>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -388,6 +390,19 @@ static f4vector* alloc_f4(size_t n) {
     return (f4vector*)p;
 }
 
+// KB_THREADS=a,b,c: the thread counts of the multi-thread runs (the defaults suit an Apple M5: 4 P + 6 E cores).
+static std::vector<unsigned> kbThreads(std::initializer_list<unsigned> def) {
+    std::vector<unsigned> v;
+    for (const char* p = getenv("KB_THREADS"); p && *p; ) {
+        char* q; unsigned long t = strtoul(p, &q, 10);
+        if (q == p) break;
+        if (t >= 1 && t <= 256) v.push_back((unsigned)t);
+        p = (*q == ',') ? q + 1 : q + strlen(q);
+    }
+    if (v.empty()) v.assign(def.begin(), def.end());
+    return v;
+}
+
 int main(int argc, char** argv) {
     const int steps = argc > 1 ? atoi(argv[1]) : 8;
     const uint32_t Nx = argc > 2 ? atoi(argv[2]) : 209, Ny = argc > 3 ? atoi(argv[3]) : 209, Nz = argc > 4 ? atoi(argv[4]) : 180; // default: patch x5
@@ -503,7 +518,7 @@ int main(int argc, char** argv) {
     };
     printf("%-34s %8.0f MC/s   %s\n", "stock, 1 thread", ref, "reference");
     if (getenv("KB_FUSED")) {
-        for (unsigned nt : {1u, 4u, 8u, 10u}) {
+        for (unsigned nt : kbThreads({1u, 4u, 8u, 10u})) {
             char name[64];
             snprintf(name, sizeof name, "clean, %u thr dynamic+spin", nt); double d = run(1, nt, 1); printf("%-34s %8.0f MC/s   %s\n", name, d, check().c_str());
             snprintf(name, sizeof name, "fused, %u thr static+spin", nt); double f = run(1, nt, 2); printf("%-34s %8.0f MC/s   %s\n", name, f, check().c_str());

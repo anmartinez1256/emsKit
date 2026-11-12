@@ -1,0 +1,678 @@
+From 0ef186b792cf302809775489a5c015897ba9d8d6 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 21:15:46 -0600
+Subject: [PATCH 40/40] Multithreaded engine: opt-in tiled sweep, several
+ timesteps per pass over one shared tile (snapshot cg32d)
+
+Off by default. OPENEMS_TBLOCK=k (or auto) runs k timesteps on one tile of
+x-lines before moving on, with every thread working in the same tile (its
+share of the y lines), so a tile is read from memory once per k timesteps.
+The design follows the cpu engine of upstream master (one cache-sized tile
+shared by all threads); none of its code is used.
+
+- engine_sse_compressed: the IJKN update loops take a y range
+  (UpdateVoltagesY / UpdateCurrentsY).
+- engine_multithread: SetupTiled builds the task list per block depth
+  (trapezoids along x, then the wedges between tiles); TiledRun runs it with
+  one spin barrier per task. Line hooks run in stages between two updates,
+  on all threads: the x-lines of a stage are cut once into one share per
+  thread, so every hook of an x-line (and of the pairs 0|1 and NX-2|NX-1)
+  runs on one thread in the one-thread order. No extension was changed for
+  this; it relies on the line hook contract in engine_extension.h.
+- Shares follow each thread's measured update speed (BalanceTiled; at least
+  one y line per thread; OPENEMS_BALANCE=0 keeps them equal).
+- OPENEMS_TBLOCK=auto: the deepest k <= 8 whose tile of 2k+1 x-lines stays
+  within 90 % of the cache the threads share (hw.perflevel0.l2cachesize on
+  macOS, sysconf L3/L2 elsewhere); no tiling when the fields fit that cache
+  or two timesteps of a tile do not. OPENEMS_TBLOCK_W sets the tile width,
+  OPENEMS_TBLOCK_HOOKS=0 runs the hook stages on one thread (diagnostic).
+- Refused, with a message: an extension that is not TS_LOCAL, coupled lines
+  other than 0 and NX-2, fewer x-lines than two tiles.
+- Engine_Extension::GetMaxBlockDepth() (default: no limit) caps the depth;
+  the steady-state extension returns one signal period.
+
+Checked bit-identical to the fused sweep of ff2538a on an Apple M5 (probes
+of six models at 1 to 10 threads, depths 2 to 8 and auto, hooks and balance
+on and off; raw fields of a closed cylinder and of a steady-state box that
+stops by its criterion at the same step; Debye box), and with the variable
+unset on the six models against stock v0.37.0.
+
+Not measured yet: its speed on a quiet machine. Under heavy load from other
+programs the barrier per task made it much slower than the fused sweep at
+8 to 10 threads, which is why it stays opt-in.
+
+Generated-by: Claude Fable 5.2 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp                | 351 ++++++++++++++++++++-
+ FDTD/engine_multithread.h                  |  33 ++
+ FDTD/engine_sse_compressed.cpp             |  28 +-
+ FDTD/engine_sse_compressed.h               |   8 +-
+ FDTD/extensions/engine_ext_steadystate.cpp |   6 +
+ FDTD/extensions/engine_ext_steadystate.h   |   3 +
+ FDTD/extensions/engine_extension.h         |   4 +
+ 7 files changed, 416 insertions(+), 17 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 8574ec4..7559a3a 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -37,12 +37,15 @@
+ #include "boost/date_time/gregorian/gregorian.hpp"
+ #include <iomanip>
+ #include <algorithm>
++#include <cmath>
+ #include <chrono>
+ #include <mutex>
+ #include <string>
+ #include <cstdlib>
+ #ifdef __APPLE__
+ #include <sys/sysctl.h>
++#elif !defined(_WIN32)
++#include <unistd.h>   // sysconf and, with glibc, _SC_LEVEL3_CACHE_SIZE (TileCacheBytes)
+ #endif
+ 
+ using std::cout;
+@@ -81,6 +84,9 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_opt_speed = false;
+ 	m_auto_threads = false;
+ 	m_Fused = false;
++	m_Tiled = false;
++	m_TileK = m_TileW = 0;
++	m_TileHooksAll = false;
+ 	m_UseFlags = false;
+ 	m_FlagSpin = std::chrono::microseconds(0);
+ 	m_SweepDone = 0;
+@@ -112,6 +118,30 @@ static unsigned int StartThreads(unsigned int maxThreads)
+ 	return std::max(1u, std::min(n, maxThreads));
+ }
+ 
++//! The cache one tile of the tiled sweep should fit (OPENEMS_TBLOCK=auto): the L2 cache that the performance cores
++//! of an Apple CPU share (hw.perflevel0.l2cachesize), elsewhere the last-level cache when the C library reports
++//! it; 0 when unknown
++static size_t TileCacheBytes()
++{
++#ifdef __APPLE__
++	const char* names[2] = {"hw.perflevel0.l2cachesize", "hw.l3cachesize"};
++	for (int k=0; k<2; ++k)
++	{
++		int64_t bytes = 0;   // the kernel fills 4 or 8 of these bytes
++		size_t len = sizeof(bytes);
++		if ((sysctlbyname(names[k], &bytes, &len, NULL, 0)==0) && (bytes>0))
++			return (size_t)bytes;
++	}
++#elif defined(_SC_LEVEL3_CACHE_SIZE)
++	long bytes = sysconf(_SC_LEVEL3_CACHE_SIZE);
++	if (bytes<=0)
++		bytes = sysconf(_SC_LEVEL2_CACHE_SIZE);
++	if (bytes>0)
++		return (size_t)bytes;
++#endif
++	return 0;
++}
++
+ //! How long a wait for a neighbour flag spins before it sleeps (StepFlag::WaitFor): OPENEMS_FLAGS_SPIN_US for any
+ //! thread count; else none when the threads outnumber the performance cores of an Apple CPU (some of them run on the
+ //! efficiency cores, the waits for them are long, and a spinning thread only takes power and a core from the others),
+@@ -327,14 +357,14 @@ bool Engine_Multithread::IterateTS(unsigned int iterTS)
+ 			m_Tuner.ts_per_s = n/seconds;
+ 		iterTS -= n;
+ 		if (m_Fused && m_Balance)
+-			BalanceSlabs();
++			m_Tiled ? BalanceTiled() : BalanceSlabs();
+ 		TuneThreads(n, seconds);
+ 	}
+ 	if (iterTS>0)
+ 	{
+ 		RunTimesteps(iterTS);
+ 		if (m_Fused && m_Balance)
+-			BalanceSlabs();
++			m_Tiled ? BalanceTiled() : BalanceSlabs();
+ 	}
+ 	return true;
+ }
+@@ -343,7 +373,7 @@ double Engine_Multithread::RunTimesteps(unsigned int n)
+ {
+ 	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+ 	m_iterTS = n;
+-	const bool flags = m_Fused && m_UseFlags;
++	const bool flags = m_Fused && m_UseFlags && !m_Tiled;
+ 	if (flags)   // the flags count the timesteps of this call
+ 		for (unsigned int t=0; t<m_numThreads; ++t)
+ 		{
+@@ -352,7 +382,7 @@ double Engine_Multithread::RunTimesteps(unsigned int n)
+ 		}
+ 	m_startBarrier->wait(); // start the threads
+ 	m_stopBarrier->wait(); // wait for the threads to finish n time steps
+-	if (flags)   // no barrier counted them
++	if (flags || m_Tiled)   // no barrier counted them
+ 		numTS += n;
+ 	return std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
+ }
+@@ -551,6 +581,7 @@ void Engine_Multithread::BuildHookPlan()
+ void Engine_Multithread::SetupFused()
+ {
+ 	m_Fused = false;
++	m_Tiled = false;
+ 	for (int g=0; g<6; ++g)
+ 		m_LineHooks[g].clear();
+ 	const char* env = getenv("OPENEMS_FUSED");
+@@ -677,6 +708,307 @@ void Engine_Multithread::SetupFused()
+ 		flagMsg += " (wait spin " + std::to_string(m_FlagSpin.count()) + " us)";
+ 	ReportFused("fused sweep, " + std::to_string(nb) + " blocks of x-lines" +
+ 				(m_UseFlags ? flagMsg : (nonlocal.empty() ? "" : ", barriers (the extension \"" + nonlocal + "\" is not TS_LOCAL)")));
++	SetupTiled(coupled);
++}
++
++void Engine_Multithread::SetupTiled(const std::vector<unsigned int>& coupled)
++{
++	m_Tiled = false;
++	m_TilePlan.clear();
++	const char* env = getenv("OPENEMS_TBLOCK");
++	if (!(env && *env))
++		return;
++	const unsigned int NX = numLines[0];
++	unsigned int K = (atoi(env)>0) ? (unsigned int)atoi(env) : 0;
++	unsigned int autoW = 0;
++	std::string autoMsg;
++	if (std::string(env)=="auto")
++	{
++		// the deepest block, up to 8 timesteps, whose tile of 2K+1 x-lines (six floats a cell) stays within 90 % of
++		// the cache the threads share; none when the whole grid fits that cache or two timesteps do not.
++		// The tile is then widened to 200000 cells (a task of ~100 us, far longer than the two barriers it ends
++		// at), which is 5 MB of fields at most, and never past half of the x-lines.
++		const double line = 24.0*numLines[1]*numVectors*4;
++		const double cache = 0.9*TileCacheBytes();
++		if (line*NX>cache)
++			for (K=8; (K>1) && ((2*K+1)*line>cache); )
++				--K;
++		const bool cacheShort = (K<2);
++		if (!cacheShort && (NX/2<2*K+1))
++			K = (NX/2>=1) ? (NX/2-1)/2 : 0;
++		if (K<2)
++		{
++			autoMsg = (cache<=0) ? "the cache size is not known" :
++					  ((line*NX<=cache) ? "the fields fit the cache" :
++					   (cacheShort ? "two timesteps of a tile do not fit the cache" : "too few x-lines for two tiles"));
++			K = 0;
++		}
++		else
++			autoW = std::min(std::min(NX/2, (unsigned int)(cache/line)),
++							 (unsigned int)std::ceil(200000.0/((double)numLines[1]*numLines[2])));
++	}
++	if (K==0)
++	{
++		const std::string msg = autoMsg.empty() ? "" : "no tiled sweep (OPENEMS_TBLOCK=auto), " + autoMsg;
++		if (!msg.empty() && (g_settings.GetVerboseLevel()>0) && (msg!=m_TiledMsg))
++			cout << "Multithreaded engine: " << msg << endl;
++		m_TiledMsg = msg;
++		return;
++	}
++	// an extension can bound the depth (the steady-state detection: one period)
++	for (size_t k=0; k<m_Eng_exts.size(); ++k)
++		K = std::max(1u, std::min(K, m_Eng_exts.at(k)->GetMaxBlockDepth()));
++	// OPENEMS_TBLOCK_W: the tile width in x-lines, at least 2K+1 (a core keeps three lines in its last timestep)
++	const char* wenv = getenv("OPENEMS_TBLOCK_W");
++	const unsigned int W = std::max(2*K+1, (wenv && *wenv && (atoi(wenv)>0)) ? (unsigned int)atoi(wenv) : autoW);
++	std::string why;
++	const int N = m_Eng_exts.size();
++	for (int k=0; k<N; ++k)
++		if (!(m_Eng_exts.at(k)->GetUsedHooks() & Engine_Extension::TS_LOCAL))
++			why = "the extension \"" + m_Eng_exts.at(k)->GetExtensionName() + "\" is not TS_LOCAL";
++	// a hook that couples two x-lines needs both in one task at one timestep: true at the two domain edges only,
++	// where a tile does not shrink
++	for (size_t n=0; n<coupled.size(); ++n)
++		if ((coupled[n]!=0) && (coupled[n]+2!=NX))
++			why = "an extension couples the x-lines " + std::to_string(coupled[n]) + " and " + std::to_string(coupled[n]+1);
++	if ((uint64_t)2*W>NX)   // 64 bit: a huge OPENEMS_TBLOCK must not wrap around into a pass
++		why = std::to_string(NX) + " x-lines are fewer than two tiles of " + std::to_string(W);
++	std::string msg;
++	if (!why.empty())
++		msg = "no tiled sweep (OPENEMS_TBLOCK), " + why;
++	else
++	{
++		std::vector<unsigned int> edge;   // the tile boundaries, 0 and NX included; the last tile takes a short rest
++		for (unsigned int x=0; x<NX; x+=W)
++			edge.push_back(x);
++		if ((edge.size()>1) && (NX-edge.back()<2*K+1))
++			edge.pop_back();
++		edge.push_back(NX);
++		m_TilePlan.assign(K+1, std::vector<TileTask>());
++		for (unsigned int d=1; d<=K; ++d)
++		{
++			std::vector<TileTask>& plan = m_TilePlan[d];
++			for (size_t j=0; j+1<edge.size(); ++j)
++			{
++				const unsigned int a = edge[j], b = edge[j+1];
++				for (unsigned int t=0; t<d; ++t)
++				{
++					const unsigned int lo = (a==0) ? 0 : a+t;
++					const unsigned int hiV = (b==NX) ? NX : b-t;
++					const unsigned int hiI = (b==NX) ? NX-1 : b-t-1;   // the currents of the last x-line are never updated
++					if (hiV>lo)
++						plan.push_back(TileTask{true, lo, hiV, t});
++					if (hiI>lo)
++						plan.push_back(TileTask{false, lo, hiI, t});
++				}
++			}
++			for (size_t j=1; j+1<edge.size(); ++j)
++			{
++				const unsigned int c = edge[j];
++				for (unsigned int t=0; t<d; ++t)
++				{
++					if (t>0)
++						plan.push_back(TileTask{true, c-t, c+t, t});
++					plan.push_back(TileTask{false, c-t-1, c+t, t});
++				}
++			}
++		}
++		m_TileK = K;
++		m_TileW = W;
++		m_Tiled = true;
++		m_TileCum.resize(m_numThreads+1);
++		for (unsigned int t=0; t<=m_numThreads; ++t)
++			m_TileCum[t] = (unsigned int)((uint64_t)65536*t/m_numThreads);
++		const char* henv = getenv("OPENEMS_TBLOCK_HOOKS");
++		m_TileHooksAll = (m_numThreads>1) && !(henv && *henv && (atoi(henv)==0));
++		msg = "tiled sweep, " + std::to_string(edge.size()-1) + " tiles of " + std::to_string(W) + " x-lines, " +
++			  std::to_string(K) + " timesteps per block" + (m_TileHooksAll ? "" : ", the line hooks on one thread");
++	}
++	if ((g_settings.GetVerboseLevel()>0) && (msg!=m_TiledMsg))
++		cout << "Multithreaded engine: " << msg << endl;
++	m_TiledMsg = msg;
++}
++
++void Engine_Multithread::TileHookShare(int threadID, unsigned int p0, unsigned int p1, unsigned int q0, unsigned int q1, unsigned int s[4]) const
++{
++	// the lines of both ranges in ascending order: one interval [l0, l1), or two with a gap, [l0, l1) and [h0, h1)
++	unsigned int l0, l1, h0, h1;
++	if (p1<=p0)
++	{
++		l0 = q0; l1 = q1; h0 = h1 = q1;
++	}
++	else if (q1<=q0)
++	{
++		l0 = p0; l1 = p1; h0 = h1 = p1;
++	}
++	else if (p1<q0)
++	{
++		l0 = p0; l1 = p1; h0 = q0; h1 = q1;
++	}
++	else if (q1<p0)
++	{
++		l0 = q0; l1 = q1; h0 = p0; h1 = p1;
++	}
++	else
++	{
++		l0 = std::min(p0, q0); l1 = std::max(p1, q1); h0 = h1 = l1;
++	}
++	const unsigned int NX = numLines[0];
++	const unsigned int nL = l1-l0, n = nL+(h1-h0);
++	unsigned int cut[2];
++	for (int k=0; k<2; ++k)
++	{
++		// the same cut for the thread below and the thread above it ([0] = 0 and [threads] = 65536 give 0 and n)
++		unsigned int i = (unsigned int)(((uint64_t)n*m_TileCum[threadID+k]+32768)>>16);
++		if ((i>0) && (i<n))
++		{
++			// a pair of lines a hook may couple, (0, 1) or (NX-2, NX-1), stays on one thread
++			const unsigned int x = (i<nL) ? l0+i : h0+(i-nL);
++			const unsigned int xb = (i-1<nL) ? l0+(i-1) : h0+(i-1-nL);
++			if ((xb==0) && (x==1))
++				++i;
++			else if ((xb+2==NX) && (x+1==NX))
++				--i;
++		}
++		cut[k] = i;
++	}
++	s[0] = l0+std::min(cut[0], nL);
++	s[1] = l0+std::min(cut[1], nL);
++	s[2] = h0+(std::max(cut[0], nL)-nL);
++	s[3] = h0+(std::max(cut[1], nL)-nL);
++}
++
++void Engine_Multithread::TiledRun(int threadID, unsigned int iterTS)
++{
++	const unsigned int ny = numLines[1];
++	const unsigned int y0 = (unsigned int)(((uint64_t)ny*m_TileCum[threadID]+32768)>>16);
++	const unsigned int y1 = (unsigned int)(((uint64_t)ny*m_TileCum[threadID+1]+32768)>>16);
++	// [currents, voltages]: whether a Pre hook, or a Post or Apply hook, exists
++	const bool pre[2] = {!m_LineHooks[3].empty(), !m_LineHooks[0].empty()};
++	const bool post[2] = {!m_LineHooks[4].empty() || !m_LineHooks[5].empty(), !m_LineHooks[1].empty() || !m_LineHooks[2].empty()};
++	const unsigned int base = numTS;   // the barriers do not count here: RunTimesteps() adds the call's timesteps
++
++	// a hook stage: Post and Apply of the task p at its timestep, then Pre of the task q at its own, each for this
++	// thread's share of the x-lines; no stage (and no barrier) when neither has such a hook
++	auto HookStage = [&](const TileTask* p, unsigned int pTS, const TileTask* q, unsigned int qTS)
++	{
++		if (p && !post[p->volt])
++			p = NULL;
++		if (q && !pre[q->volt])
++			q = NULL;
++		if (!p && !q)
++			return;
++		unsigned int s[4] = {0, 0, 0, 0};
++		if (m_TileHooksAll)
++			TileHookShare(threadID, p ? p->x0 : 0, p ? p->x1 : 0, q ? q->x0 : 0, q ? q->x1 : 0, s);
++		else if (threadID==0)
++			s[1] = numLines[0];
++		if (p)
++		{
++			t_TS = pTS;
++			for (int k=0; k<4; k+=2)
++			{
++				const unsigned int a = std::max(s[k], p->x0), b = std::min(s[k+1], p->x1);
++				if (a<b)
++				{
++					RunLineHooks(p->volt ? 1 : 4, a, b);
++					RunLineHooks(p->volt ? 2 : 5, a, b);
++				}
++			}
++		}
++		if (q)
++		{
++			t_TS = qTS;
++			for (int k=0; k<4; k+=2)
++			{
++				const unsigned int a = std::max(s[k], q->x0), b = std::min(s[k+1], q->x1);
++				if (a<b)
++					RunLineHooks(q->volt ? 0 : 3, a, b);
++			}
++		}
++		m_IterateBarrier->wait();
++	};
++
++	const TileTask* prev = NULL;
++	unsigned int prevTS = 0;
++	std::chrono::steady_clock::duration busy(0);
++	double work = 0;
++	for (unsigned int done=0; done<iterTS; )
++	{
++		const unsigned int depth = std::min(m_TileK, iterTS-done);
++		const std::vector<TileTask>& plan = m_TilePlan[depth];
++		for (size_t i=0; i<plan.size(); ++i)
++		{
++			const TileTask& q = plan[i];
++			const unsigned int qTS = base+done+q.ts;
++			HookStage(prev, prevTS, &q, qTS);
++			const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
++			if (q.volt)
++				UpdateVoltagesY(q.x0, q.x1-q.x0, y0, y1);
++			else
++				UpdateCurrentsY(q.x0, q.x1-q.x0, y0, y1);
++			busy += std::chrono::steady_clock::now()-t0;
++			work += (double)(q.x1-q.x0)*(y1-y0);
++			m_IterateBarrier->wait();
++			prev = &q;
++			prevTS = qTS;
++		}
++		done += depth;
++	}
++	HookStage(prev, prevTS, NULL, 0);
++	// time and x-y lines of this thread's updates, for BalanceTiled()
++	m_FusedStat[threadID].busy += std::chrono::duration<double>(busy).count();
++	m_FusedStat[threadID].lines += work;
++}
++
++void Engine_Multithread::BalanceTiled()
++{
++	// wait for ~20 ms of updates per thread, the measurement is noisy below
++	double total = 0;
++	for (unsigned int t=0; t<m_numThreads; ++t)
++		total += m_FusedStat[t].busy;
++	if (total<0.02*m_numThreads)
++		return;
++	// the speed of every thread (x-y lines per second of its updates); its new share is halfway to its part of the sum
++	std::vector<double> speed(m_numThreads, 0);
++	double sum = 0;
++	bool all = true;
++	for (unsigned int t=0; t<m_numThreads; ++t)
++	{
++		FusedStat& stat = m_FusedStat[t];
++		if ((stat.busy>0) && (stat.lines>0))
++			speed[t] = stat.lines/stat.busy;
++		else
++			all = false;
++		sum += speed[t];
++		stat.busy = stat.lines = 0;
++	}
++	const unsigned int ny = numLines[1];
++	if (!all || !(sum>0) || (ny<m_numThreads))
++		return;   // a thread without lines (fewer y lines than threads): the shares stay
++	const double least = 0.25/m_numThreads;   // a share never falls below a quarter of the equal one
++	std::vector<double> share(m_numThreads);
++	double norm = 0;
++	for (unsigned int t=0; t<m_numThreads; ++t)
++	{
++		const double old = (m_TileCum[t+1]-m_TileCum[t])/65536.0;
++		share[t] = std::max(least, 0.5*(old+speed[t]/sum));
++		norm += share[t];
++	}
++	double cum = 0;
++	for (unsigned int t=0; t+1<m_numThreads; ++t)
++	{
++		cum += share[t]/norm;
++		m_TileCum[t+1] = std::max(m_TileCum[t], std::min(65536u, (unsigned int)(cum*65536+0.5)));
++	}
++	m_TileCum[m_numThreads] = 65536;
++	// every thread keeps one y line at least: a thread without lines could not be measured, and the shares would
++	// stay as they are for the rest of the run
++	const unsigned int gap = (65536+ny-1)/ny;
++	for (unsigned int t=0; t+1<m_numThreads; ++t)
++		m_TileCum[t+1] = std::max(m_TileCum[t+1], m_TileCum[t]+gap);
++	for (unsigned int t=m_numThreads-1; t>=1; --t)
++		m_TileCum[t] = std::min(m_TileCum[t], m_TileCum[t+1]-gap);
+ }
+ 
+ // SetupFused() runs after every change of the thread count, and the level engines of a cylindrical multigrid
+@@ -971,9 +1303,16 @@ void thread::operator()()
+ 		DEBUG_TIME( Timer timer1 );
+ 
+ 		// neighbour flags: this thread counts its own timesteps (the extensions read them, see GetNumberOfTimesteps)
+-		const bool flags = m_enginePtr->m_Fused && m_enginePtr->m_UseFlags;
++		const bool flags = m_enginePtr->m_Fused && m_enginePtr->m_UseFlags && !m_enginePtr->m_Tiled;
+ 		t_TS = m_enginePtr->numTS;
+-		t_OwnTS = flags;
++		t_OwnTS = flags || m_enginePtr->m_Tiled;
++		if (m_enginePtr->m_Tiled)
++		{
++			m_enginePtr->TiledRun(m_threadID, m_enginePtr->m_iterTS);
++			t_OwnTS = false;
++			m_enginePtr->m_stopBarrier->wait();
++			continue;
++		}
+ 		for (unsigned int iter=0; iter<m_enginePtr->m_iterTS; ++iter)
+ 		{
+ 			if (flags)
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index 9186985..a7b661f 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -142,6 +142,39 @@ protected:
+ 	std::vector<Engine_Extension*> m_LineHooks[6]; //!< per hook group: the extensions to call, in order
+ 	void SetupFused();
+ 	std::string m_FusedMsg; //!< the last fused-sweep line printed (verbose>0), see ReportFused()
++
++	//! The tiled sweep (OPENEMS_TBLOCK=k, with the fused sweep's conditions): temporal blocking with ONE tile of
++	//! x-lines for all threads, as upstream master's cpu engine does it. A block of k timesteps on a tile [a, b):
++	//! the core runs the voltages of step t on [a+t, b-t) and its currents on [a+t, b-t-1) for t = 0 .. k-1 (no
++	//! shrinking at a domain edge), then the wedge at every tile boundary c the voltages on [c-t, c+t) and the
++	//! currents on [c-t-1, c+t). Each range is a task: every thread updates its y lines of it, then all meet at
++	//! the barrier. Between two updates a hook stage runs the Post and Apply hooks of the task before and the Pre
++	//! hooks of the task after: the x-lines of both are cut once into one share per thread, so all hooks of an
++	//! x-line (and of a coupled pair) run on one thread in the order of a one-thread sweep, and the hooks of other
++	//! lines are independent of them (the line hook contract). Every cell gets the operands of the unfused update
++	//! (bit-identical), and the fields of a tile stay in the cache for k timesteps.
++	struct TileTask
++	{
++		bool volt;               //!< voltages (and their hooks), or currents
++		unsigned int x0, x1;     //!< the x-lines [x0, x1)
++		unsigned int ts;         //!< the timestep within the block
++	};
++	bool m_Tiled;
++	unsigned int m_TileK, m_TileW;
++	std::vector<std::vector<TileTask> > m_TilePlan; //!< [depth]: the tasks of a block of depth timesteps, 1 .. m_TileK
++	std::string m_TiledMsg;
++	//! The threads' shares in the tiled sweep, cumulative in 1/65536 ([0] = 0, [threads] = 65536): the y lines of
++	//! an update and the x-lines of a hook stage are cut at them. Equal at first; BalanceTiled() moves them to the
++	//! measured speed of every thread between two IterateTS() calls (a thread on an efficiency core is slower, and
++	//! every task ends at a barrier, so the slowest share sets the pace). OPENEMS_BALANCE=0 keeps them equal.
++	std::vector<unsigned int> m_TileCum;
++	bool m_TileHooksAll; //!< the hook stages on all threads; OPENEMS_TBLOCK_HOOKS=0: on thread 0 alone
++	void SetupTiled(const std::vector<unsigned int>& coupled);
++	void TiledRun(int threadID, unsigned int iterTS);
++	//! The x-lines of one thread in a hook stage over the lines [p0, p1) and [q0, q1) (either may be empty):
++	//! [s[0], s[1]) and [s[2], s[3]), the second one only when the two ranges have a gap between them
++	void TileHookShare(int threadID, unsigned int p0, unsigned int p1, unsigned int q0, unsigned int q1, unsigned int s[4]) const;
++	void BalanceTiled();
+ 	void ReportFused(const std::string& msg);
+ 	void FusedTimestep(int threadID);
+ 
+diff --git a/FDTD/engine_sse_compressed.cpp b/FDTD/engine_sse_compressed.cpp
+index 0dcd6fd..0bef8f5 100644
+--- a/FDTD/engine_sse_compressed.cpp
++++ b/FDTD/engine_sse_compressed.cpp
+@@ -556,7 +556,7 @@ struct CoefGeom
+ };
+ }
+ 
+-template<class C> void Engine_SSE_Compressed::UpdateVoltages_IJKN_T(unsigned int startX, unsigned int numX, const C& coef)
++template<class C> void Engine_SSE_Compressed::UpdateVoltages_IJKN_T(unsigned int startX, unsigned int numX, const C& coef, unsigned int y0, unsigned int y1)
+ {
+ 	// (x,y,z-vector) holds the three components at [0..2], z-vectors are 3 apart
+ 	f4vector* __restrict volt = f4_volt_ptr->data();
+@@ -572,7 +572,7 @@ template<class C> void Engine_SSE_Compressed::UpdateVoltages_IJKN_T(unsigned int
+ 	for (unsigned int x=startX; x<startX+numX; ++x)
+ 	{
+ 		const ptrdiff_t shx = (x>0) ? sx : 0;
+-		for (unsigned int y=0; y<ny; ++y)
++		for (unsigned int y=y0; (y<y1) && (y<ny); ++y)
+ 		{
+ 			const ptrdiff_t shy = (y>0) ? sy : 0;
+ 			f4vector* __restrict v = volt + x*sx + y*sy;
+@@ -622,7 +622,7 @@ template<class C> void Engine_SSE_Compressed::UpdateVoltages_IJKN_T(unsigned int
+ 	}
+ }
+ 
+-template<class C> void Engine_SSE_Compressed::UpdateCurrents_IJKN_T(unsigned int startX, unsigned int numX, const C& coef)
++template<class C> void Engine_SSE_Compressed::UpdateCurrents_IJKN_T(unsigned int startX, unsigned int numX, const C& coef, unsigned int y0, unsigned int y1)
+ {
+ 	const f4vector* __restrict volt = f4_volt_ptr->data();
+ 	f4vector* __restrict curr = f4_curr_ptr->data();
+@@ -636,7 +636,7 @@ template<class C> void Engine_SSE_Compressed::UpdateCurrents_IJKN_T(unsigned int
+ 
+ 	for (unsigned int x=startX; x<startX+numX; ++x)
+ 	{
+-		for (unsigned int y=0; y+1<ny; ++y)
++		for (unsigned int y=y0; (y<y1) && (y+1<ny); ++y)
+ 		{
+ 			const f4vector* __restrict v = volt + x*sx + y*sy;
+ 			f4vector* __restrict c = curr + x*sx + y*sy;
+@@ -687,17 +687,27 @@ template<class C> void Engine_SSE_Compressed::UpdateCurrents_IJKN_T(unsigned int
+ }
+ 
+ void Engine_SSE_Compressed::UpdateVoltages_IJKN(unsigned int startX, unsigned int numX)
++{
++	UpdateVoltagesY(startX, numX, 0, numLines[1]);
++}
++
++void Engine_SSE_Compressed::UpdateCurrents_IJKN(unsigned int startX, unsigned int numX)
++{
++	UpdateCurrentsY(startX, numX, 0, numLines[1]);
++}
++
++void Engine_SSE_Compressed::UpdateVoltagesY(unsigned int startX, unsigned int numX, unsigned int y0, unsigned int y1)
+ {
+ 	if (!m_MatV.empty())
+-		UpdateVoltages_IJKN_T(startX, numX, CoefGeom{m_GeomV.data(), m_MatTabV.data(), m_MatV.data()});
++		UpdateVoltages_IJKN_T(startX, numX, CoefGeom{m_GeomV.data(), m_MatTabV.data(), m_MatV.data()}, y0, y1);
+ 	else
+-		UpdateVoltages_IJKN_T(startX, numX, CoefPacked{m_PackedV.data()->c});
++		UpdateVoltages_IJKN_T(startX, numX, CoefPacked{m_PackedV.data()->c}, y0, y1);
+ }
+ 
+-void Engine_SSE_Compressed::UpdateCurrents_IJKN(unsigned int startX, unsigned int numX)
++void Engine_SSE_Compressed::UpdateCurrentsY(unsigned int startX, unsigned int numX, unsigned int y0, unsigned int y1)
+ {
+ 	if (!m_MatI.empty())
+-		UpdateCurrents_IJKN_T(startX, numX, CoefGeom{m_GeomI.data(), m_MatTabI.data(), m_MatI.data()});
++		UpdateCurrents_IJKN_T(startX, numX, CoefGeom{m_GeomI.data(), m_MatTabI.data(), m_MatI.data()}, y0, y1);
+ 	else
+-		UpdateCurrents_IJKN_T(startX, numX, CoefPacked{m_PackedI.data()->c});
++		UpdateCurrents_IJKN_T(startX, numX, CoefPacked{m_PackedI.data()->c}, y0, y1);
+ }
+diff --git a/FDTD/engine_sse_compressed.h b/FDTD/engine_sse_compressed.h
+index 8cebd30..9d535da 100644
+--- a/FDTD/engine_sse_compressed.h
++++ b/FDTD/engine_sse_compressed.h
+@@ -43,8 +43,12 @@ protected:
+ 	void UpdateVoltages_IJKN(unsigned int startX, unsigned int numX);
+ 	void UpdateCurrents_IJKN(unsigned int startX, unsigned int numX);
+ 	//! The loops above, with the coefficients from the packed or the geometry tables (CoefPacked, CoefGeom in the .cpp)
+-	template<class C> void UpdateVoltages_IJKN_T(unsigned int startX, unsigned int numX, const C& coef);
+-	template<class C> void UpdateCurrents_IJKN_T(unsigned int startX, unsigned int numX, const C& coef);
++	template<class C> void UpdateVoltages_IJKN_T(unsigned int startX, unsigned int numX, const C& coef, unsigned int y0, unsigned int y1);
++	template<class C> void UpdateCurrents_IJKN_T(unsigned int startX, unsigned int numX, const C& coef, unsigned int y0, unsigned int y1);
++	//! The same updates for the y lines [y0, y1) of the x lines only, for the tiled sweep of the multithreaded engine,
++	//! whose threads share a block of x lines; only with UseIJKN()
++	void UpdateVoltagesY(unsigned int startX, unsigned int numX, unsigned int y0, unsigned int y1);
++	void UpdateCurrentsY(unsigned int startX, unsigned int numX, unsigned int y0, unsigned int y1);
+ 	//! true if both field arrays use the I-J-K-N layout (component stride 1, z stride 3) and the packed or
+ 	//! the geometry coefficient tables below exist (not with OPENEMS_NO_PACKED_COEFF or after a failed allocation);
+ 	//! otherwise the generic loops run and Engine_Multithread does not fuse its sweep
+diff --git a/FDTD/extensions/engine_ext_steadystate.cpp b/FDTD/extensions/engine_ext_steadystate.cpp
+index 8bd8ea4..52a2958 100644
+--- a/FDTD/extensions/engine_ext_steadystate.cpp
++++ b/FDTD/extensions/engine_ext_steadystate.cpp
+@@ -15,6 +15,7 @@
+ *	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include <algorithm>
+ #include "engine_ext_steadystate.h"
+ #include "operator_ext_steadystate.h"
+ #include "FDTD/engine_sse.h"
+@@ -85,6 +86,11 @@ unsigned int Engine_Ext_SteadyState::GetUsedHooks() const
+ 	return APPLY_VOLT | (m_Lines ? LINE_HOOKS | ((m_Op_SS->m_TS_period>2u*m_NrThreads) ? TS_LOCAL : 0) : 0);
+ }
+ 
++unsigned int Engine_Ext_SteadyState::GetMaxBlockDepth() const
++{
++	return std::max(1u, (unsigned int)m_Op_SS->m_TS_period);
++}
++
+ bool Engine_Ext_SteadyState::IsEvaluationStep(unsigned int TS) const
+ {
+ 	const unsigned int p = m_Op_SS->m_TS_period;
+diff --git a/FDTD/extensions/engine_ext_steadystate.h b/FDTD/extensions/engine_ext_steadystate.h
+index 8adc00e..8d8c931 100644
+--- a/FDTD/extensions/engine_ext_steadystate.h
++++ b/FDTD/extensions/engine_ext_steadystate.h
+@@ -42,6 +42,9 @@ public:
+ 	//! records keep three periods, the copies and the count of copied lines are not touched again before the next
+ 	//! evaluation step), and every evaluation sees the records and copies of its timestep
+ 	virtual unsigned int GetUsedHooks() const;
++	//! One period: a block of the tiled sweep then holds one evaluation step at most, and the lines that run ahead
++	//! write into the third period of the records. (RunFDTD never asks for more than half a period per call anyway.)
++	virtual unsigned int GetMaxBlockDepth() const;
+ 
+ 	virtual void Apply2Voltages();
+ 	virtual void Apply2Current();
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index df82438..075acb5 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -113,6 +113,10 @@ public:
+ 	//! The lower line x of every pair (x, x+1) that one of the voltage line hooks couples: a hook on x that reads x+1,
+ 	//! or a hook on x+1 that reads x (e.g. a Mur ABC on an x-face). Both lines are then swept in one block by one thread.
+ 	virtual void GetCoupledLines(std::vector<unsigned int>& /*lines*/) const {}
++	//! TS_LOCAL extensions: how many timesteps its line hooks may run in one block of the tiled sweep (OPENEMS_TBLOCK),
++	//! where the x-lines of a block are up to that many timesteps minus one apart, whatever the thread count.
++	//! Unlimited by default; the steady-state detection allows one period.
++	virtual unsigned int GetMaxBlockDepth() const {return ~0u;}
+ 
+ 	//! Set the Engine to this extension. This will usually done automatically by Engine::AddExtension
+ 	virtual void SetEngine(Engine* eng) {m_Eng=eng;}
+-- 
+2.54.0 (Apple Git-157)
+

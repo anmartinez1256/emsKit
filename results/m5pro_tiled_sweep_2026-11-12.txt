@@ -1,0 +1,118 @@
+The tiled sweep (patch 0040, OPENEMS_TBLOCK) against the fused sweep on an Apple M5 Pro (Mac mini), 2026-11-12
+====================================================================================================
+Tiled = snapshot cg32d (the fork's commit 0ef186b = patch 0040) with OPENEMS_TBLOCK; fused = cg31 (ff2538a, patches 0001-0039).
+What the tiled sweep is and its identity checks (also on this machine): results/tiled_sweep_cg32_2026-11-11.txt.
+MACHINE: Mac mini, Apple M5 Pro (Mac17,16), 5 Super cores (hw.perflevel0, L2 16 MiB) + 10 Performance cores (two L2 of 8 MiB),
+24 GB, macOS 27.2.1 (26B131). A set of its own: compared only with numbers from this machine (the M5 timing is in the record above).
+When: 2026-11-12 03:36:18 to 04:16:43, one block of a night queue on the machine, scripts/m5pro/stageB.zsh (thread counts 5, 10, 15).
+Method: bench/abtest.py, 3 interleaved rounds, medians in MC/s; gate: wait up to 20 s for the other processes to use at most
+300 % CPU, redo a run once above that (scripts/m5pro/common.zsh). A first try at 02:23 with a stricter gate (70 %, 240 s) was
+stopped: macOS's indexing kept the others at 1 to 3.5 cores, so nearly every run waited its full time (8 of 162 runs in 55 min).
+Background: that indexing ran all night; the others' median per model is listed below, and every row's in the output per model.
+On the PML cube the fused rows and the rows with OPENEMS_TBLOCK=4 and with OPENEMS_TBLOCK_HOOKS=0 ran beside 2.3 to 3.2 cores, the
+row with OPENEMS_BALANCE=0 beside 1.5 and the tiled auto rows beside 0.15 to 0.74, so its x0.65 sets a loaded fused best against
+a quiet tiled best. Other rows near or above one core: notch x3 tiled auto at 5 threads (1.14) and the 2.95 M box with
+OPENEMS_TBLOCK=8, W=33 (3.25) and with OPENEMS_TBLOCK=4 (1.09).
+Correctness: every one of the 162 runs gave probes identical to the reference run (cg31 at 5 threads).
+
+model (cells)          others  fused 5 / 10 / 15 thr   tiled auto 5 / 10 / 15 thr   best tiled / best fused
+patch x5 (7.86 M)      0.3     2827 / 3764 / 4078      3071 / 3945 / 3896           x0.97 (10 thr 3945 against 15 thr 4078)
+notch x3 (5.25 M)      0.4     2577 / 4078 / 4946      2141 / 2477 / 2155           x0.50
+PML cube (8 M)         2.3     1508 / 2117 / 2355      1531 / 1533 / 1237           x0.65
+PEC box (16.8 M)       0.2     2986 / 3103 / 3326      3049 / 4357 / 4752           x1.43 (both at 15 thr)
+SMA board (0.87 M)     0.1     1912 / 3154 / 4106      1564 / 1692 / 1543           x0.41 (best other setting: W=65 at 5 thr, 1660)
+PEC box (2.95 M)       0.6     3197 / 4850 / 5602      3353 / 3789 / 3258           x0.68
+others = the other processes' median use in cores during the model's runs.
+
+Other settings (at 5 or 15 threads): OPENEMS_BALANCE=0 (equal shares) within 3 % of the measured shares except the 2.95 M box at
+15 threads (3530 against 3258, wide range); OPENEMS_TBLOCK_HOOKS=0 (hook stages on one thread) slower everywhere it ran (patch x5
+2613 against 3071, notch x3 1647 against 2141, PML cube 674 against 1531); set depths (OPENEMS_TBLOCK=4, 3, 2, 8 with a width)
+beat auto at the same thread count only within the noise (3 % or less), except the SMA board with W=65 at 5 threads (1660
+against 1564, +6 %; still x0.40 of the fused sweep at 15 threads).
+
+Reading:
+- The fused sweep scales to all 15 cores of this chip (x1.4 to x2.1 from 5 to 15 threads) except on the 16.8 M PEC box, where it
+  is nearly flat (2986 to 3326): that grid is memory-bound, and the tiled sweep lifts it to 4752 (x1.43). This is the one model
+  where the tiled sweep pays, the same model as in the M5 record.
+- On the other five the tiled sweep loses (x0.41 to x0.97): the fused sweep keeps gaining from the ten Performance cores while the
+  tiled sweep peaks at 10 threads and falls at 15. A reading, not measured: one barrier per task across all threads costs more
+  as threads are added. The standalone kernel (scripts/kernel/kb_tile.cpp) gains x1.21 at 15 threads on this machine
+  (results/m5pro_speed_set_2026-11-12.txt), so the engine loses something the kernel does not.
+- Verdict for this chip, the same as on the M5: the tiled sweep stays opt-in, never a default, and nothing for the two boards.
+  A rule that switches it on by itself would need the grid to be far past the cache and the fused sweep to be memory-bound, which
+  only a timed comparison at run time can tell (not built).
+
+Per model, as abtest.py prints it (median MC/s [min-max], median paired ratio to c0 [min-max], others' CPU / GPU, result):
+
+# patch_s5_n1000  2026-11-12 03:37  load avg 5.85  3 rounds, interleaved, each round after others <= 300 % CPU
+# summary patch_s5_n1000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:5                                           2827.0 [2811-2860]  x1.000 [1.000-1.000]  others 41%/1%  identical,reference
+  c1 cg31@multithreaded:10                                          3764.4 [3733-3786]  x1.328 [1.324-1.332]  others 34%/1%  identical
+  c2 cg31@multithreaded:15                                          4077.9 [4055-4103]  x1.443 [1.426-1.451]  others 68%/1%  identical
+  c3 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto                      3071.2 [2981-3176]  x1.086 [1.061-1.110]  others 30%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     3945.0 [3882-3961]  x1.385 [1.381-1.395]  others 25%/1%  identical
+  c5 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto                     3896.5 [3674-3969]  x1.363 [1.307-1.404]  others 25%/1%  identical
+  c6 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0   3845.9 [3556-3903]  x1.360 [1.265-1.365]  others 22%/1%  identical
+  c7 cg32d@multithreaded:5#OPENEMS_TBLOCK=4                         2822.5 [2804-3021]  x1.004 [0.992-1.056]  others 31%/1%  identical
+  c8 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto,OPENEMS_TBLOCK_HOOKS=0   2612.6 [2505-2652]  x0.924 [0.891-0.927]  others 30%/1%  identical
+
+# notch_s3_n1500  2026-11-12 03:40  load avg 3.56  3 rounds, interleaved, each round after others <= 300 % CPU
+# summary notch_s3_n1500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:5                                           2576.6 [2520-2624]  x1.000 [1.000-1.000]  others 62%/1%  identical,reference
+  c1 cg31@multithreaded:10                                          4077.8 [4069-4141]  x1.579 [1.578-1.618]  others 49%/1%  identical
+  c2 cg31@multithreaded:15                                          4946.3 [4906-4956]  x1.923 [1.869-1.962]  others 39%/1%  identical
+  c3 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto                      2141.3 [1689-2185]  x0.833 [0.656-0.850]  others 114%/1%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     2477.3 [2464-2529]  x0.964 [0.961-0.978]  others 23%/1%  identical
+  c5 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto                     2155.3 [2045-2270]  x0.836 [0.779-0.901]  others 31%/1%  identical
+  c6 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0   2164.9 [2049-2305]  x0.840 [0.781-0.914]  others 21%/1%  identical
+  c7 cg32d@multithreaded:5#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=17     2198.1 [2178-2214]  x0.853 [0.830-0.879]  others 39%/1%  identical
+  c8 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto,OPENEMS_TBLOCK_HOOKS=0   1646.7 [1606-1661]  x0.627 [0.623-0.659]  others 27%/1%  identical
+
+# cube_s2_n600  2026-11-12 03:44  load avg 6.49  3 rounds, interleaved, each round after others <= 300 % CPU
+# summary cube_s2_n600: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:5                                           1507.7 [1418-1509]  x1.000 [1.000-1.000]  others 308%/0%  identical,reference
+  c1 cg31@multithreaded:10                                          2117.2 [2117-2139]  x1.419 [1.403-1.493]  others 301%/0%  identical
+  c2 cg31@multithreaded:15                                          2354.7 [2318-2422]  x1.562 [1.536-1.707]  others 233%/0%  identical
+  c3 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto                      1530.6 [1374-1577]  x1.014 [0.969-1.046]  others 74%/0%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     1533.4 [1516-1559]  x1.033 [1.017-1.069]  others 28%/0%  identical
+  c5 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto                     1237.0 [1223-1418]  x0.872 [0.811-0.940]  others 15%/0%  identical
+  c6 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0   1203.1 [986-1367]  x0.798 [0.695-0.906]  others 150%/0%  identical
+  c7 cg32d@multithreaded:5#OPENEMS_TBLOCK=4                         1375.0 [1357-1423]  x0.944 [0.899-0.969]  others 301%/0%  identical
+  c8 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto,OPENEMS_TBLOCK_HOOKS=0    673.9 [641-682]  x0.447 [0.425-0.481]  others 317%/2%  identical
+
+# lbox_s2_n400  2026-11-12 04:00  load avg 5.13  3 rounds, interleaved, each round after others <= 300 % CPU
+# summary lbox_s2_n400: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:5                                           2985.7 [2933-2991]  x1.000 [1.000-1.000]  others 14%/0%  identical,reference
+  c1 cg31@multithreaded:10                                          3102.7 [3092-3113]  x1.043 [1.037-1.054]  others 21%/0%  identical
+  c2 cg31@multithreaded:15                                          3325.9 [3307-3342]  x1.119 [1.106-1.134]  others 20%/0%  identical
+  c3 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto                      3048.8 [2986-3150]  x1.019 [1.018-1.055]  others 15%/0%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     4356.9 [4313-4385]  x1.466 [1.459-1.471]  others 15%/0%  identical
+  c5 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto                     4752.5 [4694-4812]  x1.612 [1.569-1.620]  others 13%/0%  identical
+  c6 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0   4689.5 [4568-4777]  x1.571 [1.558-1.597]  others 13%/0%  identical
+  c7 cg32d@multithreaded:5#OPENEMS_TBLOCK=3                         2944.9 [2923-3016]  x0.997 [0.985-1.010]  others 15%/0%  identical
+  c8 cg32d@multithreaded:5#OPENEMS_TBLOCK=2                         2732.4 [2724-2739]  x0.917 [0.914-0.929]  others 14%/0%  identical
+
+# ksma_s1_n6000  2026-11-12 04:03  load avg 5.47  3 rounds, interleaved, each round after others <= 300 % CPU
+# summary ksma_s1_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:5                                           1912.3 [1866-1937]  x1.000 [1.000-1.000]  others 18%/0%  identical,reference
+  c1 cg31@multithreaded:10                                          3154.0 [3083-3159]  x1.652 [1.628-1.652]  others 17%/0%  identical
+  c2 cg31@multithreaded:15                                          4106.1 [4089-4234]  x2.139 [2.120-2.269]  others 12%/0%  identical
+  c3 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto                      1564.4 [1559-1571]  x0.822 [0.805-0.838]  others 13%/0%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     1692.3 [1644-1702]  x0.874 [0.860-0.912]  others 14%/0%  identical
+  c5 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto                     1543.4 [1416-1567]  x0.807 [0.731-0.840]  others 14%/0%  identical
+  c6 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0   1571.2 [1547-1643]  x0.811 [0.809-0.881]  others 13%/0%  identical
+  c7 cg32d@multithreaded:5#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=17     1329.9 [1325-1330]  x0.696 [0.684-0.713]  others 15%/0%  identical
+  c8 cg32d@multithreaded:5#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=65     1660.3 [1654-1666]  x0.871 [0.854-0.890]  others 15%/0%  identical
+
+# lbox_s1_n2000  2026-11-12 04:06  load avg 4.89  3 rounds, interleaved, each round after others <= 300 % CPU
+# summary lbox_s1_n2000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:5                                           3197.4 [2997-3359]  x1.000 [1.000-1.000]  others 40%/0%  identical,reference
+  c1 cg31@multithreaded:10                                          4850.2 [4839-4955]  x1.513 [1.475-1.619]  others 62%/0%  identical
+  c2 cg31@multithreaded:15                                          5602.1 [5513-5698]  x1.724 [1.697-1.869]  others 68%/0%  identical
+  c3 cg32d@multithreaded:5#OPENEMS_TBLOCK=auto                      3352.7 [3096-3431]  x1.033 [0.998-1.073]  others 27%/0%  identical
+  c4 cg32d@multithreaded:10#OPENEMS_TBLOCK=auto                     3788.7 [3754-3834]  x1.199 [1.128-1.253]  others 58%/1%  identical
+  c5 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto                     3258.5 [2748-3798]  x0.970 [0.859-1.267]  others 31%/1%  identical
+  c6 cg32d@multithreaded:15#OPENEMS_TBLOCK=auto,OPENEMS_BALANCE=0   3529.8 [3054-3766]  x1.121 [0.955-1.178]  others 48%/0%  identical
+  c7 cg32d@multithreaded:5#OPENEMS_TBLOCK=8,OPENEMS_TBLOCK_W=33     3394.0 [2823-3473]  x1.086 [0.841-1.133]  others 325%/0%  identical
+  c8 cg32d@multithreaded:5#OPENEMS_TBLOCK=4                         3226.2 [3210-3288]  x1.028 [0.961-1.071]  others 109%/2%  identical
+

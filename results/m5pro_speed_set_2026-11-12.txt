@@ -1,0 +1,473 @@
+The fork on a second machine: Apple M5 Pro (Mac mini), 2026-11-12
+====================================================================================================
+Bandwidth, thread sweep, speed table, allocation-placement valley, scheduling switches and the two boards end to end.
+MACHINE: Mac mini, Apple M5 Pro (Mac17,16), 5 "Super" cores (hw.perflevel0, one L2 of 16 MiB) + 10 "Performance" cores
+(hw.perflevel1, two L2 of 8 MiB), 24 GB, macOS 27.2.1 (26B131). Every other speed of this repository was measured on an Apple M5
+MacBook Air (4 + 6 cores, 16 GB); these numbers are a set of their own and are compared only with each other.
+When: 2026-11-12 07:13:43 to 08:32:36, one block of a night queue on the machine (no other measured job ran beside it), stages
+scripts/m5pro/stageA.zsh, stageC.zsh, stageD.zsh, stageE.zsh in that order; every stage exited 0.
+Libraries: cg31 = the fork's commit ff2538a (patches 0001-0039; CPU engine "multithreaded", GPU engine "metal-diamond"), stock =
+openEMS v0.37.0, both as snapshots for bench/bench.py; the same library files as on the M5.
+Method: bench/abtest.py, interleaved rounds, medians in MC/s; every run's port probes are compared with the reference run (c0).
+Gate: wait up to 20 s for the other processes to use at most 300 % CPU (3 of 15 cores), redo a run once above that
+(scripts/m5pro/common.zsh). Every row lists the other processes' median CPU / GPU use during its runs.
+Background: macOS's own indexing (mediaanalysisd, Spotlight) ran all night; most rows ran beside 0.2 to 0.4 cores of other load.
+Rows near or above one core: speed_notch_s1 (median 1.15 cores) and speed_patch_s5 (1.27), whose ranges are wider, and the
+patch tutorial's row with the automatic count (speed_patch_s1 c5, 1.13). A job of another program (a PCB design rule check,
+about 1.5 to 2 cores, no GPU) ran from about 07:29 to 07:36: it fell on round 3 of threads_patch_s5 (the medians of all four
+rounds and of rounds 0 to 2 differ by 0.5 % at most: kept) and on round 0 of threads_kgcpw (its runs 0.7 to 14.5 % below the
+median of rounds 1 to 3, though the others column of that round shows at most 0.9 cores; the GCPW row of the thread table uses
+rounds 1 to 3, which moves no median by more than 1.8 %; both versions are printed).
+Correctness: every CPU run of cg31 gave probes identical to its reference run; the GPU rows are within 1e-6 relative (1.7e-7 to
+9.4e-7: Apple's GPU flushes subnormals, the CPU reference does not). The first night on this machine (2026-11-11, 21:21 to 21:35)
+checked the same libraries: emskit fdtd check installed --lite and check cg32d --lite ALL IDENTICAL to stock (18 of 18 rows each,
+six models), validate 15 of 15 on fastest and on metal-diamond, diamond-check 72 of 72, Debye check PASS. The tiled sweep's timing
+on this machine is in results/m5pro_tiled_sweep_2026-11-12.txt.
+
+1. Memory bandwidth (STREAM 5.10, 100 M elements, 20 passes, OpenMP), GB/s
+   threads        1      5     10     15
+   Copy         135    262    235    262
+   Triad        131    256    244    259
+   The five Super cores alone reach the bus limit (about 256 to 262 GB/s). The standalone fused kernel (scripts/kernel/kb_idx.cpp,
+   KB_FUSED=1, patch x5 size, three runs) gives 825 to 829 MC/s at 1 thread, 2645 to 2684 at 5, 3065 to 3088 at 10, 3183 to 3659
+   at 15; on 15 independent sub-grids 4561 MC/s, 223 GB/s at 49 B a cell (86 % of STREAM Triad).
+
+2. Shared-tile kernel (scripts/kernel/kb_tile.cpp, 209 x 209 x 180 = 7.86 M cells, 56 steps; every configuration bit-identical)
+   threads   fused k=1    best one-tile-for-all          ratio
+   5         2685         k=8 W=17  3486                 x1.30
+   10        3553         k=8 W=17  4417                 x1.24
+   15        4561         k=8 W=17  5512                 x1.21   (k=2 W=15 falls to 2337 at 15 threads: x0.51)
+   The standalone kernel gains x1.21 to x1.30 from one shared tile at every thread count. The engine's tiled sweep (patch 0040)
+   peaks at 10 threads on this machine and reaches x0.97 of the fused sweep on patch x5, a model of the same grid size
+   (results/m5pro_tiled_sweep_2026-11-12.txt). What the engine loses against the kernel is not measured (the engine adds a
+   barrier per task, the hook stages of the extensions and the operator tables).
+
+3. Thread sweep of the CPU engine (cg31 at 1 to 15 threads and auto = numThreads 0; 4 rounds), MC/s
+   threads        1     2     3     4     5     6     7     8     9    10    11    12    13    14    15   auto
+   notch x3     690  1281  1814  2241  2611  3020  3361  3639  3914  4102  4317  4414  4559  4731  4860   3948
+   patch x5     782  1422  1920  2290  2705  3183  3612  3922  3618  3608  3701  3792  3902  3935  3965   3502
+   GCPW (r1-3)  565  1074  1525  1956  2365  2507  2710  2847  2954  3170  3471  3704  3899  4064  4241   3054
+   (GCPW, all 4 rounds: 555 1065 1512 1948 2334 2477 2697 2843 2933 3159 3467 3699 3894 4019 4235 / auto 3047)
+   All three models run fastest at 15 threads: x7.0 (notch x3), x5.1 (patch x5), x7.5 (GCPW) over one thread. patch x5 dips at 9
+   and 10 threads (3608 to 3618 against 3922 at 8; not explained). The engine's own choice (numThreads 0; it starts at the
+   hw.perflevel0 count, 5, and tries 5, 7, 9, ..., 15, then 3, then one count either side of the best) took 15 threads in all four
+   notch x3 rounds and 9, 14, 9, 14 on patch x5 (the dip misleads it); on GCPW it printed no choice: the 15000-step run (about 1 s)
+   ends before the search does. On these 1 to 2.7 s runs the automatic count runs at x0.81 (notch x3), x0.88 (patch x5) and x0.72
+   (GCPW) of the best fixed count: the search costs roughly 0.3 to 0.5 s a run.
+
+4. Speed table (5 rounds), MC/s; stock at 5 and 10 threads, the fork's CPU engine at 5, 10, 15 threads and auto, the fork's GPU engine
+   model (cells)        stock 5 / 10    cg31 5 / 10 / 15 / auto      metal-diamond   CPU/stock   GPU/CPU
+   GCPW line (0.24 M)    283 /  130     2213 / 3096 / 4123 / 3034    4085            x14.6       x0.99
+   SMA launch (0.87 M)   449 /  345     1960 / 3170 / 4307 / 2966    3916            x9.6        x0.91
+   notch tutorial        270 /  162     2252 / 3297 / 4111 / 2907    4836            x15.2 *     x1.18
+   notch x3 (5.25 M)     952 / 1124     2598 / 4172 / 4931 / 4023    7140            x4.39       x1.45
+   patch tutorial        152 /   60     2397 / 2436 / 2633 / 2390    2901            x17.3       x1.10
+   patch x5 (7.86 M)    1135 / 1406     2668 / 3636 / 3857 / 3360    6511            x2.74 *     x1.69
+   CPU/stock = the fork's best fixed count over stock's best; GPU/CPU = metal-diamond over the fork's best fixed count.
+   * notch tutorial: the stock rows spread 220 to 350 MC/s (others 1.15 cores), so x12 to x19; patch x5 ran beside 1.27 cores
+   (cg31 at 15 threads 3662 to 4083).
+   Stock is slower at 10 threads than at 5 on four of the six models; the fork's CPU engine is fastest at 15 threads on all six.
+   The GPU engine leads on the two large grids (x1.45, x1.69) and the two tutorials (x1.10, x1.18); on the two boards the CPU
+   engine at 15 threads is level (GCPW) or ahead (SMA, x1.10).
+
+5. Allocation-placement valley on macOS 27.2.1 (GCPW line, 0.24 M cells; 4 rounds), MC/s
+   cg31 1 thread 563, with OPENEMS_NO_STAGGER=1 191 (x0.34); cg31 5 threads 2482, without the stagger 915 (x0.37);
+   stock 1 thread 155, 5 threads 289.
+   The valley is still there on this chip and macOS 27.2.1, and the allocator's stagger still removes it (x2.7 to x2.9).
+
+6. Scheduling switches (notch x3; 4 rounds), MC/s
+   15 threads: default 4953, OPENEMS_FLAGS=0 (spin barriers) 4308 (x0.87), OPENEMS_FLAGS_SPIN_US=50 4909 (x0.99), OPENEMS_QOS=0
+   4892 (x0.99); 10 threads: default 4074, OPENEMS_FLAGS=0 3714 (x0.91), OPENEMS_QOS=0 4109 (x1.01).
+   Without the neighbour flags the engine runs 9 to 13 % slower; the spin limit and the QoS class change nothing measurable
+   on a quiet machine.
+
+7. The two boards end to end through the toolkit (emskit fdtd e2e; toolkit defaults: the engine picks the threads, probe end
+   -60 dB with hold 0.5, SMA mesh floor 0.05 mm; FDTD.Run wall time; others 0.2 to 0.4 cores)
+   board   stock                                  fork CPU engine (cg31)             fork GPU engine (metal-diamond)
+   GCPW    75.8 s (94217 steps, to max_time)      2.8 s (34300 steps, probe end) x27   2.4 s (34300 steps) x32
+   SMA     281.2 s (118475 steps, to max_time)    11.0 s (50320 steps, probe end) x25.6  11.2 s (50320 steps) x25.1
+   Stock has no probe-end criterion, so its runs go to max_time: the ratios hold the steps the probe end saves (x2.7 GCPW, x2.4
+   SMA) and the engine (x10.9 GCPW, x11.3 SMA in MC/s). In these runs the engine's thread choice ran GCPW at 3281 MC/s (15 fixed
+   threads in the speed table: 4123) and SMA at 4147 (4307): on a run of a few seconds the search costs about 20 %, on the 11 s
+   SMA run about 4 %.
+
+Scripts: scripts/m5pro/ (common.zsh with the gate, stageA.zsh to stageE.zsh, wait_quiet.zsh, summarize.py). The kernels are
+scripts/kernel/kb_idx.cpp and kb_tile.cpp run with KB_THREADS=1,5,10,15 and 5,10,15.
+
+Raw output follows: STREAM, the two kernels, then every abtest.py summary as it printed it (median MC/s [min-max], median paired
+ratio to c0 [min-max], the others' CPU / GPU, result), the engine's thread choices and the end-to-end lines.
+
+STREAM (stream.txt)
+  == STREAM threads 1  07:14:43  all processes cpu% 25
+  Copy:          135431.2     0.012034     0.011814     0.013025
+  Scale:         125235.8     0.013580     0.012776     0.018254
+  Add:           130889.6     0.019705     0.018336     0.035751
+  Triad:         131090.8     0.019109     0.018308     0.024050
+  Solution Validates: avg error less than 1.000000e-13 on all three arrays
+  == STREAM threads 5  07:14:44  all processes cpu% 181
+  Copy:          261653.4     0.006219     0.006115     0.006397
+  Scale:         257773.9     0.006337     0.006207     0.007076
+  Add:           256303.7     0.009600     0.009364     0.010493
+  Triad:         255808.7     0.009733     0.009382     0.011628
+  Solution Validates: avg error less than 1.000000e-13 on all three arrays
+  == STREAM threads 10  07:14:45  all processes cpu% 41
+  Copy:          235395.4     0.007035     0.006797     0.007151
+  Scale:         238059.1     0.006924     0.006721     0.007031
+  Add:           232446.5     0.010924     0.010325     0.011121
+  Triad:         244203.9     0.010844     0.009828     0.011111
+  Solution Validates: avg error less than 1.000000e-13 on all three arrays
+  == STREAM threads 15  07:14:46  all processes cpu% 75
+  Copy:          262123.5     0.006157     0.006104     0.006348
+  Scale:         265472.8     0.006087     0.006027     0.006292
+  Add:           259903.7     0.009392     0.009234     0.009956
+  Triad:         258561.8     0.009397     0.009282     0.009773
+  Solution Validates: avg error less than 1.000000e-13 on all three arrays
+
+Fused kernel, three runs (KB_FUSED=1 KB_THREADS=1,5,10,15 kb_idx 8)
+  == kb_idx fused, run 1 07:14:47 all processes cpu% 20
+  grid 209x209x180 (7.863 Mcells, numVectors=45), 4000 operators, 8 steps, 0 extra barriers/TS, hw threads 15
+  volt 0x7a80404000 curr 0x7a86008000 diff 94224 KB
+  stock, 1 thread                         477 MC/s   reference
+  clean, 1 thr dynamic+spin               854 MC/s   bit-identical
+  fused, 1 thr static+spin                825 MC/s   bit-identical
+  clean, 5 thr dynamic+spin              2627 MC/s   bit-identical
+  fused, 5 thr static+spin               2645 MC/s   bit-identical
+  clean, 10 thr dynamic+spin             2973 MC/s   bit-identical
+  fused, 10 thr static+spin              3065 MC/s   bit-identical
+  clean, 15 thr dynamic+spin             3366 MC/s   bit-identical
+  fused, 15 thr static+spin              3590 MC/s   bit-identical
+  == kb_idx fused, run 2 07:14:47 all processes cpu% 17
+  grid 209x209x180 (7.863 Mcells, numVectors=45), 4000 operators, 8 steps, 0 extra barriers/TS, hw threads 15
+  volt 0x7264404000 curr 0x726a008000 diff 94224 KB
+  stock, 1 thread                         482 MC/s   reference
+  clean, 1 thr dynamic+spin               851 MC/s   bit-identical
+  fused, 1 thr static+spin                826 MC/s   bit-identical
+  clean, 5 thr dynamic+spin              2212 MC/s   bit-identical
+  fused, 5 thr static+spin               2684 MC/s   bit-identical
+  clean, 10 thr dynamic+spin             2971 MC/s   bit-identical
+  fused, 10 thr static+spin              3072 MC/s   bit-identical
+  clean, 15 thr dynamic+spin             3308 MC/s   bit-identical
+  fused, 15 thr static+spin              3183 MC/s   bit-identical
+  == kb_idx fused, run 3 07:14:48 all processes cpu% 16
+  grid 209x209x180 (7.863 Mcells, numVectors=45), 4000 operators, 8 steps, 0 extra barriers/TS, hw threads 15
+  volt 0x71fe404000 curr 0x7204008000 diff 94224 KB
+  stock, 1 thread                         481 MC/s   reference
+  clean, 1 thr dynamic+spin               859 MC/s   bit-identical
+  fused, 1 thr static+spin                829 MC/s   bit-identical
+  clean, 5 thr dynamic+spin              2199 MC/s   bit-identical
+  fused, 5 thr static+spin               2662 MC/s   bit-identical
+  clean, 10 thr dynamic+spin             2942 MC/s   bit-identical
+  fused, 10 thr static+spin              3088 MC/s   bit-identical
+  clean, 15 thr dynamic+spin             3207 MC/s   bit-identical
+  fused, 15 thr static+spin              3659 MC/s   bit-identical
+
+Shared-tile kernel (KB_THREADS=5,10,15 kb_tile)
+  == kb_tile 07:14:49 all processes cpu% 116
+  grid 209x209x180 = 7.86 M cells, 0.86 MB of fields per x-line, 56 steps
+   5 threads: fused k=1 on 5 sub-grids   2685 MC/s (132 GB/s at 49 B)
+     one tile for all, k=1 W= 4 ( 3.4 MB, 155 barriers per step):   2378 MC/s  x0.89 of fused  bit-identical
+     one tile for all, k=2 W= 5 ( 4.3 MB, 145 barriers per step):   2557 MC/s  x0.95 of fused  bit-identical
+     one tile for all, k=2 W=15 (12.9 MB, 47 barriers per step):   2942 MC/s  x1.10 of fused  bit-identical
+     one tile for all, k=4 W= 9 ( 7.7 MB, 84 barriers per step):   3147 MC/s  x1.17 of fused  bit-identical
+     one tile for all, k=4 W=15 (12.9 MB, 50 barriers per step):   3315 MC/s  x1.23 of fused  bit-identical
+     one tile for all, k=7 W=15 (12.9 MB, 52 barriers per step):   3455 MC/s  x1.29 of fused  bit-identical
+     one tile for all, k=8 W=17 (14.6 MB, 44 barriers per step):   3486 MC/s  x1.30 of fused  bit-identical
+     one tile for all, k=7 W=30 (25.8 MB, 25 barriers per step):   3405 MC/s  x1.27 of fused  bit-identical
+  10 threads: fused k=1 on 10 sub-grids   3553 MC/s (174 GB/s at 49 B)
+     one tile for all, k=1 W= 4 ( 3.4 MB, 155 barriers per step):   2905 MC/s  x0.82 of fused  bit-identical
+     one tile for all, k=2 W= 5 ( 4.3 MB, 145 barriers per step):   3403 MC/s  x0.96 of fused  bit-identical
+     one tile for all, k=2 W=15 (12.9 MB, 47 barriers per step):   3828 MC/s  x1.08 of fused  bit-identical
+     one tile for all, k=4 W= 9 ( 7.7 MB, 84 barriers per step):   3998 MC/s  x1.13 of fused  bit-identical
+     one tile for all, k=4 W=15 (12.9 MB, 50 barriers per step):   4196 MC/s  x1.18 of fused  bit-identical
+     one tile for all, k=7 W=15 (12.9 MB, 52 barriers per step):   4322 MC/s  x1.22 of fused  bit-identical
+     one tile for all, k=8 W=17 (14.6 MB, 44 barriers per step):   4417 MC/s  x1.24 of fused  bit-identical
+     one tile for all, k=7 W=30 (25.8 MB, 25 barriers per step):   4229 MC/s  x1.19 of fused  bit-identical
+  15 threads: fused k=1 on 15 sub-grids   4561 MC/s (223 GB/s at 49 B)
+     one tile for all, k=1 W= 4 ( 3.4 MB, 155 barriers per step):   2706 MC/s  x0.59 of fused  bit-identical
+     one tile for all, k=2 W= 5 ( 4.3 MB, 145 barriers per step):   3497 MC/s  x0.77 of fused  bit-identical
+     one tile for all, k=2 W=15 (12.9 MB, 47 barriers per step):   2337 MC/s  x0.51 of fused  bit-identical
+     one tile for all, k=4 W= 9 ( 7.7 MB, 84 barriers per step):   4460 MC/s  x0.98 of fused  bit-identical
+     one tile for all, k=4 W=15 (12.9 MB, 50 barriers per step):   5015 MC/s  x1.10 of fused  bit-identical
+     one tile for all, k=7 W=15 (12.9 MB, 52 barriers per step):   5053 MC/s  x1.11 of fused  bit-identical
+     one tile for all, k=8 W=17 (14.6 MB, 44 barriers per step):   5512 MC/s  x1.21 of fused  bit-identical
+     one tile for all, k=7 W=30 (25.8 MB, 25 barriers per step):   5198 MC/s  x1.14 of fused  bit-identical
+
+Thread sweeps (every run line of the two sweeps the other job touched, then the summaries)
+# notch_s3_n2000  2026-11-12 07:14  load avg 6.52  4 rounds, interleaved, each round after others <= 300 % CPU
+# summary notch_s3_n2000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:1                                            690.5 [677-696]  x1.000 [1.000-1.000]  others 22%/2%  identical,reference
+  c1 cg31@multithreaded:2                                           1280.9 [1248-1368]  x1.857 [1.841-1.966]  others 26%/2%  identical
+  c2 cg31@multithreaded:3                                           1814.5 [1749-1969]  x2.628 [2.585-2.829]  others 22%/2%  identical
+  c3 cg31@multithreaded:4                                           2241.0 [2182-2441]  x3.257 [3.201-3.507]  others 28%/2%  identical
+  c4 cg31@multithreaded:5                                           2611.1 [2541-2838]  x3.793 [3.732-4.077]  others 26%/2%  identical
+  c5 cg31@multithreaded:6                                           3020.0 [2970-3224]  x4.402 [4.331-4.633]  others 21%/2%  identical
+  c6 cg31@multithreaded:7                                           3361.3 [3279-3600]  x4.868 [4.846-5.172]  others 32%/3%  identical
+  c7 cg31@multithreaded:8                                           3639.3 [3555-3894]  x5.306 [5.183-5.595]  others 31%/3%  identical
+  c8 cg31@multithreaded:9                                           3914.2 [3830-4093]  x5.707 [5.583-5.881]  others 33%/3%  identical
+  c9 cg31@multithreaded:10                                          4102.1 [4057-4208]  x5.970 [5.937-6.046]  others 26%/3%  identical
+  c10 cg31@multithreaded:11                                          4316.6 [4235-4464]  x6.272 [6.218-6.415]  others 23%/3%  identical
+  c11 cg31@multithreaded:12                                          4413.9 [4349-4594]  x6.415 [6.381-6.602]  others 29%/3%  identical
+  c12 cg31@multithreaded:13                                          4559.0 [4463-4671]  x6.613 [6.574-6.711]  others 27%/4%  identical
+  c13 cg31@multithreaded:14                                          4731.2 [4684-4823]  x6.880 [6.826-6.973]  others 25%/4%  identical
+  c14 cg31@multithreaded:15                                          4859.5 [4844-5018]  x7.113 [7.008-7.211]  others 27%/4%  identical
+  c15 cg31@multithreaded:0                                           3948.0 [3924-4062]  x5.768 [5.699-5.836]  others 24%/3%  identical
+
+# patch_s5_n1200  2026-11-12 07:24  load avg 6.17  4 rounds, interleaved, each round after others <= 300 % CPU
+  r0 c0    785.6 MC/s  others cpu   26% gpu   3%  reference
+  r0 c1   1420.9 MC/s  others cpu   27% gpu   3%  identical
+  r0 c2   1917.7 MC/s  others cpu   25% gpu   3%  identical
+  r0 c3   2295.6 MC/s  others cpu   45% gpu   3%  identical
+  r0 c4   2697.5 MC/s  others cpu   34% gpu   3%  identical
+  r0 c5   3210.4 MC/s  others cpu   22% gpu   3%  identical
+  r0 c6   3651.7 MC/s  others cpu   28% gpu   4%  identical
+  r0 c7   3975.6 MC/s  others cpu   26% gpu   4%  identical
+  r0 c8   3598.2 MC/s  others cpu   33% gpu   4%  identical
+  r0 c9   3611.8 MC/s  others cpu   31% gpu   4%  identical
+  r0 c10   3682.4 MC/s  others cpu   27% gpu   3%  identical
+  r0 c11   3784.0 MC/s  others cpu   24% gpu   4%  identical
+  r0 c12   3900.0 MC/s  others cpu   32% gpu   4%  identical
+  r0 c13   3944.3 MC/s  others cpu   30% gpu   4%  identical
+  r0 c14   3963.4 MC/s  others cpu   24% gpu   4%  identical
+  r0 c15   3627.0 MC/s  others cpu   36% gpu   4%  identical
+  r1 c0    781.7 MC/s  others cpu   27% gpu   3%  identical
+  r1 c1   1425.2 MC/s  others cpu   26% gpu   3%  identical
+  r1 c2   1921.6 MC/s  others cpu   25% gpu   3%  identical
+  r1 c3   2290.1 MC/s  others cpu   30% gpu   3%  identical
+  r1 c4   2712.9 MC/s  others cpu   28% gpu   3%  identical
+  r1 c5   3167.1 MC/s  others cpu   28% gpu   3%  identical
+  r1 c6   3613.1 MC/s  others cpu   23% gpu   3%  identical
+  r1 c7   3937.8 MC/s  others cpu   41% gpu   4%  identical
+  r1 c8   3867.1 MC/s  others cpu   28% gpu   4%  identical
+  r1 c9   3604.3 MC/s  others cpu   30% gpu   4%  identical
+  r1 c10   3720.0 MC/s  others cpu   27% gpu   4%  identical
+  r1 c11   3753.9 MC/s  others cpu   28% gpu   4%  identical
+  r1 c12   3891.4 MC/s  others cpu   26% gpu   4%  identical
+  r1 c13   3934.6 MC/s  others cpu   27% gpu   4%  identical
+  r1 c14   3970.9 MC/s  others cpu   44% gpu   5%  identical
+  r1 c15   3516.6 MC/s  others cpu   23% gpu   4%  identical
+  r2 c0    781.7 MC/s  others cpu   23% gpu   3%  identical
+  r2 c1   1423.1 MC/s  others cpu   25% gpu   3%  identical
+  r2 c2   1921.6 MC/s  others cpu   24% gpu   3%  identical
+  r2 c3   2290.1 MC/s  others cpu   24% gpu   3%  identical
+  r2 c4   2716.0 MC/s  others cpu   27% gpu   3%  identical
+  r2 c5   3198.3 MC/s  others cpu   25% gpu   3%  identical
+  r2 c6   3611.9 MC/s  others cpu   25% gpu   4%  identical
+  r2 c7   3906.8 MC/s  others cpu   25% gpu   4%  identical
+  r2 c8   3627.5 MC/s  others cpu   32% gpu   3%  identical
+  r2 c9   3626.2 MC/s  others cpu   27% gpu   4%  identical
+  r2 c10   3715.1 MC/s  others cpu   26% gpu   3%  identical
+  r2 c11   3800.2 MC/s  others cpu   27% gpu   4%  identical
+  r2 c12   3927.8 MC/s  others cpu   28% gpu   4%  identical
+  r2 c13   3935.5 MC/s  others cpu   30% gpu   4%  identical
+  r2 c14   3965.7 MC/s  others cpu   43% gpu   4%  identical
+  r2 c15   3487.5 MC/s  others cpu   29% gpu   4%  identical
+  r3 c0    778.5 MC/s  others cpu   29% gpu   3%  identical
+  r3 c1   1416.7 MC/s  others cpu   28% gpu   3%  identical
+  r3 c2   1913.8 MC/s  others cpu   34% gpu   3%  identical
+  r3 c3   2273.5 MC/s  others cpu   36% gpu   2%  identical
+  r3 c4   2627.3 MC/s  others cpu   55% gpu   1%  identical
+  r3 c5   3072.1 MC/s  others cpu   75% gpu   2%  identical
+  r3 c6   3611.4 MC/s  others cpu   40% gpu   2%  identical
+  r3 c7   3854.3 MC/s  others cpu   48% gpu   2%  identical
+  r3 c8   3607.9 MC/s  others cpu   45% gpu   2%  identical
+  r3 c9   3604.5 MC/s  others cpu   59% gpu   2%  identical
+  r3 c10   3687.2 MC/s  others cpu  144% gpu   2%  identical
+  r3 c11   3815.8 MC/s  others cpu  143% gpu   3%  identical
+  r3 c12   3903.4 MC/s  others cpu  168% gpu   3%  identical
+  r3 c13   3719.0 MC/s  others cpu  272% gpu   3%  identical
+  r3 c14   3842.0 MC/s  others cpu  176% gpu   3%  identical
+  r3 c15   3423.7 MC/s  others cpu   66% gpu   3%  identical
+# summary patch_s5_n1200: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:1                                            781.7 [778-786]  x1.000 [1.000-1.000]  others 26%/3%  identical,reference
+  c1 cg31@multithreaded:2                                           1422.0 [1417-1425]  x1.820 [1.809-1.823]  others 26%/3%  identical
+  c2 cg31@multithreaded:3                                           1919.7 [1914-1922]  x2.458 [2.441-2.458]  others 25%/3%  identical
+  c3 cg31@multithreaded:4                                           2290.1 [2274-2296]  x2.926 [2.920-2.930]  others 33%/3%  identical
+  c4 cg31@multithreaded:5                                           2705.2 [2627-2716]  x3.452 [3.375-3.474]  others 31%/3%  identical
+  c5 cg31@multithreaded:6                                           3182.7 [3072-3210]  x4.069 [3.946-4.091]  others 27%/3%  identical
+  c6 cg31@multithreaded:7                                           3612.5 [3611-3652]  x4.631 [4.621-4.648]  others 27%/3%  identical
+  c7 cg31@multithreaded:8                                           3922.3 [3854-3976]  x5.018 [4.951-5.061]  others 33%/4%  identical
+  c8 cg31@multithreaded:9                                           3617.7 [3598-3867]  x4.638 [4.580-4.947]  others 33%/4%  identical
+  c9 cg31@multithreaded:10                                          3608.1 [3604-3626]  x4.621 [4.597-4.639]  others 30%/4%  identical
+  c10 cg31@multithreaded:11                                          3701.2 [3682-3720]  x4.745 [4.687-4.759]  others 27%/3%  identical
+  c11 cg31@multithreaded:12                                          3792.1 [3754-3816]  x4.839 [4.802-4.902]  others 28%/4%  identical
+  c12 cg31@multithreaded:13                                          3901.7 [3891-3928]  x4.996 [4.964-5.025]  others 30%/4%  identical
+  c13 cg31@multithreaded:14                                          3935.1 [3719-3944]  x5.027 [4.777-5.035]  others 30%/4%  identical
+  c14 cg31@multithreaded:15                                          3964.6 [3842-3971]  x5.059 [4.935-5.080]  others 43%/4%  identical
+  c15 cg31@multithreaded:0                                           3502.1 [3424-3627]  x4.480 [4.398-4.617]  others 33%/4%  identical
+
+# kgcpw_s1_n15000  2026-11-12 07:33  load avg 6.32  4 rounds, interleaved, each round after others <= 300 % CPU
+  r0 c0    526.1 MC/s  others cpu   50% gpu   3%  reference
+  r0 c1    990.6 MC/s  others cpu   29% gpu   2%  identical
+  r0 c2   1379.8 MC/s  others cpu   48% gpu   2%  identical
+  r0 c3   1673.6 MC/s  others cpu   90% gpu   3%  identical
+  r0 c4   2118.4 MC/s  others cpu   48% gpu   2%  identical
+  r0 c5   2356.1 MC/s  others cpu   50% gpu   2%  identical
+  r0 c6   2556.7 MC/s  others cpu   52% gpu   3%  identical
+  r0 c7   2762.3 MC/s  others cpu   55% gpu   2%  identical
+  r0 c8   2911.9 MC/s  others cpu   37% gpu   3%  identical
+  r0 c9   3136.4 MC/s  others cpu   35% gpu   5%  identical
+  r0 c10   3415.1 MC/s  others cpu   25% gpu   1%  identical
+  r0 c11   3662.5 MC/s  others cpu   14% gpu   1%  identical
+  r0 c12   3833.0 MC/s  others cpu   20% gpu   1%  identical
+  r0 c13   3901.0 MC/s  others cpu   38% gpu   2%  identical
+  r0 c14   4066.1 MC/s  others cpu   41% gpu   3%  identical
+  r0 c15   3032.8 MC/s  others cpu   31% gpu   1%  identical
+  r1 c0    545.0 MC/s  others cpu  104% gpu   1%  identical
+  r1 c1   1055.5 MC/s  others cpu   23% gpu   1%  identical
+  r1 c2   1499.4 MC/s  others cpu   28% gpu   1%  identical
+  r1 c3   1939.5 MC/s  others cpu   27% gpu   1%  identical
+  r1 c4   2302.4 MC/s  others cpu   26% gpu   1%  identical
+  r1 c5   2447.8 MC/s  others cpu   15% gpu   1%  identical
+  r1 c6   2684.8 MC/s  others cpu   18% gpu   1%  identical
+  r1 c7   2847.4 MC/s  others cpu   14% gpu   0%  identical
+  r1 c8   2970.5 MC/s  others cpu   29% gpu   1%  identical
+  r1 c9   3146.8 MC/s  others cpu   21% gpu   1%  identical
+  r1 c10   3462.4 MC/s  others cpu   22% gpu   0%  identical
+  r1 c11   3694.5 MC/s  others cpu   25% gpu   1%  identical
+  r1 c12   3888.8 MC/s  others cpu   19% gpu   0%  identical
+  r1 c13   4064.3 MC/s  others cpu   12% gpu   1%  identical
+  r1 c14   4228.3 MC/s  others cpu   13% gpu   1%  identical
+  r1 c15   3086.3 MC/s  others cpu   14% gpu   0%  identical
+  r2 c0    565.4 MC/s  others cpu   22% gpu   1%  identical
+  r2 c1   1074.4 MC/s  others cpu   18% gpu   1%  identical
+  r2 c2   1524.9 MC/s  others cpu   22% gpu   1%  identical
+  r2 c3   1956.4 MC/s  others cpu   27% gpu   1%  identical
+  r2 c4   2365.1 MC/s  others cpu   32% gpu   1%  identical
+  r2 c5   2506.5 MC/s  others cpu   25% gpu   1%  identical
+  r2 c6   2739.2 MC/s  others cpu   32% gpu   1%  identical
+  r2 c7   2846.8 MC/s  others cpu   15% gpu   1%  identical
+  r2 c8   2954.0 MC/s  others cpu   21% gpu   0%  identical
+  r2 c9   3191.6 MC/s  others cpu   10% gpu   0%  identical
+  r2 c10   3471.3 MC/s  others cpu   13% gpu   0%  identical
+  r2 c11   3703.9 MC/s  others cpu   37% gpu   1%  identical
+  r2 c12   3909.8 MC/s  others cpu   15% gpu   1%  identical
+  r2 c13   4096.6 MC/s  others cpu   14% gpu   0%  identical
+  r2 c14   4241.4 MC/s  others cpu   26% gpu   1%  identical
+  r2 c15   3039.8 MC/s  others cpu   25% gpu   1%  identical
+  r3 c0    566.3 MC/s  others cpu   18% gpu   1%  identical
+  r3 c1   1082.6 MC/s  others cpu   18% gpu   1%  identical
+  r3 c2   1543.7 MC/s  others cpu   19% gpu   1%  identical
+  r3 c3   1991.6 MC/s  others cpu   10% gpu   1%  identical
+  r3 c4   2369.6 MC/s  others cpu   20% gpu   1%  identical
+  r3 c5   2523.8 MC/s  others cpu   11% gpu   1%  identical
+  r3 c6   2709.6 MC/s  others cpu   38% gpu   1%  identical
+  r3 c7   2838.6 MC/s  others cpu   19% gpu   1%  identical
+  r3 c8   2821.1 MC/s  others cpu   20% gpu   1%  identical
+  r3 c9   3170.4 MC/s  others cpu   17% gpu   0%  identical
+  r3 c10   3513.1 MC/s  others cpu   22% gpu   1%  identical
+  r3 c11   3708.2 MC/s  others cpu   21% gpu   1%  identical
+  r3 c12   3898.7 MC/s  others cpu   11% gpu   0%  identical
+  r3 c13   3973.9 MC/s  others cpu   34% gpu   0%  identical
+  r3 c14   4243.1 MC/s  others cpu   12% gpu   0%  identical
+  r3 c15   3054.1 MC/s  others cpu   23% gpu   0%  identical
+# summary kgcpw_s1_n15000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:1                                            555.2 [526-566]  x1.000 [1.000-1.000]  others 36%/1%  identical,reference
+  c1 cg31@multithreaded:2                                           1064.9 [991-1083]  x1.906 [1.883-1.937]  others 20%/1%  identical
+  c2 cg31@multithreaded:3                                           1512.1 [1380-1544]  x2.711 [2.623-2.751]  others 25%/1%  identical
+  c3 cg31@multithreaded:4                                           1948.0 [1674-1992]  x3.489 [3.181-3.558]  others 27%/1%  identical
+  c4 cg31@multithreaded:5                                           2333.8 [2118-2370]  x4.184 [4.027-4.224]  others 29%/1%  identical
+  c5 cg31@multithreaded:6                                           2477.2 [2356-2524]  x4.468 [4.433-4.491]  others 20%/1%  identical
+  c6 cg31@multithreaded:7                                           2697.2 [2557-2739]  x4.852 [4.785-4.926]  others 35%/1%  identical
+  c7 cg31@multithreaded:8                                           2842.7 [2762-2847]  x5.130 [5.013-5.251]  others 17%/1%  identical
+  c8 cg31@multithreaded:9                                           2932.9 [2821-2971]  x5.337 [4.982-5.535]  others 25%/1%  identical
+  c9 cg31@multithreaded:10                                          3158.6 [3136-3192]  x5.709 [5.599-5.962]  others 19%/1%  identical
+  c10 cg31@multithreaded:11                                          3466.9 [3415-3513]  x6.278 [6.139-6.492]  others 22%/1%  identical
+  c11 cg31@multithreaded:12                                          3699.2 [3663-3708]  x6.665 [6.548-6.962]  others 23%/1%  identical
+  c12 cg31@multithreaded:13                                          3893.7 [3833-3910]  x7.025 [6.885-7.286]  others 17%/0%  identical
+  c13 cg31@multithreaded:14                                          4019.1 [3901-4097]  x7.330 [7.017-7.457]  others 24%/1%  identical
+  c14 cg31@multithreaded:15                                          4234.9 [4066-4243]  x7.615 [7.493-7.758]  others 19%/1%  identical
+  c15 cg31@multithreaded:0                                           3047.0 [3033-3086]  x5.528 [5.376-5.765]  others 24%/1%  identical
+
+auto pick notch_s3_n2000: 15 threads 15 threads 15 threads 15 threads 
+auto pick patch_s5_n1200: 9 threads 14 threads 9 threads 14 threads 
+auto pick kgcpw_s1_n15000: 
+
+Speed table
+# kgcpw_s1_n15000  2026-11-12 08:02  load avg 8.33  5 rounds, interleaved, each round after others <= 300 % CPU
+# summary kgcpw_s1_n15000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 stock@multithreaded:5                                           282.7 [281-297]  x1.000 [1.000-1.000]  others 35%/4%  identical,reference
+  c1 stock@multithreaded:10                                          130.5 [126-131]  x0.445 [0.440-0.467]  others 22%/3%  identical
+  c2 cg31@multithreaded:5                                           2213.1 [2176-2247]  x7.875 [7.400-7.997]  others 29%/4%  identical
+  c3 cg31@multithreaded:10                                          3096.2 [3089-3147]  x10.952 [10.427-11.200]  others 25%/3%  identical
+  c4 cg31@multithreaded:15                                          4122.6 [4051-4137]  x14.542 [13.867-14.719]  others 21%/3%  identical
+  c5 cg31@multithreaded:0                                           3034.1 [3009-3055]  x10.737 [10.277-10.799]  others 24%/3%  identical
+  c6 cg31@metal-diamond                                             4084.9 [3704-4101]  x14.242 [13.104-14.598]  others 35%/2%  probes rel 4.5e-07
+
+# ksma_s1_n6000  2026-11-12 08:08  load avg 7.09  5 rounds, interleaved, each round after others <= 300 % CPU
+# summary ksma_s1_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 stock@multithreaded:5                                           448.7 [445-457]  x1.000 [1.000-1.000]  others 32%/4%  identical,reference
+  c1 stock@multithreaded:10                                          345.3 [340-350]  x0.767 [0.756-0.777]  others 27%/4%  identical
+  c2 cg31@multithreaded:5                                           1960.0 [1950-1975]  x4.371 [4.288-4.403]  others 29%/4%  identical
+  c3 cg31@multithreaded:10                                          3170.2 [3132-3179]  x7.036 [6.934-7.120]  others 29%/3%  identical
+  c4 cg31@multithreaded:15                                          4306.6 [4172-4314]  x9.595 [9.138-9.679]  others 26%/3%  identical
+  c5 cg31@multithreaded:0                                           2966.1 [2939-2993]  x6.565 [6.550-6.646]  others 21%/3%  identical
+  c6 cg31@metal-diamond                                             3915.7 [3622-3929]  x8.751 [8.016-8.795]  others 26%/2%  probes rel 2.2e-07
+
+# notch_s1_n16000  2026-11-12 07:50  load avg 6.52  5 rounds, interleaved, each round after others <= 300 % CPU
+# summary notch_s1_n16000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 stock@multithreaded:5                                           269.9 [220-350]  x1.000 [1.000-1.000]  others 119%/0%  identical,reference
+  c1 stock@multithreaded:10                                          161.5 [151-173]  x0.615 [0.442-0.734]  others 92%/0%  identical
+  c2 cg31@multithreaded:5                                           2252.5 [2077-2535]  x8.344 [6.392-11.530]  others 99%/0%  identical
+  c3 cg31@multithreaded:10                                          3297.1 [3260-3313]  x12.076 [9.426-15.044]  others 116%/1%  identical
+  c4 cg31@multithreaded:15                                          4111.4 [4008-4278]  x14.894 [12.229-18.813]  others 114%/1%  identical
+  c5 cg31@multithreaded:0                                           2906.6 [2725-3244]  x10.384 [8.309-13.833]  others 124%/0%  identical
+  c6 cg31@metal-diamond                                             4835.5 [4324-4904]  x17.636 [14.020-19.663]  others 115%/0%  probes rel 9.4e-07
+
+# notch_s3_n2000  2026-11-12 07:56  load avg 3.80  5 rounds, interleaved, each round after others <= 300 % CPU
+# summary notch_s3_n2000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 stock@multithreaded:5                                           951.5 [885-982]  x1.000 [1.000-1.000]  others 30%/4%  identical,reference
+  c1 stock@multithreaded:10                                         1123.6 [1106-1130]  x1.175 [1.151-1.250]  others 30%/3%  identical
+  c2 cg31@multithreaded:5                                           2597.7 [2579-2724]  x2.715 [2.646-3.078]  others 32%/4%  identical
+  c3 cg31@multithreaded:10                                          4171.7 [4144-4232]  x4.384 [4.260-4.783]  others 27%/4%  identical
+  c4 cg31@multithreaded:15                                          4931.1 [4857-4946]  x5.151 [5.027-5.573]  others 38%/4%  identical
+  c5 cg31@multithreaded:0                                           4022.9 [3958-4103]  x4.191 [4.098-4.636]  others 28%/4%  identical
+  c6 cg31@metal-diamond                                             7140.4 [6676-7155]  x7.487 [7.288-7.544]  others 31%/3%  probes rel 2.3e-07
+
+# patch_s1_n10500  2026-11-12 07:40  load avg 1.15  5 rounds, interleaved, each round after others <= 300 % CPU
+# summary patch_s1_n10500: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 stock@multithreaded:5                                           152.4 [137-161]  x1.000 [1.000-1.000]  others 37%/0%  identical,reference
+  c1 stock@multithreaded:10                                           59.6 [59-61]  x0.402 [0.373-0.434]  others 49%/0%  identical
+  c2 cg31@multithreaded:5                                           2396.6 [1967-2436]  x15.132 [12.640-16.408]  others 39%/1%  identical
+  c3 cg31@multithreaded:10                                          2435.6 [2173-2483]  x15.917 [14.142-16.675]  others 26%/0%  identical
+  c4 cg31@multithreaded:15                                          2633.4 [2426-2638]  x17.305 [15.384-18.029]  others 29%/0%  identical
+  c5 cg31@multithreaded:0                                           2390.3 [1964-2444]  x15.183 [12.782-16.436]  others 113%/0%  identical
+  c6 cg31@metal-diamond                                             2901.2 [2363-3081]  x19.279 [14.679-21.249]  others 39%/1%  probes rel 3.8e-07
+
+# patch_s5_n1200  2026-11-12 07:44  load avg 3.23  5 rounds, interleaved, each round after others <= 300 % CPU
+# summary patch_s5_n1200: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 stock@multithreaded:5                                          1135.4 [1114-1179]  x1.000 [1.000-1.000]  others 146%/0%  identical,reference
+  c1 stock@multithreaded:10                                         1406.1 [1379-1477]  x1.237 [1.192-1.300]  others 122%/0%  identical
+  c2 cg31@multithreaded:5                                           2668.4 [2596-2686]  x2.339 [2.262-2.398]  others 127%/0%  identical
+  c3 cg31@multithreaded:10                                          3635.7 [3438-3711]  x3.146 [3.083-3.244]  others 116%/0%  identical
+  c4 cg31@multithreaded:15                                          3857.1 [3662-4083]  x3.458 [3.158-3.596]  others 129%/0%  identical
+  c5 cg31@multithreaded:0                                           3359.6 [3203-3535]  x2.978 [2.875-3.012]  others 123%/0%  identical
+  c6 cg31@metal-diamond                                             6510.8 [6113-6584]  x5.784 [5.183-5.838]  others 140%/1%  probes rel 1.7e-07
+
+Allocation-placement valley
+# kgcpw_s1_n15000  2026-11-12 08:15  load avg 2.33  4 rounds, interleaved, each round after others <= 300 % CPU
+# summary kgcpw_s1_n15000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:1                                            563.2 [562-567]  x1.000 [1.000-1.000]  others 28%/3%  identical,reference
+  c1 cg31@multithreaded:1#OPENEMS_NO_STAGGER=1                       191.0 [190-192]  x0.339 [0.338-0.339]  others 23%/3%  identical
+  c2 cg31@multithreaded:5                                           2482.1 [2471-2486]  x4.403 [4.372-4.418]  others 20%/3%  identical
+  c3 cg31@multithreaded:5#OPENEMS_NO_STAGGER=1                       915.3 [915-918]  x1.627 [1.613-1.629]  others 26%/3%  identical
+  c4 stock@multithreaded:1                                           154.7 [155-155]  x0.275 [0.273-0.275]  others 24%/3%  identical
+  c5 stock@multithreaded:5                                           289.1 [283-294]  x0.512 [0.503-0.522]  others 25%/3%  identical
+
+Scheduling switches
+# notch_s3_n2000  2026-11-12 08:21  load avg 2.39  4 rounds, interleaved, each round after others <= 300 % CPU
+# summary notch_s3_n2000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg31@multithreaded:15                                          4952.6 [4889-4993]  x1.000 [1.000-1.000]  others 26%/4%  identical,reference
+  c1 cg31@multithreaded:15#OPENEMS_FLAGS=0                          4308.5 [4201-4383]  x0.870 [0.859-0.878]  others 23%/4%  identical
+  c2 cg31@multithreaded:15#OPENEMS_FLAGS_SPIN_US=50                 4909.2 [4847-4992]  x0.994 [0.986-1.000]  others 25%/4%  identical
+  c3 cg31@multithreaded:15#OPENEMS_QOS=0                            4892.3 [4837-4999]  x0.993 [0.979-1.001]  others 28%/4%  identical
+  c4 cg31@multithreaded:10                                          4074.1 [3980-4258]  x0.823 [0.814-0.853]  others 24%/3%  identical
+  c5 cg31@multithreaded:10#OPENEMS_FLAGS=0                          3713.8 [3675-3819]  x0.754 [0.744-0.765]  others 26%/3%  identical
+  c6 cg31@multithreaded:10#OPENEMS_QOS=0                            4108.6 [4027-4290]  x0.830 [0.824-0.859]  others 25%/3%  identical
+
+End to end
+  e2e gcpw stock: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.7 ms, run 75.8 s, post 19.5 ms (others cpu 25% gpu 3% over the whole run); FDTD.Run 302.0 MC/s, max timesteps after 94217 TS (others cpu 25% gpu 3%)
+  e2e gcpw cpu: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.9 ms, run 2.8 s, post 14.6 ms (others cpu 19% gpu 3% over the whole run); FDTD.Run 3280.8 MC/s, probe end after 34300 TS (others cpu 18% gpu 3%)
+  e2e gcpw gpu: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.9 ms, run 2.4 s, post 12.7 ms (others cpu 36% gpu 1% over the whole run); FDTD.Run 3790.2 MC/s, probe end after 34300 TS (others cpu 36% gpu 1%)
+  e2e sma stock: exit 0 | emskit fdtd: e2e sma: ok: build 3.9 ms, run 281.2 s, post 17.7 ms (others cpu 37% gpu 3% over the whole run); FDTD.Run 368.3 MC/s, max timesteps after 118475 TS (others cpu 36% gpu 3%)
+  e2e sma cpu: exit 0 | emskit fdtd: e2e sma: ok: build 4.0 ms, run 11.0 s, post 14.5 ms (others cpu 22% gpu 3% over the whole run); FDTD.Run 4147.4 MC/s, probe end after 50320 TS (others cpu 22% gpu 3%)
+  e2e sma gpu: exit 0 | emskit fdtd: e2e sma: ok: build 4.0 ms, run 11.2 s, post 12.8 ms (others cpu 33% gpu 1% over the whole run); FDTD.Run 4047.9 MC/s, probe end after 50320 TS (others cpu 33% gpu 1%)

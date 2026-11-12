@@ -1,7 +1,7 @@
 From ff2538aaf7230b0467739d9002068c2a36b81610 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 39/39] Cylinder extension: line hooks, so a closed cylindrical
+Subject: [PATCH 39/40] Cylinder extension: line hooks, so a closed cylindrical
  mesh runs the fused sweep (snapshot cg31a)
 
 Engine_Ext_Cylinder declared no hooks, so a mesh closed in alpha ran the unfused plan with its two Post hooks on

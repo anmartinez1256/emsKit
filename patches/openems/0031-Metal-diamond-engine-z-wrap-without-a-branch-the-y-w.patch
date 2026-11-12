@@ -1,7 +1,7 @@
 From ca5c99cb231a06b505c9b1926c9d80fb959c19ff Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 31/39] Metal diamond engine: z wrap without a branch, the y
+Subject: [PATCH 31/40] Metal diamond engine: z wrap without a branch, the y
  width by a multiplication, whole SIMD groups (snapshot cg30c)
 
 OPENEMS_DIAMOND_FASTIDX (default on): the z neighbour of the first and last z-vector comes from one load and a

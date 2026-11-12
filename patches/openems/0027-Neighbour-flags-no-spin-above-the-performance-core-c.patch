@@ -1,7 +1,7 @@
 From 78fe656960e177e6f7e5f689b16daf4435cd0429 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 27/39] Neighbour flags: no spin above the performance-core
+Subject: [PATCH 27/40] Neighbour flags: no spin above the performance-core
  count (snapshot cg29)
 
 A wait for a neighbour flag spun like the barriers (OPENEMS_BARRIER_SPIN_US, default 50 us) before it slept. With

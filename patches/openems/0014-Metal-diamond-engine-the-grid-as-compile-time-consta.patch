@@ -1,7 +1,7 @@
 From ca7c33437c40ceba3f146902ba745747a7f8946d Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 20:47:40 -0600
-Subject: [PATCH 14/39] Metal diamond engine: the grid as compile-time
+Subject: [PATCH 14/40] Metal diamond engine: the grid as compile-time
  constants (snapshot cg26)
 
 The kernel is compiled per model already (one macro per extension); the grid dimensions

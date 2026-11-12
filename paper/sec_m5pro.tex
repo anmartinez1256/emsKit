@@ -1,0 +1,241 @@
+\section{The same build on a second machine: an M5 Pro Mac mini}\label{sec:m5pro}
+
+Every other speed of this report was measured on the M5 laptop of Section~\ref{sec:background}. On 2026-11-12 the
+installed build and the tiled sweep of patch 0040 were measured on a second machine, a Mac mini with an Apple M5 Pro,
+with the same library files, not rebuilt: cg31 is the fork's commit ff2538a (patches 0001--0039; the CPU engine
+\code{multithreaded} and the GPU engine \code{metal-diamond}), cg32d is 0ef186b (patch 0040), and stock is v0.37.0
+(\code{results/m5pro\_speed\_set\_2026-11-12.txt}, \code{results/m5pro\_tiled\_sweep\_2026-11-12.txt}; the scripts are
+in \code{scripts/m5pro/}). These numbers form a set of their own. They are compared only with each other: no table of
+this section holds a number of the M5, and no ratio between the two machines is given, since the two chips differ in
+cores, caches and memory at once.
+
+\paragraph{The machine.} Mac mini, Apple M5 Pro (Mac17,16): 5 ``Super'' cores (\code{hw.perflevel0}, one L2 cache of
+16\,MiB) and 10 ``Performance'' cores (\code{hw.perflevel1}, two L2 caches of 8\,MiB), 24\,GB of unified memory,
+macOS~27.2.1 (26B131). Apple's figure for the M5 Pro's memory is 307\,GB/s~\cite{macmini}. The engine's automatic
+thread search (Section~\ref{sec:engine}) starts at the \code{hw.perflevel0} count, here 5, and the \code{auto} rule of
+the tiled sweep reads the 16\,MiB of that cluster's L2 cache.
+
+\paragraph{How it was measured.} In two blocks of a night queue on the machine, with no other measured job beside
+them: the tiled sweep from 03:36 to 04:16 (\code{stageB.zsh}), the rest from 07:13 to 08:32 (\code{stageA.zsh}:
+bandwidth, kernels and thread sweep; \code{stageC.zsh}: speed table; \code{stageD.zsh}: valley and switches;
+\code{stageE.zsh}: the two boards end to end; every stage exited 0). Every rate of Tables~\ref{tab:m5prothreads},
+\ref{tab:m5prospeed} and~\ref{tab:m5protiled} and of the valley and the switches is a median of interleaved rounds of
+\code{bench/abtest.py}. Before each of those runs the gate (\code{scripts/m5pro/common.zsh}) waits up to 20\,s for the
+other processes to use at most 300\,\% CPU, 3 of the 15 cores, and a run made above that is run once more; every row
+of the two records lists the other processes' median CPU and GPU use during its runs. STREAM and the two kernels ran
+without that gate, and the end-to-end runs went through \code{emskit fdtd e2e}, one run each, after a wait of up to
+240\,s for the other processes to use at most 70\,\% CPU. macOS's own indexing (\code{mediaanalysisd}, Spotlight) ran
+all night. A first try of the tiled-sweep timing at 02:23, with a stricter gate (70\,\%, up to 240\,s), was stopped:
+the indexing kept the others at 1 to 3.5 cores, so nearly every run waited its full time (8 of 162 runs in 55
+minutes). Most rows ran beside 0.1 to 0.4 cores of other load. Near or above one core: the speed rows of the notch
+tutorial (a median of 1.15 cores) and of patch x5 (1.27), whose ranges are wider, and the patch tutorial's row with the
+automatic count (1.13); in the tiled sweep notch x3's tiled row at 5 threads (1.14), the 2.95\,M-cell box with $k=8$
+and tiles of 33 x-lines (3.25) and with $k=4$ (1.09), and on the PML cube the fused rows and the rows with $k=4$ and
+with the hook stages on one thread (2.3 to 3.2 cores), while its tiled \code{auto} rows ran beside 0.15 to 0.74. A job
+of another program (a design-rule check of a circuit board, about 1.5 to 2 cores, no GPU) ran from about 07:29 to
+07:36. It fell on round 3 of the patch x5 thread sweep, whose medians over all four rounds and over rounds 0 to 2
+differ by 0.5\,\% at most, so all four rounds are kept; and on round 0 of the GCPW sweep, whose runs were 0.7 to
+14.5\,\% slower than the median of rounds 1 to 3 (the others column of that round shows at most 0.9 cores), so the
+GCPW row of Table~\ref{tab:m5prothreads} uses rounds 1 to 3, which moves no median by more than 1.8\,\% (the record
+prints both).
+
+\paragraph{Correctness on this machine.} On the first evening on the machine, 2026-11-11 from 21:21 to 21:35, the same
+libraries passed the checks of Section~\ref{sec:method}: \code{emskit fdtd check installed --lite} and
+\code{check cg32d --lite} identical to stock on the six models (18 of 18 rows each), the validation suite 15 of 15 with
+the default engine and thread count and with \code{metal-diamond}, \code{diamond-check} 72 of 72, and the Debye check.
+The tiled sweep's identity checks of Section~\ref{sec:tiled} passed at 5, 7, 10, 13 and 15 threads (42 of 42 probe
+sets on the six models, the closed cylinder's raw fields, the steady-state run and the Debye box;
+\code{results/tiled\_sweep\_cg32\_2026-11-11.txt}). In the measurements below every CPU run of cg31 gave probes
+identical to its reference run, and so did all 162 runs of the tiled sweep; the GPU rows are within $10^{-6}$ relative
+of their reference ($1.7\times10^{-7}$ to $9.4\times10^{-7}$: Apple's GPU flushes subnormal numbers, the CPU reference
+keeps them).
+
+\subsection*{Memory bandwidth and the standalone kernels}
+STREAM~\cite{stream} (version 5.10, 100\,M elements per array, 20 passes, OpenMP) gives a Triad rate of 131\,GB/s on
+one thread and 256, 244 and 259\,GB/s at 5, 10 and 15 (Table~\ref{tab:m5proband}): the five Super cores alone reach the
+bus limit, about 256 to 262\,GB/s. The standalone fused kernel (\code{scripts/kernel/kb\_idx.cpp} with
+\code{KB\_FUSED=1}, on a grid of the patch x5 size) gains with every thread count, and on one independent sub-grid per
+thread (\code{kb\_tile.cpp}) it runs at 4\,561\,\MC\ at 15 threads, 223\,GB/s at the 49\,B per cell of the traffic
+model, 86\,\% of STREAM Triad. The same program's shared tile, in which all threads work on one tile for several
+steps, is 1.21--1.30$\times$ its fused sweep at every thread count measured.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{STREAM, GB/s} & \code{kb\_idx.cpp} & \multicolumn{3}{c@{}}{\code{kb\_tile.cpp}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-4}\cmidrule(l){5-7}
+threads & Copy & Triad & fused, one grid & fused, a sub-grid per thread & one shared tile & ratio \\
+\midrule
+1 & 135 & 131 & 825--829 & & & \\
+5 & 262 & 256 & 2\,645--2\,684 & 2\,685 (132\,GB/s) & 3\,486 & 1.30$\times$ \\
+10 & 235 & 244 & 3\,065--3\,088 & 3\,553 (174\,GB/s) & 4\,417 & 1.24$\times$ \\
+15 & 262 & 259 & 3\,183--3\,659 & 4\,561 (223\,GB/s) & 5\,512 & 1.21$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Pro: STREAM 5.10 (best rate of 20 passes, 100\,M elements per array, OpenMP) and the two standalone
+kernels, in \MC: \code{kb\_idx.cpp} with \code{KB\_FUSED=1} on one $209\times209\times180$ grid (7.86\,M cells, the
+patch x5 size, 8 steps; the range of three runs), and \code{kb\_tile.cpp} on the same grid size, 56 steps: its fused
+sweep with one sub-grid per thread (GB/s at 49\,B per cell) and its best shared tile ($k=8$, tiles of 17 x-lines, at
+every thread count; $k=2$ with 15 x-lines falls to 2\,337 at 15 threads, 0.51$\times$). Every kernel configuration is
+bit-identical to its reference. \code{results/m5pro\_speed\_set\_2026-11-12.txt}, sections 1 and 2.}\label{tab:m5proband}
+\end{table}
+
+\subsection*{Threads}
+Table~\ref{tab:m5prothreads} has cg31's CPU engine at five of the counts from 1 to 15 and with the automatic count
+(\code{numThreads=0}) on three models; the full sweep, every count from 1 to 15, is in the record. All three run
+fastest at 15 threads, 7.0$\times$ (notch x3), 5.1$\times$ (patch x5) and 7.5$\times$ (GCPW line) their rate on one
+thread. Patch x5 dips at 9 and 10 threads (3\,608 to 3\,618\,\MC\ against 3\,922 at 8); this is not explained. The
+engine's own choice starts at 5 and tries 5, 7, 9, \ldots, 15, then 3, then one count either side of the best
+(Section~\ref{sec:engine}): it took 15 threads in all four rounds of notch x3 and 9, 14, 9 and 14 on patch x5, where
+the dip misleads it; on the GCPW line it printed no choice, since the 15\,000-step run (about 1\,s) ends before the
+search does. On these runs of 1 to 2.7\,s the automatic count runs at 0.81$\times$ (notch x3), 0.88$\times$ (patch
+x5) and 0.72$\times$ (GCPW line) of the best fixed count: the search costs roughly 0.3 to 0.5\,s a run.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrrlrr@{}}
+\toprule
+model & 1 & 5 & 8 & 10 & 15 & auto & auto's choice & 15 / 1 & auto / best \\
+\midrule
+notch x3, 5.25\,M & 690 & 2\,611 & 3\,639 & 4\,102 & 4\,860 & 3\,948 & 15, 15, 15, 15 & 7.0$\times$ & 0.81$\times$ \\
+patch x5, 7.86\,M & 782 & 2\,705 & 3\,922 & 3\,608 & 3\,965 & 3\,502 & 9, 14, 9, 14 & 5.1$\times$ & 0.88$\times$ \\
+GCPW line, 0.24\,M & 565 & 2\,365 & 2\,847 & 3\,170 & 4\,241 & 3\,054 & none printed & 7.5$\times$ & 0.72$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Pro: cg31's CPU engine at 1, 5, 8, 10 and 15 threads and with the automatic count, in \MC, medians of 4
+interleaved rounds (2\,000, 1\,200 and 15\,000 steps); the GCPW row uses rounds 1 to 3 (see the text). Auto's choice:
+the count the engine printed in each round. Best: the best fixed count, 15 threads on all three.
+\code{results/m5pro\_speed\_set\_2026-11-12.txt}, section 3.}\label{tab:m5prothreads}
+\end{table}
+
+\subsection*{Speed: stock, the CPU engine and the Metal engine}
+Table~\ref{tab:m5prospeed} sets cg31 against stock on the six models, on the CPU at 5, 10 and 15 threads and with the
+automatic count, and on the Metal diamond engine. Stock is slower at 10 threads than at 5 on four of the six models;
+cg31's CPU engine is fastest at 15 threads on all six. At its best fixed count it runs the four models of up to about
+a million cells 9.6--17.3$\times$ as fast as stock at stock's best and the two large models 4.39$\times$ (notch x3) and
+2.74$\times$ (patch x5). The Metal engine leads on the two large grids (1.45$\times$ and 1.69$\times$ the CPU engine at
+15 threads) and on the two tutorials (1.10$\times$ and 1.18$\times$); on the two boards the CPU engine at 15 threads
+is level with it (the GCPW line) or ahead (the SMA launch, 1.10$\times$).
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{stock v0.37.0} & \multicolumn{4}{c}{cg31, CPU engine} & cg31, & CPU / & GPU / \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-7}
+model & 5 thr & 10 thr & 5 thr & 10 thr & 15 thr & auto & Metal & stock & CPU \\
+\midrule
+GCPW line, 0.24\,M & 283 & 130 & 2\,213 & 3\,096 & 4\,123 & 3\,034 & 4\,085 & 14.6$\times$ & 0.99$\times$ \\
+SMA launch, 0.87\,M & 449 & 345 & 1\,960 & 3\,170 & 4\,307 & 2\,966 & 3\,916 & 9.6$\times$ & 0.91$\times$ \\
+notch tutorial, 0.27\,M & 270 & 162 & 2\,252 & 3\,297 & 4\,111 & 2\,907 & 4\,836 & 15.2$\times^{*}$ & 1.18$\times$ \\
+notch x3, 5.25\,M & 952 & 1\,124 & 2\,598 & 4\,172 & 4\,931 & 4\,023 & 7\,140 & 4.39$\times$ & 1.45$\times$ \\
+patch tutorial, 0.10\,M & 152 & 60 & 2\,397 & 2\,436 & 2\,633 & 2\,390 & 2\,901 & 17.3$\times$ & 1.10$\times$ \\
+patch x5, 7.86\,M & 1\,135 & 1\,406 & 2\,668 & 3\,636 & 3\,857 & 3\,360 & 6\,511 & 2.74$\times^{\dagger}$ & 1.69$\times$ \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Pro: stock v0.37.0 at 5 and 10 threads, cg31's CPU engine at 5, 10 and 15 threads and with the automatic
+count, and cg31's Metal diamond engine, in \MC, medians of 5 interleaved rounds. CPU / stock: cg31's best fixed count
+(15 threads on every model) over stock's best; GPU / CPU: the Metal engine over cg31's best fixed count; both are
+ratios of the medians. The SMA launch is on the toolkit's current mesh. Most rows ran beside 0.2 to 0.4 cores of other
+load, the patch tutorial's row with the automatic count beside 1.13. $^{*}$The notch tutorial's rows ran beside 1.15 cores and its stock rows spread from 220 to 350\,\MC, so
+12--19$\times$. $^{\dagger}$Patch x5 ran beside 1.27 cores (cg31 at 15 threads 3\,662 to 4\,083). Every CPU run's
+probes are identical to stock's at 5 threads; the Metal rows differ by $1.7\times10^{-7}$ to $9.4\times10^{-7}$
+relative. \code{results/m5pro\_speed\_set\_2026-11-12.txt}, section 4.}\label{tab:m5prospeed}
+\end{table}
+
+\subsection*{The two boards end to end}
+Table~\ref{tab:m5proe2e} has the two boards end to end, as in Table~\ref{tab:e2e}, on this machine with the toolkit's
+defaults (the engine picks the threads, the probe end at $-60$\,dB with a hold of 0.5, on the SMA launch the 0.05\,mm
+mesh floor; \code{emskit fdtd e2e}, one run each, the other processes on 0.2 to 0.4 cores). Stock has no probe-end
+criterion, so its runs go to \code{max\_time}: the factors hold the steps that the probe end saves (2.7$\times$ on the
+GCPW line, 2.4$\times$ on the SMA launch) and the engine (10.9$\times$ and 11.3$\times$ in \MC). In these runs the
+engine's own thread choice ran the GCPW line at 3\,281\,\MC, where 15 fixed threads ran 4\,123 in
+Table~\ref{tab:m5prospeed}, and the SMA launch at 4\,147 against 4\,307: on a run of a few seconds the search costs
+about 20\,\%, on the 11\,s SMA run about 4\,\%.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+board & stock v0.37.0 & cg31, CPU engine & cg31, Metal engine \\
+\midrule
+GCPW line & 94\,217 steps (\code{max\_time}) & 34\,300 steps (probe end) & 34\,300 steps (probe end) \\
+ & 75.8\,s & 2.8\,s, 27$\times$ & 2.4\,s, 32$\times$ \\
+\addlinespace
+SMA launch & 118\,475 steps (\code{max\_time}) & 50\,320 steps (probe end) & 50\,320 steps (probe end) \\
+ & 281.2\,s & 11.0\,s, 25.6$\times$ & 11.2\,s, 25.1$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Pro: the two boards end to end through the toolkit with its defaults, wall time of \code{FDTD.Run}, one
+run each; factor: stock's time over cg31's. \code{results/m5pro\_speed\_set\_2026-11-12.txt}, section
+7.}\label{tab:m5proe2e}
+\end{table}
+
+\subsection*{The valley and the scheduling switches}
+The allocation-placement valley of Section~\ref{sec:valley} is still there on this chip under macOS~27.2.1, and the
+allocator's stagger still removes it: on the GCPW line (0.24\,M cells) cg31 runs 563\,\MC\ on one thread and 191 with
+\code{OPENEMS\_NO\_STAGGER=1} (0.34$\times$), 2\,482 and 915 at 5 threads (0.37$\times$); stock runs 155 and 289.
+Only the rates were measured; where macOS~27.2.1 places the two field arrays was not tested. Of the scheduling switches
+on notch x3, the engine runs 9 to 13\,\% slower without the neighbour flags of cg29 (Section~\ref{sec:cg29}): with
+the spin barriers in their place (\code{OPENEMS\_FLAGS=0}) it runs 0.87$\times$ at 15 threads (4\,308 against 4\,953\,\MC) and
+0.91$\times$ at 10 (3\,714 against 4\,074). A spin of 50\,$\mu$s on the flag waits at every thread count
+(\code{OPENEMS\_FLAGS\_SPIN\_US=50}; by default the waits do not spin once the threads outnumber the
+\code{hw.perflevel0} cores) and the default QoS class in place of user-initiated (\code{OPENEMS\_QOS=0}) change nothing
+measurable on a quiet machine: 0.99$\times$ each at 15 threads, and 1.01$\times$ for the second at 10
+(\code{results/m5pro\_speed\_set\_2026-11-12.txt}, sections 5 and 6; 4 rounds each).
+
+\subsection*{The tiled sweep}
+Table~\ref{tab:m5protiled} repeats the timing of Table~\ref{tab:tiled} on this machine, at 5, 10 and 15 threads. The
+fused sweep scales to all 15 cores, 1.4--2.1$\times$ from 5 to 15 threads, except on the 16.8\,M-cell PEC box, where
+it is nearly flat (2\,986 to 3\,326\,\MC): that grid is memory-bound, and the tiled sweep lifts it to 4\,752
+(1.43$\times$). This is the one model where the tiled sweep pays, and the one where it also gained most in
+Table~\ref{tab:tiled}. On the other five it
+loses (0.41--0.97$\times$): the fused sweep keeps gaining from the ten Performance cores, while the tiled sweep peaks
+at 10 threads and falls at 15. Equal shares (\code{OPENEMS\_BALANCE=0}) came within 3\,\% of the measured ones except
+on the 2.95\,M-cell box at 15 threads (3\,530 against 3\,258, a wide range); the hook stages on one thread
+(\code{OPENEMS\_TBLOCK\_HOOKS=0}) were slower wherever they ran (patch x5 2\,613 against 3\,071, notch x3 1\,647
+against 2\,141, the PML cube 674 against 1\,531, all at 5 threads); and set depths beat \code{auto} at the same thread
+count only within the noise (3\,\% or less), except on the SMA launch with tiles of 65 x-lines at 5 threads (1\,660
+against 1\,564, +6\,\%; still 0.40$\times$ of the fused sweep at 15 threads).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & & \multicolumn{3}{c}{fused sweep (cg31)} & \multicolumn{3}{c}{tiled sweep, \code{auto}} & best tiled / \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+model & cells & 5 thr & 10 thr & 15 thr & 5 thr & 10 thr & 15 thr & best fused \\
+\midrule
+patch x5 (Mur) & 7.86\,M & 2\,827 & 3\,764 & 4\,078 & 3\,071 & 3\,945 & 3\,896 & 0.97$\times$ \\
+notch x3 (PML at the x ends) & 5.25\,M & 2\,577 & 4\,078 & 4\,946 & 2\,141 & 2\,477 & 2\,155 & 0.50$\times$ \\
+cube with 10-cell PML & 8.0\,M & 1\,508 & 2\,117 & 2\,355 & 1\,531 & 1\,533 & 1\,237 & 0.65$\times$ \\
+PEC box & 16.8\,M & 2\,986 & 3\,103 & 3\,326 & 3\,049 & 4\,357 & 4\,752 & 1.43$\times$ \\
+SMA launch & 0.87\,M & 1\,912 & 3\,154 & 4\,106 & 1\,564 & 1\,692 & 1\,543 & 0.41$\times$ \\
+PEC box & 2.95\,M & 3\,197 & 4\,850 & 5\,602 & 3\,353 & 3\,789 & 3\,258 & 0.68$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Pro: the fused sweep (cg31) and the tiled sweep (cg32d with \code{OPENEMS\_TBLOCK=auto}) of the
+multithreaded engine, in \MC, medians of three interleaved rounds, 2026-11-12 03:36 to 04:16. Best tiled: the fastest
+tiled setting of a model, \code{auto} at 10 threads on every model but the 16.8\,M-cell box (\code{auto} at 15
+threads); best fused: 15 threads on every model. The other processes used a median of 0.1 to 0.6 cores per model and
+2.3 during the PML cube, whose fused rows ran beside 2.3 to 3.1 cores and its tiled rows beside 0.15 to 0.74, so its
+0.65$\times$ sets a loaded fused best against a quiet tiled best; notch x3's tiled row at 5 threads ran beside 1.14.
+All 162 runs gave probes identical to the
+fused sweep's at 5 threads. The models are those of Table~\ref{tab:tiled}.
+\code{results/m5pro\_tiled\_sweep\_2026-11-12.txt}.}\label{tab:m5protiled}
+\end{table}
+
+On a grid of the patch x5 size the standalone kernel gains more from the shared tile than the engine does on this
+machine, and it still gains at 15 threads, where the engine does not. In \code{kb\_tile.cpp} one shared tile runs 1.30$\times$, 1.24$\times$ and 1.21$\times$ the kernel's fused sweep at 5, 10 and 15 threads
+(Table~\ref{tab:m5proband}). In the engine, on patch x5, the tiled sweep runs 1.086$\times$ the fused sweep at 5
+threads (paired), 3\,945 against 3\,764\,\MC\ at 10 and 3\,896 against 4\,078 at 15, so 0.97$\times$ best against best.
+What the engine loses against the kernel was not measured; the engine adds a barrier per task, the hook stages of the
+extensions and the operator tables, and one barrier per task across all threads may cost more as threads are added
+(a reading, not a measurement). The kernel ran at 07:14, three hours after the engine's runs, in the other block of
+the night. The
+verdict is the one of Section~\ref{sec:tiled}: the tiled sweep stays opt-in, never a default, and it gives the two
+boards nothing. A rule that switched it on by itself would need the grid to be far past the cache and the fused sweep
+to be memory-bound, which only a timed comparison at run time can tell; that is not built.
+
+\paragraph{What this set shows.} On this chip the fork's CPU engine is fastest at 15 threads on every model measured
+(on the 16.8\,M-cell box and the patch tutorial it gains only about 1.1$\times$ from 5 to 15 threads), while stock is slower at 10 threads than at 5 on four of six; the automatic thread count costs 0.3 to 0.5\,s a run,
+which matters on runs of a few seconds; the Metal engine leads on the large grids and the tutorials and is level or
+behind on the two boards; the allocation-placement valley persists under macOS~27.2.1 and the stagger still removes it; the neighbour
+flags still pay; and the tiled sweep pays only on a memory-bound grid with little extension work. Bit identity held for
+every CPU run, as on the M5.

@@ -1,7 +1,7 @@
 From de50b22d31394fc3ddec5e5385c0a0a441569fd9 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 35/39] Metal diamond engine: UPML of the z slabs three
+Subject: [PATCH 35/40] Metal diamond engine: UPML of the z slabs three
  components of a cell at a time (snapshot cg30i)
 
 A z slab has one lane of a z-vector per cell, so it stays a loop over cells, but one pass now does the three

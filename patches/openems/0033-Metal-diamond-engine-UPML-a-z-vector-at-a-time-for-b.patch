@@ -1,7 +1,7 @@
 From bf7511f399385bdb7485650b38ec4ce791559c03 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 33/39] Metal diamond engine: UPML a z-vector at a time for
+Subject: [PATCH 33/40] Metal diamond engine: UPML a z-vector at a time for
  boxes with every z line (snapshot cg30f)
 
 The x and y slabs of the UPML have every z line, so their cells fill whole z-vectors: one loop pass now updates a

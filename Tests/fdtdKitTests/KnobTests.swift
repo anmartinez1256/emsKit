@@ -41,7 +41,7 @@ import Testing
 
     @Test func registryEqualsBuildMdSection7() throws {
         let names = try Self.buildMdNames()
-        #expect(names.count == 38)
+        #expect(names.count == 41)
         #expect(FdtdKnobs.registry.map { $0.name } == names)
         #expect(Set(FdtdKnobs.registry.map { $0.name }).count == FdtdKnobs.registry.count)
     }
@@ -54,6 +54,27 @@ import Testing
             let transport: FdtdKnobTransport = command == .bench || command == .ab ? .cfgList : .environment
             #expect(Self.issue(text, command, transport) == nil, "\(text) on \(command)")
         }
+    }
+
+    /// OPENEMS_TBLOCK takes `auto` or a depth (0 = off); its width an integer >= 1; its hook switch 0 or 1.
+    @Test func tiledSweepKnobs() throws {
+        for text in ["OPENEMS_TBLOCK=auto", "OPENEMS_TBLOCK=0", "OPENEMS_TBLOCK=4", "OPENEMS_TBLOCK_W=17",
+                     "OPENEMS_TBLOCK_HOOKS=0", "OPENEMS_TBLOCK_HOOKS=1"] {
+            for command in [FdtdCommandName.bench, .ab, .validate, .e2e, .run] {
+                let transport: FdtdKnobTransport = command == .bench || command == .ab ? .cfgList : .environment
+                #expect(Self.issue(text, command, transport) == nil, "\(text) on \(command)")
+            }
+        }
+        for text in ["OPENEMS_TBLOCK=fast", "OPENEMS_TBLOCK=-1", "OPENEMS_TBLOCK=+4", "OPENEMS_TBLOCK=4.5",
+                     "OPENEMS_TBLOCK=", "OPENEMS_TBLOCK_W=0", "OPENEMS_TBLOCK_W=auto", "OPENEMS_TBLOCK_HOOKS=2"] {
+            #expect(Self.issue(text)?.code == .knobValue, "\(text)")
+        }
+        let capitals = try #require(Self.issue("OPENEMS_TBLOCK=AUTO"))
+        #expect(capitals.code == .knobValue)
+        #expect(capitals.hint == "OPENEMS_TBLOCK=auto")
+        #expect(FdtdKnobs.knob(named: "OPENEMS_TBLOCK")?.readOncePerProcess == false)
+        // check, debye-check and diamond-check take no knob
+        #expect(Self.issue("OPENEMS_TBLOCK=auto", .check, .environment)?.code == .knobNotAllowed)
     }
 
     @Test func switchesTakeOnlyOne() throws {

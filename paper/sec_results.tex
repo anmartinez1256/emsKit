@@ -13,7 +13,7 @@ models; its best speeds differ from cg14's by $-2.7$ to $+1.6$\,\% on five model
 (whose cg13 run had reached 1\,745\,\MC); on the four models of up to about a million cells it reaches
 1\,361--1\,961\,\MC, 3.1--6.8$\times$ the stock rows of the same tables. The cg17 tables in \code{results/} are
 correctness checks, run while the machine was loaded. Snapshot cg29 is compared with stock on the CPU and
-on the Metal diamond engine in Section~\ref{sec:current}, and the current build, cg31, with cg29 in
+on the Metal diamond engine in Section~\ref{sec:current}, and the installed build, cg31, with cg29 in
 Section~\ref{sec:cg31}.
 
 Part of the patch tutorial's factor is not the patches' (\code{results/*\_base.txt}, 2026-11-03, best of two runs on
@@ -81,11 +81,12 @@ P-core count \\
 \bottomrule
 \end{tabular}
 \caption{Snapshots. Each is a complete set of dylibs plus the cumulative patch, kept for bisection on the author's
-machine. \code{patches/openems/} publishes the fork as patches 0001--0039: 0001--0006 end at cg18 (0001 = cg8, 0002 =
+machine. \code{patches/openems/} publishes the fork as patches 0001--0040: 0001--0006 end at cg18 (0001 = cg8, 0002 =
 cg9, 0003 = cg10--cg15, 0004 = cg16, 0005 = cg17, 0006 = cg18), the build installed on the author's Mac from
 2026-11-04 to 2026-11-06; 0007--0016 are cg19--cg28, one per snapshot (Table~\ref{tab:gpucov}); 0017--0027 are cg29,
 one per topic (Table~\ref{tab:cg29}), the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are cg31
-(Section~\ref{sec:cg31}), the build installed since, which has no row here. A row lists what the snapshot added
+(Section~\ref{sec:cg31}), the build installed since, and 0040 is the opt-in tiled sweep of the fork's head
+(snapshot cg32d, Section~\ref{sec:tiled}); neither has a row here. A row lists what the snapshot added
 over the row above; the intermediate snapshots cg3--cg5 and cg7 appear inside the cg6 and cg8
 rows.}\label{tab:snapshots}
 \end{table}
@@ -328,7 +329,9 @@ five cases (1.18--1.50$\times$ as measured) and behind on the dispersive one (0.
 upstream's own new engine is level with or ahead of this fork's CPU engine, and well ahead with dispersive material;
 a paired run of the two on these cases, with the probes compared, has not been made (on another model, run
 interleaved on 2026-11-11, cg31's CPU engine was 1.27$\times$ master's \code{cpu} engine at 3.0\,M cells and
-0.86$\times$ at 17\,M; Table~\ref{tab:threebuilds}). The fork's Metal diamond engine was not part of
+0.86$\times$ at 17\,M; Table~\ref{tab:threebuilds}). The fork's tiled sweep of 2026-11-11, which blocks in time as
+that engine does, was not run on these cases or next to it (Section~\ref{sec:tiled}). The fork's Metal diamond engine
+was not part of
 this run: every case of the tool uses the steady-state detection, which that engine runs on its CPU loops
 (Section~\ref{sec:future}).
 

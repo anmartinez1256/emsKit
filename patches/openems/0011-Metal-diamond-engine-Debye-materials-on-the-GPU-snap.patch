@@ -1,7 +1,7 @@
 From 0242c5ff6406468c922a2b58c9ca62b81f1b1c74 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 09:09:28 -0600
-Subject: [PATCH 11/39] Metal diamond engine: Debye materials on the GPU
+Subject: [PATCH 11/40] Metal diamond engine: Debye materials on the GPU
  (snapshot cg23)
 
 Engine_Ext_DebyeMaterial (exactly that class) runs per tile on the GPU: Pre (pole

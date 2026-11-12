@@ -1,7 +1,7 @@
 From 9651fff37abd2b2b15508b43b85862badc1db4fd Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 22:24:36 -0500
-Subject: [PATCH 01/39] Speed up the multithreaded engine on Apple M5
+Subject: [PATCH 01/40] Speed up the multithreaded engine on Apple M5
  (bit-identical to stock)
 
 Combined tree: upstream gpu-engine plus the step-2 CPU work and this
