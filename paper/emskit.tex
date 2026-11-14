@@ -26,7 +26,7 @@
 \title{\vspace{-1cm}fdtdKit: taking openEMS towards the memory ceiling of an Apple~M5\\
 \large A bit-identical speed-up of the EC-FDTD engine, and two run-length levers on the modelling side}
 \author{Angel Martinez\\ University of Texas at Austin}
-\date{Work of 2026-10-28 to 2026-11-12; draft of 2026-11-12}
+\date{Work of 2026-10-28 to 2026-11-13; draft of 2026-11-13}
 % PDF metadata: keep pdfauthor in step with the name in \author
 \hypersetup{pdftitle={fdtdKit: taking openEMS towards the memory ceiling of an Apple M5}, pdfauthor={Angel Martinez}}
 
@@ -54,7 +54,7 @@ criterion based on the port probes, and a mesh-line merging rule with a minimum 
 themselves. In the same paired runs the Metal engine ran the two large models at 2\,879 and 3\,193\,\MC, 1.47 and
 1.46$\times$ the CPU engine at its best, and one board, a grounded-coplanar (GCPW) line, 1.17$\times$; it was level on
 the other, a vertical SMA launch (1.00$\times$, 1.07 million cells), and slower on the two tutorials (0.97 and
-0.93$\times$); a later build (cg31, 2026-11-11) raised the Metal engine's rates by 1.07--1.58$\times$.
+0.93$\times$); a later build (cg31, 2026-11-11) raised the Metal engine's rates by 1.07--1.53$\times$ on the six models.
 In a sweep of three models over 0.1--7.9 million cells it was ahead in every round from 1.7--2.9
 million cells on, depending on the model, by 1.25--1.52$\times$ above 3 million, and within 0.89--1.23$\times$ of the
 CPU engine below that. Unblocked, as a fused sweep, it reaches only 67--75\,\% of that sweep's traffic bound on the large
@@ -70,7 +70,10 @@ verification policy that made this safe, the mechanisms behind each gain (barrie
 replaced them, the inner loop, work distribution, a fused E/H sweep that cuts the modelled DRAM traffic from 74 to 49
 bytes per cell, an allocation-placement valley, the boundary and dispersive-material paths, coefficient tables, the
 GPU's diamond tiles), and what did not work, and repeat the main measurements, as a set of their own, on a second
-machine, an M5 Pro Mac mini. Because the memory bus of one machine bounds the cell rate, we also
+machine, an M5 Pro Mac mini, where the CPU engine of cg31 runs 2.7 to 14.1$\times$ as fast as stock at stock's best thread
+count, and time three later patches (0041 to 0043) there, with a paired comparison against upstream master's new CPU engine
+(ahead at 1~million cells, level to 14\,\% ahead at 8~million on empty and PML grids (0.93$\times$ on the PML grid at 5 threads), behind on an 8-million-cell dispersive case). Because on the M5 the memory bus of one machine bounds the cell rate on large grids (on the M5 Pro it held back only the largest grid
+measured, 16.8~million cells), we also
 outline, without measurements, how a domain-decomposed engine (openEMS has none today) could spread one model over a
 Thunderbolt-connected cluster of Mac mini or Mac Studio machines, each adding its own unified memory and bus. The
 engine patches, the benchmark harness, the result tables, the scripts and a command line that runs the harness and

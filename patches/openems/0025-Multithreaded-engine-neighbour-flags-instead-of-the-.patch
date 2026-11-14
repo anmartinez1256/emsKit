@@ -1,7 +1,7 @@
 From 8f9d55e20bfa85bdf373341843248105ef4490d8 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 25/40] Multithreaded engine: neighbour flags instead of the
+Subject: [PATCH 25/43] Multithreaded engine: neighbour flags instead of the
  two barriers of the fused sweep
 
 With the fused sweep every timestep still ended at two barriers of all threads. On the Apple M5 (4 P + 6 E

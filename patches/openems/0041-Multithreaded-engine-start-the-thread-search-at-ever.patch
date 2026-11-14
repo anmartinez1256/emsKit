@@ -1,0 +1,148 @@
+From 8bcec904fcaf87974ec1ca1e81f8c51c1f34bcb1 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 03:16:10 -0600
+Subject: [PATCH 41/43] Multithreaded engine: start the thread search at every
+ non-efficiency core
+
+With numThreads=0 the engine timed 0.15 s windows starting at the core
+count of hw.perflevel0 and went up by two. On a chip whose second core
+class is nearly as fast as the first (M5 Pro: 5 "Super" + 10
+"Performance" cores) the search needed eight windows to reach 15
+threads, and short runs lost 4 to 19 % to it.
+
+The search now starts at the number of cores whose hw.perflevelN.name
+is not "Efficiency" (15 on that chip, still 4 on a 4 + 6 M5) and steps
+down by two while every step is the fastest so far, then tries the
+neighbours of the best. Three windows instead of eight on the 5.25 M
+notch model. OPENEMS_TUNE_START=p keeps the old rule.
+
+Scheduling only: probes are identical to v0.37.0 on six models at
+fixed and automatic thread counts.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp | 54 +++++++++++++++++++++++++++++++++++--
+ FDTD/engine_multithread.h   | 11 +++++---
+ 2 files changed, 59 insertions(+), 6 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 7559a3a..5b1c203 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -42,6 +42,8 @@
+ #include <mutex>
+ #include <string>
+ #include <cstdlib>
++#include <cstdio>
++#include <cstring>
+ #ifdef __APPLE__
+ #include <sys/sysctl.h>
+ #elif !defined(_WIN32)
+@@ -109,10 +111,54 @@ static unsigned int PerformanceCores()
+ 	return 0;
+ }
+ 
+-//! first thread count of the automatic search: the performance cores (Apple) or half the hardware threads
++//! the cores of an Apple CPU outside its efficiency cluster: every hw.perflevelN whose name is not "Efficiency"
++//! (an M5: the 4 "Super" cores; an M5 Pro: 5 "Super" + 10 "Performance"); 0 elsewhere or when unknown
++static unsigned int NonEfficiencyCores()
++{
++#ifdef __APPLE__
++	int levels = 0;
++	size_t len = sizeof(levels);
++	if ((sysctlbyname("hw.nperflevels", &levels, &len, NULL, 0)!=0) || (levels<1))
++		return 0;
++	unsigned int sum = 0;
++	for (int k=0; k<levels; ++k)
++	{
++		char key[64], name[64] = {0};
++		snprintf(key, sizeof(key), "hw.perflevel%d.name", k);
++		len = sizeof(name)-1;
++		if (sysctlbyname(key, name, &len, NULL, 0)!=0)
++			return 0;
++		if (strcmp(name, "Efficiency")==0)
++			continue;
++		int cores = 0;
++		snprintf(key, sizeof(key), "hw.perflevel%d.physicalcpu", k);
++		len = sizeof(cores);
++		if ((sysctlbyname(key, &cores, &len, NULL, 0)!=0) || (cores<1))
++			return 0;
++		sum += cores;
++	}
++	return sum;
++#else
++	return 0;
++#endif
++}
++
++//! the tuner's start rule: OPENEMS_TUNE_START=p is the rule up to patch 0040 (start at hw.perflevel0, search
++//! upwards in steps of 2, one step down); unset or anything else starts at every core outside the efficiency
++//! cluster and steps down by 2 for as long as that is faster
++static bool TuneStartAtPerflevel0()
++{
++	const char* env = getenv("OPENEMS_TUNE_START");
++	return env && (strcmp(env, "p")==0);
++}
++
++//! first thread count of the automatic search: the cores outside the efficiency cluster (Apple; with
++//! OPENEMS_TUNE_START=p the performance cores of hw.perflevel0), else half the hardware threads
+ static unsigned int StartThreads(unsigned int maxThreads)
+ {
+-	unsigned int n = PerformanceCores();
++	unsigned int n = TuneStartAtPerflevel0() ? 0 : NonEfficiencyCores();
++	if (n==0)
++		n = PerformanceCores();
+ 	if (n==0)
+ 		n = (maxThreads+1)/2;
+ 	return std::max(1u, std::min(n, maxThreads));
+@@ -215,6 +261,7 @@ void Engine_Multithread::Init()
+ 			m_Tuner.todo.push_back(m_numThreads-2);
+ 		m_Tuner.speed.assign(m_max_numThreads+1, 0);
+ 		m_Tuner.refined = false;
++		m_Tuner.descend = !TuneStartAtPerflevel0();
+ 		m_Tuner.ts = 0;
+ 		m_Tuner.time = 0;
+ 		const char* env = getenv("OPENEMS_TUNE_WINDOW_MS");
+@@ -453,6 +500,9 @@ void Engine_Multithread::TuneThreads(unsigned int iterTS, double seconds)
+ 	// clearly slower with more threads: skip the larger counts
+ 	if ((m_numThreads>t.start) && (speed<0.85*t.best_speed))
+ 		t.todo.erase(std::remove_if(t.todo.begin(), t.todo.end(), [&](unsigned int n) {return n>m_numThreads;}), t.todo.end());
++	// faster with fewer threads than the start: try 2 fewer still (before the queued counts)
++	if (t.descend && !t.refined && (m_numThreads<t.start) && (t.best==m_numThreads) && (m_numThreads>2) && (t.speed[m_numThreads-2]==0))
++		t.todo.insert(t.todo.begin(), m_numThreads-2);
+ 	while (true)
+ 	{
+ 		while (!t.todo.empty() && (t.speed[t.todo.front()]>0))
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index a7b661f..2610dc1 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -248,7 +248,8 @@ protected:
+ 		std::vector<unsigned int> todo;   //!< thread counts still to time, in this order
+ 		std::vector<double> speed;        //!< timesteps/s by thread count (0: not timed)
+ 		bool refined;        //!< the neighbours of the best coarse count are queued
+-		double settle;       //!< time left before the timing of the current thread count starts (s)
++		bool descend;        //!< below the start, keep stepping down by 2 while that is faster
++		double settle;      //!< time left before the timing of the current thread count starts (s)
+ 		unsigned int ts;     //!< timesteps timed with the current thread count
+ 		double time;         //!< and their time (s)
+ 		double window;       //!< time to measure each thread count (s)
+@@ -257,9 +258,11 @@ protected:
+ 	} m_Tuner;
+ 	//! Run \a n timesteps on the threads, returns the time (s)
+ 	double RunTimesteps(unsigned int n);
+-	//! Times P (the performance-core count on Apple, half the hardware threads elsewhere; see StartThreads),
+-	//! then P+2, P+4, .. up to the maximum (until one is clearly slower than the best) and P-2, then the two
+-	//! neighbours of the fastest; keeps the fastest count. Every candidate is clamped to m_Tuner.maxUse.
++	//! Times P (on Apple the cores outside the efficiency cluster, half the hardware threads elsewhere; see
++	//! StartThreads), then P+2, P+4, .. up to the maximum (until one is clearly slower than the best) and P-2,
++	//! P-4, .. for as long as each is the fastest so far, then the two neighbours of the fastest; keeps the
++	//! fastest count. Every candidate is clamped to m_Tuner.maxUse. OPENEMS_TUNE_START=p: start at the
++	//! performance cores of hw.perflevel0 and stop the way down after P-2 (the rule up to patch 0040).
+ 	//! (Coarse steps: the speed is not monotonic, e.g. P+1 threads can be slower than P and P+2.)
+ 	void TuneThreads(unsigned int iterTS, double seconds);
+ 
+-- 
+2.54.0 (Apple Git-157)
+

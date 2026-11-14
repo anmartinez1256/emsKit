@@ -1,7 +1,7 @@
 From 51cc4012c8b6d685c6512f3dcd763a1b1d3b7d62 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 26/40] Steady-state detection: TS_LOCAL, so that it runs with
+Subject: [PATCH 26/43] Steady-state detection: TS_LOCAL, so that it runs with
  the neighbour flags
 
 The steady-state detection kept the barriers: it recorded its E-field probes in a ring of two periods, and the

@@ -376,7 +376,7 @@ index 0000000..7387b0f
 +
 +#endif // ENGINE_METAL_DIAMOND_H
 diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
-index 6a3c092..7559a3a 100644
+index 6a3c092..5b1c203 100644
 --- a/FDTD/engine_multithread.cpp
 +++ b/FDTD/engine_multithread.cpp
 @@ -26,6 +26,9 @@
@@ -389,7 +389,7 @@ index 6a3c092..7559a3a 100644
  #include "extensions/engine_extension.h"
  #include "tools/denormal.h"
  #include "tools/useful.h"
-@@ -33,12 +36,27 @@
+@@ -33,12 +36,29 @@
  #include "boost/date_time/posix_time/posix_time.hpp"
  #include "boost/date_time/gregorian/gregorian.hpp"
  #include <iomanip>
@@ -399,6 +399,8 @@ index 6a3c092..7559a3a 100644
 +#include <mutex>
 +#include <string>
 +#include <cstdlib>
++#include <cstdio>
++#include <cstring>
 +#ifdef __APPLE__
 +#include <sys/sysctl.h>
 +#elif !defined(_WIN32)
@@ -417,7 +419,7 @@ index 6a3c092..7559a3a 100644
  //! \brief construct an Engine_Multithread instance
  //! it's the responsibility of the caller to free the returned pointer
  Engine_Multithread* Engine_Multithread::New(const Operator_Multithread* op, unsigned int numThreads)
-@@ -55,6 +73,8 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+@@ -55,6 +75,8 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
  	m_Op_MT = op;
  	m_type = SSE;
  	m_IterateBarrier = 0;
@@ -426,7 +428,7 @@ index 6a3c092..7559a3a 100644
  	m_startBarrier = 0;
  	m_stopBarrier = 0;
  	m_thread_group = 0;
-@@ -62,9 +82,81 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+@@ -62,9 +84,125 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
  	m_numThreads = 0;
  	m_last_speed = 0;
  	m_opt_speed = false;
@@ -457,10 +459,54 @@ index 6a3c092..7559a3a 100644
 +	return 0;
 +}
 +
-+//! first thread count of the automatic search: the performance cores (Apple) or half the hardware threads
++//! the cores of an Apple CPU outside its efficiency cluster: every hw.perflevelN whose name is not "Efficiency"
++//! (an M5: the 4 "Super" cores; an M5 Pro: 5 "Super" + 10 "Performance"); 0 elsewhere or when unknown
++static unsigned int NonEfficiencyCores()
++{
++#ifdef __APPLE__
++	int levels = 0;
++	size_t len = sizeof(levels);
++	if ((sysctlbyname("hw.nperflevels", &levels, &len, NULL, 0)!=0) || (levels<1))
++		return 0;
++	unsigned int sum = 0;
++	for (int k=0; k<levels; ++k)
++	{
++		char key[64], name[64] = {0};
++		snprintf(key, sizeof(key), "hw.perflevel%d.name", k);
++		len = sizeof(name)-1;
++		if (sysctlbyname(key, name, &len, NULL, 0)!=0)
++			return 0;
++		if (strcmp(name, "Efficiency")==0)
++			continue;
++		int cores = 0;
++		snprintf(key, sizeof(key), "hw.perflevel%d.physicalcpu", k);
++		len = sizeof(cores);
++		if ((sysctlbyname(key, &cores, &len, NULL, 0)!=0) || (cores<1))
++			return 0;
++		sum += cores;
++	}
++	return sum;
++#else
++	return 0;
++#endif
++}
++
++//! the tuner's start rule: OPENEMS_TUNE_START=p is the rule up to patch 0040 (start at hw.perflevel0, search
++//! upwards in steps of 2, one step down); unset or anything else starts at every core outside the efficiency
++//! cluster and steps down by 2 for as long as that is faster
++static bool TuneStartAtPerflevel0()
++{
++	const char* env = getenv("OPENEMS_TUNE_START");
++	return env && (strcmp(env, "p")==0);
++}
++
++//! first thread count of the automatic search: the cores outside the efficiency cluster (Apple; with
++//! OPENEMS_TUNE_START=p the performance cores of hw.perflevel0), else half the hardware threads
 +static unsigned int StartThreads(unsigned int maxThreads)
 +{
-+	unsigned int n = PerformanceCores();
++	unsigned int n = TuneStartAtPerflevel0() ? 0 : NonEfficiencyCores();
++	if (n==0)
++		n = PerformanceCores();
 +	if (n==0)
 +		n = (maxThreads+1)/2;
 +	return std::max(1u, std::min(n, maxThreads));
@@ -508,7 +554,7 @@ index 6a3c092..7559a3a 100644
  Engine_Multithread::~Engine_Multithread()
  {
  #ifdef ENABLE_DEBUG_TIME
-@@ -97,14 +189,38 @@ void Engine_Multithread::Init()
+@@ -97,14 +235,39 @@ void Engine_Multithread::Init()
  {
  	m_stopThreads = true;
  	m_opt_speed = false;
@@ -540,6 +586,7 @@ index 6a3c092..7559a3a 100644
 +			m_Tuner.todo.push_back(m_numThreads-2);
 +		m_Tuner.speed.assign(m_max_numThreads+1, 0);
 +		m_Tuner.refined = false;
++		m_Tuner.descend = !TuneStartAtPerflevel0();
 +		m_Tuner.ts = 0;
 +		m_Tuner.time = 0;
 +		const char* env = getenv("OPENEMS_TUNE_WINDOW_MS");
@@ -549,7 +596,7 @@ index 6a3c092..7559a3a 100644
  	}
  	else if (m_numThreads > m_max_numThreads)
  		m_numThreads = m_max_numThreads;
-@@ -124,6 +240,19 @@ void Engine_Multithread::Reset()
+@@ -124,6 +287,19 @@ void Engine_Multithread::Reset()
  		m_thread_group->join_all(); // wait for termination
  		delete m_IterateBarrier;
  		m_IterateBarrier = 0;
@@ -569,7 +616,7 @@ index 6a3c092..7559a3a 100644
  		delete m_startBarrier;
  		m_startBarrier = 0;
  		delete m_stopBarrier;
-@@ -158,7 +287,7 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+@@ -158,7 +334,7 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
  	if (m_IterateBarrier!=0)
  		delete m_IterateBarrier;
  	// make sure all threads are waiting
@@ -578,7 +625,7 @@ index 6a3c092..7559a3a 100644
  
  	if (m_startBarrier!=0)
  		delete m_startBarrier;
-@@ -168,6 +297,21 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+@@ -168,6 +344,21 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
  		delete m_stopBarrier;
  	m_stopBarrier = new boost::barrier(m_numThreads+1); // numThread workers + 1 controller
  
@@ -600,7 +647,7 @@ index 6a3c092..7559a3a 100644
  	m_thread_group = new boost::thread_group();
  	for (unsigned int n=0; n<m_numThreads; n++)
  	{
-@@ -190,20 +334,152 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+@@ -190,20 +381,155 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
  
  	for (size_t n=0; n<m_Eng_exts.size(); ++n)
  		m_Eng_exts.at(n)->SetNumberOfThreads(m_numThreads);
@@ -728,6 +775,9 @@ index 6a3c092..7559a3a 100644
 +	// clearly slower with more threads: skip the larger counts
 +	if ((m_numThreads>t.start) && (speed<0.85*t.best_speed))
 +		t.todo.erase(std::remove_if(t.todo.begin(), t.todo.end(), [&](unsigned int n) {return n>m_numThreads;}), t.todo.end());
++	// faster with fewer threads than the start: try 2 fewer still (before the queued counts)
++	if (t.descend && !t.refined && (m_numThreads<t.start) && (t.best==m_numThreads) && (m_numThreads>2) && (t.speed[m_numThreads-2]==0))
++		t.todo.insert(t.todo.begin(), m_numThreads-2);
 +	while (true)
 +	{
 +		while (!t.todo.empty() && (t.speed[t.todo.front()]>0))
@@ -758,21 +808,21 @@ index 6a3c092..7559a3a 100644
  }
  
  void Engine_Multithread::NextInterval(float curr_speed)
-@@ -223,65 +499,757 @@ void Engine_Multithread::NextInterval(float curr_speed)
+@@ -223,67 +549,759 @@ void Engine_Multithread::NextInterval(float curr_speed)
  	}
  }
  
 -void Engine_Multithread::DoPreVoltageUpdates(int threadID)
 +void Engine_Multithread::ResetRanges(WorkRange* ranges)
- {
--	//execute extensions in reverse order -> highest priority gets access to the voltages last
--	for (int n=m_Eng_exts.size()-1; n>=0; --n)
++{
 +	for (unsigned int n=0; n<m_numThreads; ++n)
 +		ranges[n].next.store(ranges[n].start, std::memory_order_relaxed);
 +}
 +
 +void Engine_Multithread::UpdateStealing(WorkRange* ranges, int threadID, bool voltages)
-+{
+ {
+-	//execute extensions in reverse order -> highest priority gets access to the voltages last
+-	for (int n=m_Eng_exts.size()-1; n>=0; --n)
 +	// The order of the x-lines does not matter within one update (each cell only reads the other
 +	// field), so the result is the same whichever thread updates a line. One line per grab: the
 +	// atomic costs ~10-50 ns, a line is >1 us of work.
@@ -924,7 +974,7 @@ index 6a3c092..7559a3a 100644
 +	{
 +		ReportFused("no fused sweep, " + std::to_string(nb) + " blocks of x-lines for " + std::to_string(m_numThreads) + " threads");
 +		return;
- 	}
++	}
 +
 +	// slabs of about the same number of lines, on block boundaries
 +	m_SlabBlocks.assign(m_numThreads+1, nb);
@@ -974,7 +1024,7 @@ index 6a3c092..7559a3a 100644
 +			m_SweepDone[t].value = m_SweepDone[t].sleepers = 0;
 +			m_BoundaryDone[t].value = m_BoundaryDone[t].sleepers = 0;
 +		}
-+	}
+ 	}
 +	m_Fused = true;
 +	std::string flagMsg = ", neighbour flags";
 +	if (g_settings.GetVerboseLevel()>1)
@@ -1024,7 +1074,7 @@ index 6a3c092..7559a3a 100644
 +		else
 +			autoW = std::min(std::min(NX/2, (unsigned int)(cache/line)),
 +							 (unsigned int)std::ceil(200000.0/((double)numLines[1]*numLines[2])));
- 	}
++	}
 +	if (K==0)
 +	{
 +		const std::string msg = autoMsg.empty() ? "" : "no tiled sweep (OPENEMS_TBLOCK=auto), " + autoMsg;
@@ -1032,7 +1082,7 @@ index 6a3c092..7559a3a 100644
 +			cout << "Multithreaded engine: " << msg << endl;
 +		m_TiledMsg = msg;
 +		return;
-+	}
+ 	}
 +	// an extension can bound the depth (the steady-state detection: one period)
 +	for (size_t k=0; k<m_Eng_exts.size(); ++k)
 +		K = std::max(1u, std::min(K, m_Eng_exts.at(k)->GetMaxBlockDepth()));
@@ -1119,7 +1169,7 @@ index 6a3c092..7559a3a 100644
 -		m_Eng_exts.at(n)->DoPreCurrentUpdates(threadID);
 -		m_IterateBarrier->wait();
 +		l0 = q0; l1 = q1; h0 = h1 = q1;
-+	}
+ 	}
 +	else if (q1<=q0)
 +	{
 +		l0 = p0; l1 = p1; h0 = h1 = p1;
@@ -1131,7 +1181,7 @@ index 6a3c092..7559a3a 100644
 +	else if (q1<p0)
 +	{
 +		l0 = q0; l1 = q1; h0 = p0; h1 = p1;
- 	}
++	}
 +	else
 +	{
 +		l0 = std::min(p0, q0); l1 = std::max(p1, q1); h0 = h1 = l1;
@@ -1381,7 +1431,7 @@ index 6a3c092..7559a3a 100644
 +		stat.wait2 += std::chrono::duration<double>(std::chrono::steady_clock::now()-t3).count();
 +		++stat.steps;
 +		return;
- 	}
++	}
 +	m_IterateBarrier->wait();
 +	if (start>0)
 +		FusedCurrents(start-1, start);
@@ -1510,9 +1560,9 @@ index 6a3c092..7559a3a 100644
 +		}
 +		if (plan[n].barrier)
 +			m_IterateBarrier->wait(plan[n].inc_numTS ? &numTS : NULL);
-+	}
-+}
-+
+ 	}
+ }
+ 
 +void Engine_Multithread::DoPreVoltageUpdates(int threadID)
 +{
 +	RunHooks(0, threadID);
@@ -1541,10 +1591,12 @@ index 6a3c092..7559a3a 100644
 +void Engine_Multithread::Apply2Current(int threadID)
 +{
 +	RunHooks(5, threadID);
- }
- 
++}
++
  //
-@@ -306,6 +1274,18 @@ void thread::operator()()
+ // *************************************************************************************************************************
+ //
+@@ -306,6 +1324,18 @@ void thread::operator()()
  
  	// speed up the calculation of denormal floating point values (flush-to-zero)
  	Denormal::Disable();
@@ -1563,7 +1615,7 @@ index 6a3c092..7559a3a 100644
  
  	while (!m_enginePtr->m_stopThreads)
  	{
-@@ -322,13 +1302,35 @@ void thread::operator()()
+@@ -322,13 +1352,35 @@ void thread::operator()()
  
  		DEBUG_TIME( Timer timer1 );
  
@@ -1600,7 +1652,7 @@ index 6a3c092..7559a3a 100644
  
  			// record time
  			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
-@@ -336,6 +1338,10 @@ void thread::operator()()
+@@ -336,6 +1388,10 @@ void thread::operator()()
  			//cout << "Thread " << boost::this_thread::get_id() << " m_barrier1 waiting..." << endl;
  			m_enginePtr->m_IterateBarrier->wait();
  
@@ -1611,7 +1663,7 @@ index 6a3c092..7559a3a 100644
  			// record time
  			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
  
-@@ -350,11 +1356,15 @@ void thread::operator()()
+@@ -350,11 +1406,15 @@ void thread::operator()()
  			m_enginePtr->DoPreCurrentUpdates(m_threadID);
  
  			//current updates
@@ -1629,7 +1681,7 @@ index 6a3c092..7559a3a 100644
  
  			// record time
  			DEBUG_TIME( m_enginePtr->m_timer_list[boost::this_thread::get_id()].push_back( timer1.elapsed() ); )
-@@ -362,11 +1372,9 @@ void thread::operator()()
+@@ -362,11 +1422,9 @@ void thread::operator()()
  			//post current stuff
  			m_enginePtr->DoPostCurrentUpdates(m_threadID);
  			m_enginePtr->Apply2Current(m_threadID);
@@ -1643,7 +1695,7 @@ index 6a3c092..7559a3a 100644
  	}
  
 diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
-index d43b24a..a7b661f 100644
+index d43b24a..2610dc1 100644
 --- a/FDTD/engine_multithread.h
 +++ b/FDTD/engine_multithread.h
 @@ -20,6 +20,11 @@
@@ -1791,7 +1843,7 @@ index d43b24a..a7b661f 100644
  	volatile unsigned int m_iterTS;
  	unsigned int m_numThreads; //!< number of worker threads
  	unsigned int m_max_numThreads; //!< max. number of worker threads
-@@ -115,6 +238,31 @@ protected:
+@@ -115,6 +238,34 @@ protected:
  	bool m_opt_speed;
  	float m_last_speed;
  
@@ -1805,7 +1857,8 @@ index d43b24a..a7b661f 100644
 +		std::vector<unsigned int> todo;   //!< thread counts still to time, in this order
 +		std::vector<double> speed;        //!< timesteps/s by thread count (0: not timed)
 +		bool refined;        //!< the neighbours of the best coarse count are queued
-+		double settle;       //!< time left before the timing of the current thread count starts (s)
++		bool descend;        //!< below the start, keep stepping down by 2 while that is faster
++		double settle;      //!< time left before the timing of the current thread count starts (s)
 +		unsigned int ts;     //!< timesteps timed with the current thread count
 +		double time;         //!< and their time (s)
 +		double window;       //!< time to measure each thread count (s)
@@ -1814,9 +1867,11 @@ index d43b24a..a7b661f 100644
 +	} m_Tuner;
 +	//! Run \a n timesteps on the threads, returns the time (s)
 +	double RunTimesteps(unsigned int n);
-+	//! Times P (the performance-core count on Apple, half the hardware threads elsewhere; see StartThreads),
-+	//! then P+2, P+4, .. up to the maximum (until one is clearly slower than the best) and P-2, then the two
-+	//! neighbours of the fastest; keeps the fastest count. Every candidate is clamped to m_Tuner.maxUse.
++	//! Times P (on Apple the cores outside the efficiency cluster, half the hardware threads elsewhere; see
++	//! StartThreads), then P+2, P+4, .. up to the maximum (until one is clearly slower than the best) and P-2,
++	//! P-4, .. for as long as each is the fastest so far, then the two neighbours of the fastest; keeps the
++	//! fastest count. Every candidate is clamped to m_Tuner.maxUse. OPENEMS_TUNE_START=p: start at the
++	//! performance cores of hw.perflevel0 and stop the way down after P-2 (the rule up to patch 0040).
 +	//! (Coarse steps: the speed is not monotonic, e.g. P+1 threads can be slower than P and P+2.)
 +	void TuneThreads(unsigned int iterTS, double seconds);
 +
@@ -2507,16 +2562,221 @@ index eea420a..d6b27cd 100644
  	Operator_Ext_Cylinder* cyl_Op;
  
 diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
-index dadf312..71abdfb 100644
+index dadf312..6c40aa0 100644
 --- a/FDTD/extensions/engine_ext_debyematerial.cpp
 +++ b/FDTD/extensions/engine_ext_debyematerial.cpp
-@@ -122,3 +122,64 @@ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdates()
+@@ -18,10 +18,16 @@
+ #include "engine_ext_debyematerial.h"
+ #include "operator_ext_debyematerial.h"
+ #include "FDTD/engine_sse.h"
++#include "tools/global.h"
++#include <cstdlib>
++#include <iostream>
++#include <new>
+ 
+ Engine_Ext_DebyeMaterial::Engine_Ext_DebyeMaterial(Operator_Ext_DebyeMaterial* op_ext_debye) : Engine_Ext_Dispersive(op_ext_debye)
  {
+ 	m_Op_Ext_Deb = op_ext_debye;
++	m_Packed = false;
++	m_BlockStride = 0;
+ 	// the base allocated volt_ADE[0], which carries the joint correction
+ 	unsigned int count = m_Op_Ext_Deb->m_LM_Count.at(0);
+ 
+@@ -94,6 +100,8 @@ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdates()
+ {
++	if (m_Packed)
++		return PrePacked(0, ~0u);
+ 	ENG_DISPATCH(DoPreVoltageUpdatesImpl);
+ }
+ 
+@@ -120,5 +128,245 @@ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdates()
+ {
++	if (m_Packed)
++		return PostPacked(0, ~0u);
  	ENG_DISPATCH(DoPostVoltageUpdatesImpl);
  }
 +
++void Engine_Ext_DebyeMaterial::Apply2Voltages()
++{
++	if (m_Packed)
++		return ApplyPacked(0, ~0u);
++	Engine_Ext_Dispersive::Apply2Voltages();
++}
++
++void Engine_Ext_DebyeMaterial::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	if (m_Packed)
++		return ApplyPacked(x0, x1);
++	Engine_Ext_Dispersive::Apply2VoltagesLines(x0, x1);
++}
++
++void Engine_Ext_DebyeMaterial::SetupPacked()
++{
++	m_Packed = false;
++	std::vector<float>().swap(m_Block);
++#if defined(__GNUC__) || defined(__clang__)
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	// Debye has voltage ADE of order 0 only; the packed hooks replace exactly those
++	if ((P<1) || (m_Op_Ext_Deb->m_Order!=1) || !m_Op_Ext_Deb->m_volt_ADE_On[0] || m_Op_Ext_Deb->m_curr_ADE_On[0])
++		return;
++	if (!SetupGroups())
++		return;
++	if (PackedOff())
++	{
++		ClearGroups();
++		ReportPackRefusal(PACK_OFF, "", 0, 0);
++		return;
++	}
++	const size_t groups = m_GroupX.size();
++	m_BlockStride = 3*(3*P+3)*4;
++	const uint64_t need = (uint64_t)groups*m_BlockStride*sizeof(float);
++	const uint64_t used = PackedBytesOfOthers();
++	if (used+need > 2*FieldBytes())
++	{
++		ClearGroups();
++		ReportPackRefusal(PACK_LIMIT, "", need, used);
++		return;
++	}
++	try
++	{
++		m_Block.assign((size_t)groups*m_BlockStride, 0.0f);
++	}
++	catch (std::bad_alloc&)
++	{
++		std::vector<float>().swap(m_Block);
++		ClearGroups();
++		ReportPackRefusal(PACK_ALLOC, "", need, used);
++		return;
++	}
++	// coefficients, and the current state (zero before the first step) of every used lane
++	for (size_t g=0; g<groups; ++g)
++		for (unsigned int l=0; l<m_GroupLanes[g]; ++l)
++		{
++			const unsigned int i = m_GroupK[g]+l;   // = the original position index (SetupGroups: in x order)
++			for (unsigned int n=0; n<3; ++n)
++			{
++				float* c = &m_Block[g*m_BlockStride + (size_t)n*(3*P+3)*4];
++				for (unsigned int o=0; o<P; ++o)
++				{
++					c[4*o+l] = volt_pole_ADE[o][n][i];
++					c[4*(P+2+o)+l] = m_Op_Ext_Deb->v_relax_ADE[o][n][i];
++					c[4*(2*P+2+o)+l] = m_Op_Ext_Deb->v_drive_ADE[o][n][i];
++				}
++				c[4*P+l] = volt_pre_ADE[n][i];
++				c[4*(P+1)+l] = volt_ADE[0][n][i];
++				c[4*(3*P+2)+l] = m_Op_Ext_Deb->v_solve_ADE[n][i];
++			}
++		}
++	m_Packed = true;
++	if (g_settings.GetVerboseLevel()>1)
++		std::cout << GetExtensionName() << ": packed hooks, " << groups << " groups of " << m_Op_Ext_Deb->m_LM_Count.at(0)
++				  << " positions, " << m_Block.size()*sizeof(float)/1048576.0 << " MiB" << std::endl;
++#endif
++}
++
++#if defined(__GNUC__) || defined(__clang__)
++// the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
++void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
++{
++	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			float* __restrict c = b + n*cs;
++			const unsigned int* fn = f + 4*n;
++			const v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++			v4sf pre = {0.0f, 0.0f, 0.0f, 0.0f};
++			for (unsigned int o=0; o<P; ++o)
++			{
++				const v4sf w = Load4(c+4*o);
++				const v4sf W = Load4(c+4*(P+2+o))*w + Load4(c+4*(2*P+2+o))*v;
++				pre += W - w;
++				Store4(c+4*o, W);
++			}
++			Store4(c+4*P, pre);
++		}
++	}
++}
++
++// the operations of DoPostVoltageUpdatesLines() per lane: V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
++void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1)
++{
++	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			float* __restrict c = b + n*cs;
++			const unsigned int* fn = f + 4*n;
++			const v4sf v_raw = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++			const v4sf v_n = (v_raw - Load4(c+4*P)) * Load4(c+4*(3*P+2));
++			Store4(c+4*(P+1), v_raw - v_n);
++			for (unsigned int o=0; o<P; ++o)
++				Store4(c+4*o, Load4(c+4*o) + Load4(c+4*(2*P+2+o))*v_n);
++		}
++	}
++}
++
++// the operation of Apply2VoltagesLines() per lane: V -= correction (only the used lanes are written)
++void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1)
++{
++	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		const float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		const unsigned int lanes = m_GroupLanes[g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const float* c = b + n*cs + 4*(P+1);
++			const unsigned int* fn = f + 4*n;
++			if (lanes==4)
++			{
++				v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++				v = v - Load4(c);
++				volt[fn[0]] = v[0];
++				volt[fn[1]] = v[1];
++				volt[fn[2]] = v[2];
++				volt[fn[3]] = v[3];
++			}
++			else
++				for (unsigned int l=0; l<lanes; ++l)
++					volt[fn[l]] = volt[fn[l]] - c[l];
++		}
++	}
++}
++#else
++// without the vector extensions SetupPacked() never packs (m_Packed stays false), so these are never called
++void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++#endif
++
 +void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
 +{
++	if (m_Packed)
++		return PrePacked(x0, x1);
 +	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
 +	unsigned int k0, k1;
 +	LineRange(0, x0, x1, k0, k1);
@@ -2545,6 +2805,8 @@ index dadf312..71abdfb 100644
 +
 +void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1)
 +{
++	if (m_Packed)
++		return PostPacked(x0, x1);
 +	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
 +	unsigned int k0, k1;
 +	LineRange(0, x0, x1, k0, k1);
@@ -2576,10 +2838,10 @@ index dadf312..71abdfb 100644
 +	return DispersiveHooks() | PRE_VOLT | POST_VOLT;
 +}
 diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
-index 1c4ea03..b8372f2 100644
+index 1c4ea03..c35567d 100644
 --- a/FDTD/extensions/engine_ext_debyematerial.h
 +++ b/FDTD/extensions/engine_ext_debyematerial.h
-@@ -53,12 +53,18 @@ class Operator_Ext_DebyeMaterial;
+@@ -53,14 +53,37 @@ class Operator_Ext_DebyeMaterial;
    */
  class Engine_Ext_DebyeMaterial : public Engine_Ext_Dispersive
  {
@@ -2595,14 +2857,33 @@ index 1c4ea03..b8372f2 100644
 +	//! (every position has its own state and reads only its own cell); same operations per position
 +	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
 +	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	//! with the packed groups, the whole-grid Apply runs the packed line hook over every x-line (one state)
++	virtual void Apply2Voltages();
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
  
  protected:
++	//! Packed groups (OPENEMS_ADE_PACKED=0: off): the positions in groups of up to four of one x-line
++	//! (Engine_Ext_Dispersive::SetupGroups), the state and coefficients of a group in one block of m_BlockStride
++	//! floats, per component n at n*(3P+3)*4: W[pole] (P x 4 lanes), pre (4), correction volt_ADE (4),
++	//! v_relax[pole] (P x 4), v_drive[pole] (P x 4), v_solve (4). Four lanes at a time, the same operations per lane
++	//! as the one-position loops. While packed, every hook (whole grid or lines) uses the blocks.
++	virtual void SetupPacked();
++	virtual uint64_t PackedBytes() const {return (uint64_t)m_Block.size()*sizeof(float);}
++	bool m_Packed;
++	unsigned int m_BlockStride;
++	std::vector<float> m_Block;
++	void PrePacked(unsigned int x0, unsigned int x1);
++	void PostPacked(unsigned int x0, unsigned int x1);
++	void ApplyPacked(unsigned int x0, unsigned int x1);
++
  	template <typename EngType>
+ 	void DoPreVoltageUpdatesImpl(EngType* eng);
+ 
 diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
-index 5b6afd0..a1bd1e4 100644
+index 5b6afd0..e2e6a15 100644
 --- a/FDTD/extensions/engine_ext_dispersive.cpp
 +++ b/FDTD/extensions/engine_ext_dispersive.cpp
-@@ -18,10 +18,17 @@
+@@ -18,10 +18,18 @@
  #include "engine_ext_dispersive.h"
  #include "operator_ext_dispersive.h"
  #include "FDTD/engine_sse.h"
@@ -2610,6 +2891,7 @@ index 5b6afd0..a1bd1e4 100644
 +#include <algorithm>
 +#include <cstdlib>
 +#include <iostream>
++#include <new>
  
  Engine_Ext_Dispersive::Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_disp) : Engine_Extension(op_ext_disp)
  {
@@ -2620,7 +2902,7 @@ index 5b6afd0..a1bd1e4 100644
  	int order = m_Op_Ext_Disp->m_Order;
  	curr_ADE = new FDTD_FLOAT**[order];
  	volt_ADE = new FDTD_FLOAT**[order];
-@@ -73,6 +80,202 @@ Engine_Ext_Dispersive::~Engine_Ext_Dispersive()
+@@ -73,6 +81,302 @@ Engine_Ext_Dispersive::~Engine_Ext_Dispersive()
  	volt_ADE=NULL;
  }
  
@@ -2703,6 +2985,106 @@ index 5b6afd0..a1bd1e4 100644
 +	if (g_settings.GetVerboseLevel()>1)
 +		std::cout << GetExtensionName() << ": line hooks, " << (m_Op_Ext_Disp->m_Order>0 ? m_Op_Ext_Disp->m_LM_Count.at(0) : 0) << " positions of order 0, orders merged: voltages "
 +				  << (m_VoltMerged ? m_VoltOrders.size() : 0) << ", currents " << (m_CurrMerged ? m_CurrOrders.size() : 0) << std::endl;
++	SetupPacked();
++}
++
++uint64_t Engine_Ext_Dispersive::FieldBytes() const
++{
++	const Engine_sse* eng = (const Engine_sse*)m_Eng;
++	return 2*(uint64_t)eng->f4_volt_ptr->size()*sizeof(f4vector);
++}
++
++uint64_t Engine_Ext_Dispersive::PackedBytesOfOthers() const
++{
++	uint64_t sum = 0;
++	if (!m_Eng)
++		return 0;
++	for (size_t n=0; n<m_Eng->GetExtensionCount(); ++n)
++	{
++		const Engine_Ext_Dispersive* e = dynamic_cast<const Engine_Ext_Dispersive*>(m_Eng->GetExtension(n));
++		if (e && (e!=this))
++			sum += e->PackedBytes();
++	}
++	return sum;
++}
++
++bool Engine_Ext_Dispersive::PackedOff()
++{
++	const char* env = getenv("OPENEMS_ADE_PACKED");
++	return env && *env && (atoi(env)==0);
++}
++
++void Engine_Ext_Dispersive::ReportPackRefusal(PackRefusal r, const char* what, uint64_t need, uint64_t used) const
++{
++	if ((r==PACK_OFF) && (g_settings.GetVerboseLevel()>1))
++		std::cout << GetExtensionName() << ": ADE packing not used" << what << " (OPENEMS_ADE_PACKED=0)" << std::endl;
++	else if (((r==PACK_LIMIT) || (r==PACK_ALLOC)) && (g_settings.GetVerboseLevel()>0))
++		std::cout << GetExtensionName() << ": ADE packing not used" << what << " (" << (r==PACK_LIMIT ? "memory limit" : "allocation failed")
++				  << "): would need " << need << " bytes, limit " << 2*FieldBytes() << " bytes (twice the field arrays), "
++				  << used << " bytes already packed in this engine" << std::endl;
++}
++
++void Engine_Ext_Dispersive::ClearGroups()
++{
++	std::vector<unsigned int>().swap(m_GroupX);
++	std::vector<unsigned int>().swap(m_GroupK);
++	std::vector<unsigned char>().swap(m_GroupLanes);
++	std::vector<unsigned int>().swap(m_GroupFi);
++}
++
++bool Engine_Ext_Dispersive::SetupGroups()
++{
++	ClearGroups();
++	if (!m_LinesReady || (m_Op_Ext_Disp->m_Order<1))
++		return false;
++	const std::vector<unsigned int>& idx = m_SortedIdx[0];
++	const std::vector<unsigned int>& X = m_SortedX[0];
++	const std::vector<unsigned int>& fi = m_FloatIdx[0];
++	const size_t count = idx.size();
++	if (count==0)
++		return false;
++	// the packed state is kept per sorted position k: the positions must already be in x order, and each listed once
++	// (four lanes of one group are written together)
++	for (size_t k=0; k<count; ++k)
++		if (idx[k]!=k)
++			return false;
++	{
++		std::vector<unsigned int> f(count);
++		for (size_t k=0; k<count; ++k)
++			f[k] = fi[3*k];
++		std::sort(f.begin(), f.end());
++		if (std::adjacent_find(f.begin(), f.end())!=f.end())
++			return false;
++	}
++	try
++	{
++		for (size_t k=0; k<count; )
++		{
++			const unsigned int x = X[k];
++			unsigned char lanes = 0;
++			while ((k+lanes<count) && (lanes<4) && (X[k+lanes]==x))
++				++lanes;
++			m_GroupX.push_back(x);
++			m_GroupK.push_back((unsigned int)k);
++			m_GroupLanes.push_back(lanes);
++			for (unsigned int n=0; n<3; ++n)
++				for (unsigned int l=0; l<4; ++l)
++					m_GroupFi.push_back(fi[3*(k+(l<lanes ? l : 0))+n]);
++			k += lanes;
++		}
++	}
++	catch (std::bad_alloc&)
++	{
++		ClearGroups();
++		return false;
++	}
++	return true;
++}
++
++void Engine_Ext_Dispersive::GroupRange(unsigned int x0, unsigned int x1, unsigned int& g0, unsigned int& g1) const
++{
++	g0 = std::lower_bound(m_GroupX.begin(), m_GroupX.end(), x0) - m_GroupX.begin();
++	g1 = std::lower_bound(m_GroupX.begin(), m_GroupX.end(), x1) - m_GroupX.begin();
 +}
 +
 +bool Engine_Ext_Dispersive::MergeOrders(const bool* on, std::vector<int>& orders) const
@@ -2824,7 +3206,7 @@ index 5b6afd0..a1bd1e4 100644
  void Engine_Ext_Dispersive::Apply2VoltagesImpl(EngType* eng)
  {
 diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
-index 8cc9043..06cc8ac 100644
+index 8cc9043..ba5e8ef 100644
 --- a/FDTD/extensions/engine_ext_dispersive.h
 +++ b/FDTD/extensions/engine_ext_dispersive.h
 @@ -19,14 +19,24 @@
@@ -2852,7 +3234,7 @@ index 8cc9043..06cc8ac 100644
  public:
  	Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_disp);
  	virtual ~Engine_Ext_Dispersive();
-@@ -34,7 +44,34 @@ public:
+@@ -34,7 +44,62 @@ public:
  	virtual void Apply2Voltages();
  	virtual void Apply2Current();
  
@@ -2880,7 +3262,35 @@ index 8cc9043..06cc8ac 100644
 +	//! the merged Apply2*Lines(): field[float index] -= ADE of every order, in order
 +	void ApplyMerged(float* field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
 +	void SetupLines();
++	//! called at the end of SetupLines(): subclasses build their packed groups here
++	virtual void SetupPacked() {}
 +	void LineRange(int o, unsigned int x0, unsigned int x1, unsigned int& k0, unsigned int& k1) const;
++
++	//! Groups for packed hooks: the positions of order 0 (in x order, each listed once) in groups of up to four
++	//! positions of ONE x-line, so a group is never shared by two threads; built by SetupGroups(), false (and empty)
++	//! when the positions do not allow it
++	bool SetupGroups();
++	void ClearGroups();
++	//! the groups of the x-lines [x0, x1)
++	void GroupRange(unsigned int x0, unsigned int x1, unsigned int& g0, unsigned int& g1) const;
++	std::vector<unsigned int> m_GroupX;      //!< [g]: x-line of group g (ascending)
++	std::vector<unsigned int> m_GroupK;      //!< [g]: first position (index k of order 0) of group g
++	std::vector<unsigned char> m_GroupLanes; //!< [g]: positions in group g, 1..4
++	std::vector<unsigned int> m_GroupFi;     //!< [12*g+4*n+l]: float index of component n of lane l (unused lanes: lane 0's)
++	//! the bytes of the engine's voltage and current arrays (the limit for packed copies: twice this)
++	uint64_t FieldBytes() const;
++	//! Packed blocks need the GCC/clang vector extensions (v4sf, Load4/Store4); other compilers never build them.
++	//! The limit counts per engine: the packed blocks of all dispersive extensions of one engine together stay
++	//! within twice the field bytes (summed over the extensions of m_Eng, so every engine starts at zero).
++	enum PackRefusal {PACK_OK=0, PACK_NOT_ELIGIBLE, PACK_OFF, PACK_LIMIT, PACK_ALLOC};
++	//! the bytes of this extension's packed blocks
++	virtual uint64_t PackedBytes() const {return 0;}
++	//! the bytes of the packed blocks of the other dispersive extensions of this engine
++	uint64_t PackedBytesOfOthers() const;
++	//! OPENEMS_ADE_PACKED=0
++	static bool PackedOff();
++	//! the line for packing not used: OPENEMS_ADE_PACKED=0 at verbose > 1, memory limit / failed allocation at verbose >= 1
++	void ReportPackRefusal(PackRefusal r, const char* what, uint64_t need, uint64_t used) const;
 +	bool AnyVoltADE() const;
 +	bool AnyCurrADE() const;
 +
@@ -3030,13 +3440,238 @@ index 13af20f..73cf1d9 100644
  
  #endif // ENGINE_EXT_EXCITATION_H
 diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
-index 3702918..c1c0650 100644
+index 3702918..8061978 100644
 --- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
 +++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
-@@ -76,6 +76,163 @@ Engine_Ext_LorentzMaterial::~Engine_Ext_LorentzMaterial()
+@@ -18,6 +18,10 @@
+ #include "engine_ext_lorentzmaterial.h"
+ #include "operator_ext_lorentzmaterial.h"
+ #include "FDTD/engine_sse.h"
++#include "tools/global.h"
++#include <cstdlib>
++#include <iostream>
++#include <new>
+ 
+ Engine_Ext_LorentzMaterial::Engine_Ext_LorentzMaterial(Operator_Ext_LorentzMaterial* op_ext_lorentz) : Engine_Ext_Dispersive(op_ext_lorentz)
+ {
+@@ -76,6 +80,381 @@ Engine_Ext_LorentzMaterial::~Engine_Ext_LorentzMaterial()
  	volt_Lor_ADE=NULL;
  }
  
++void Engine_Ext_LorentzMaterial::SetupPacked()
++{
++	m_PV = PackedSide();
++	m_PI = PackedSide();
++#if defined(__GNUC__) || defined(__clang__)
++	if (!m_VoltMerged && !m_CurrMerged)
++		return;
++	if (!SetupGroups())
++		return;
++	Operator_Ext_LorentzMaterial* op = m_Op_Ext_Lor;
++	PackRefusal rv, ri;
++	uint64_t nv, ni, uv, ui;
++	const bool v = SetupSide(m_PV, m_VoltMerged, m_VoltOrders, volt_ADE, volt_Lor_ADE, op->v_int_ADE, op->v_ext_ADE,
++							 op->v_Lor_ADE, op->m_volt_Lor_ADE_On, rv, nv, uv);
++	const bool i = SetupSide(m_PI, m_CurrMerged, m_CurrOrders, curr_ADE, curr_Lor_ADE, op->i_int_ADE, op->i_ext_ADE,
++							 op->i_Lor_ADE, op->m_curr_Lor_ADE_On, ri, ni, ui);
++	// one line for the extension: a side refused by the memory limit or a failed allocation, else OPENEMS_ADE_PACKED=0
++	{
++		const bool mv = (rv==PACK_LIMIT) || (rv==PACK_ALLOC);
++		const bool mi = (ri==PACK_LIMIT) || (ri==PACK_ALLOC);
++		if (mv || mi)
++			ReportPackRefusal(mv ? rv : ri, mv && mi ? " for voltages and currents" : (mv ? " for voltages" : " for currents"),
++							  (mv ? nv : 0) + (mi ? ni : 0), mv ? uv : ui);
++		else if ((rv==PACK_OFF) || (ri==PACK_OFF))
++			ReportPackRefusal(PACK_OFF, "", 0, 0);
++	}
++	if (!v && !i)
++	{
++		ClearGroups();
++		return;
++	}
++	if (g_settings.GetVerboseLevel()>1)
++		std::cout << GetExtensionName() << ": packed hooks, " << m_GroupX.size() << " groups of " << m_Op_Ext_Lor->m_LM_Count.at(0)
++				  << " positions, voltages " << (v ? m_PV.orders.size() : 0) << " orders, currents " << (i ? m_PI.orders.size() : 0)
++				  << " orders, " << (m_PV.block.size()+m_PI.block.size())*sizeof(float)/1048576.0 << " MiB" << std::endl;
++#endif
++}
++
++bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade,
++	FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on,
++	PackRefusal& r, uint64_t& need, uint64_t& used)
++{
++	s = PackedSide();
++	r = PACK_NOT_ELIGIBLE;
++	need = 0;
++	used = 0;
++	// the groups are built on the positions of order 0; MergeOrders() made sure every merged order has the same ones
++	if (!merged || orders.empty() || (m_FloatIdx[orders[0]]!=m_FloatIdx[0]))
++		return false;
++	if (PackedOff())
++	{
++		r = PACK_OFF;
++		return false;
++	}
++	const size_t groups = m_GroupX.size();
++	const unsigned int no = orders.size();
++	const unsigned int stride = 3*no*20;
++	// the limit counts every packed block of this engine: the other extensions' and this one's other side (s is empty)
++	need = (uint64_t)groups*stride*sizeof(float);
++	used = PackedBytesOfOthers() + PackedBytes();
++	if (used+need > 2*FieldBytes())
++	{
++		r = PACK_LIMIT;
++		return false;
++	}
++	try
++	{
++		s.block.assign(groups*stride, 0.0f);
++	}
++	catch (std::bad_alloc&)
++	{
++		s = PackedSide();
++		r = PACK_ALLOC;
++		return false;
++	}
++	r = PACK_OK;
++	s.stride = stride;
++	s.orders = orders;
++	for (int o : orders)
++		s.lor.push_back(lor_on[o] ? 1 : 0);
++	// coefficients, and the current state (zero before the first step) of every used lane
++	for (size_t g=0; g<groups; ++g)
++		for (unsigned int l=0; l<m_GroupLanes[g]; ++l)
++		{
++			const unsigned int k = m_GroupK[g]+l;   // the position index of every merged order (in x order)
++			for (unsigned int n=0; n<3; ++n)
++				for (unsigned int m=0; m<no; ++m)
++				{
++					const int o = orders[m];
++					float* c = &s.block[g*stride + (size_t)(n*no+m)*20];
++					c[l] = ade[o][n][k];
++					c[8+l] = c_int[o][n][k];
++					c[12+l] = c_ext[o][n][k];
++					if (lor_on[o])
++					{
++						c[4+l] = lor[o][n][k];
++						c[16+l] = c_lor[o][n][k];
++					}
++				}
++		}
++	s.on = true;
++	return true;
++}
++
++#if defined(__GNUC__) || defined(__clang__)
++// the operations of PreMerged() per lane
++void Engine_Ext_LorentzMaterial::PrePacked(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1)
++{
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int no = s.orders.size();
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		float* __restrict b = &s.block[(size_t)g*s.stride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const unsigned int* fn = f + 4*n;
++			const v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++			for (unsigned int m=0; m<no; ++m)
++			{
++				float* __restrict c = b + (n*no+m)*20;
++				v4sf a = Load4(c);
++				if (s.lor[m])
++				{
++					v4sf l = Load4(c+4);
++					l += Load4(c+16)*a;
++					a *= Load4(c+8);
++					a += Load4(c+12)*(v-l);
++					Store4(c+4, l);
++				}
++				else
++				{
++					a *= Load4(c+8);
++					a += Load4(c+12)*v;
++				}
++				Store4(c, a);
++			}
++		}
++	}
++}
++
++// the operations of ApplyMerged() per lane: field -= ADE of every merged order, in order (only the used lanes are written)
++void Engine_Ext_LorentzMaterial::ApplyPacked(float* __restrict field, const PackedSide& s, unsigned int x0, unsigned int x1)
++{
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int no = s.orders.size();
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		const float* __restrict b = &s.block[(size_t)g*s.stride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		const unsigned int lanes = m_GroupLanes[g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const unsigned int* fn = f + 4*n;
++			const float* c = b + n*no*20;
++			if (lanes==4)
++			{
++				v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++				for (unsigned int m=0; m<no; ++m)
++					v = v - Load4(c + m*20);
++				field[fn[0]] = v[0];
++				field[fn[1]] = v[1];
++				field[fn[2]] = v[2];
++				field[fn[3]] = v[3];
++			}
++			else
++				for (unsigned int l=0; l<lanes; ++l)
++				{
++					float v = field[fn[l]];
++					for (unsigned int m=0; m<no; ++m)
++						v = v - c[m*20+l];
++					field[fn[l]] = v;
++				}
++		}
++	}
++}
++#else
++// without the vector extensions SetupPacked() never packs (m_PV.on, m_PI.on stay false), so these are never called
++void Engine_Ext_LorentzMaterial::PrePacked(const float* field, PackedSide& s, unsigned int x0, unsigned int x1)
++{UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_LorentzMaterial::ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1)
++{UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1);}
++#endif
++
++void Engine_Ext_LorentzMaterial::Apply2Voltages()
++{
++	if (m_PV.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, 0, ~0u);
++	Engine_Ext_Dispersive::Apply2Voltages();
++}
++
++void Engine_Ext_LorentzMaterial::Apply2Current()
++{
++	if (m_PI.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, 0, ~0u);
++	Engine_Ext_Dispersive::Apply2Current();
++}
++
++void Engine_Ext_LorentzMaterial::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	if (m_PV.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, x0, x1);
++	Engine_Ext_Dispersive::Apply2VoltagesLines(x0, x1);
++}
++
++void Engine_Ext_LorentzMaterial::Apply2CurrentLines(unsigned int x0, unsigned int x1)
++{
++	if (m_PI.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, x0, x1);
++	Engine_Ext_Dispersive::Apply2CurrentLines(x0, x1);
++}
++
 +unsigned int Engine_Ext_LorentzMaterial::GetUsedHooks() const
 +{
 +	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_LorentzMaterial);
@@ -3105,6 +3740,8 @@ index 3702918..c1c0650 100644
 +void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
 +{
 +	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	if (m_PV.on)
++		return PrePacked(volt, m_PV, x0, x1);
 +	if (m_VoltMerged)
 +		return PreMerged(volt, volt_ADE, volt_Lor_ADE, m_Op_Ext_Lor->v_int_ADE, m_Op_Ext_Lor->v_ext_ADE,
 +						 m_Op_Ext_Lor->v_Lor_ADE, m_Op_Ext_Lor->m_volt_Lor_ADE_On, m_VoltOrders, x0, x1);
@@ -3151,6 +3788,8 @@ index 3702918..c1c0650 100644
 +void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1)
 +{
 +	const float* __restrict curr = (const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data();
++	if (m_PI.on)
++		return PrePacked(curr, m_PI, x0, x1);
 +	if (m_CurrMerged)
 +		return PreMerged(curr, curr_ADE, curr_Lor_ADE, m_Op_Ext_Lor->i_int_ADE, m_Op_Ext_Lor->i_ext_ADE,
 +						 m_Op_Ext_Lor->i_Lor_ADE, m_Op_Ext_Lor->m_curr_Lor_ADE_On, m_CurrOrders, x0, x1);
@@ -3197,8 +3836,25 @@ index 3702918..c1c0650 100644
  template <typename EngType>
  void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesImpl(EngType* eng)
  {
+@@ -121,6 +500,8 @@ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdates()
+ {
++	if (m_PV.on)
++		return PrePacked((const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, 0, ~0u);
+ 	ENG_DISPATCH(DoPreVoltageUpdatesImpl);
+ }
+ 
+@@ -169,5 +550,7 @@ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdates()
+ {
++	if (m_PI.on)
++		return PrePacked((const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, 0, ~0u);
+ 	ENG_DISPATCH(DoPreCurrentUpdatesImpl);
+ }
 diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.h b/FDTD/extensions/engine_ext_lorentzmaterial.h
-index e28bab1..b26c1e3 100644
+index e28bab1..9b7a4da 100644
 --- a/FDTD/extensions/engine_ext_lorentzmaterial.h
 +++ b/FDTD/extensions/engine_ext_lorentzmaterial.h
 @@ -24,6 +24,7 @@ class Operator_Ext_LorentzMaterial;
@@ -3209,7 +3865,7 @@ index e28bab1..b26c1e3 100644
  public:
  	Engine_Ext_LorentzMaterial(Operator_Ext_LorentzMaterial* op_ext_lorentz);
  	virtual ~Engine_Ext_LorentzMaterial();
-@@ -32,7 +33,15 @@ public:
+@@ -32,7 +33,46 @@ public:
  
  	virtual void DoPreCurrentUpdates();
  
@@ -3217,7 +3873,38 @@ index e28bab1..b26c1e3 100644
 +	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
 +	virtual void DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1);
 +
++	//! with packed groups, the whole-grid Apply hooks run the packed line hooks over every x-line (one state)
++	virtual void Apply2Voltages();
++	virtual void Apply2Current();
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
++	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
++
  protected:
++	//! Packed groups (OPENEMS_ADE_PACKED=0: off), per side (voltages, currents) whose orders are merged
++	//! (m_VoltMerged/m_CurrMerged) on the positions of order 0: the positions in groups of up to four of one x-line
++	//! (Engine_Ext_Dispersive::SetupGroups), a group's state and coefficients in one block: per component n, per merged
++	//! order m, five vectors of four lanes: ADE, Lorentz ADE, c_int, c_ext, c_lor (the last two of each unused without
++	//! the Lorentz term). Four lanes at a time, the same operations per lane as PreMerged()/ApplyMerged(); while packed,
++	//! every hook of that side (whole grid or lines) uses the blocks.
++	struct PackedSide
++	{
++		bool on;
++		std::vector<int> orders;
++		std::vector<char> lor;
++		unsigned int stride;   //!< floats per group
++		std::vector<float> block;
++		PackedSide() : on(false), stride(0) {}
++	};
++	PackedSide m_PV, m_PI;
++	virtual void SetupPacked();
++	virtual uint64_t PackedBytes() const {return (uint64_t)(m_PV.block.size()+m_PI.block.size())*sizeof(float);}
++	//! r: why the side was not packed, need: the bytes it would have needed, used: the bytes already packed in this engine
++	bool SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor,
++				   FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on,
++				   PackRefusal& r, uint64_t& need, uint64_t& used);
++	void PrePacked(const float* field, PackedSide& s, unsigned int x0, unsigned int x1);
++	void ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1);
++
 +	//! the merged DoPre*UpdatesLines() (see m_VoltMerged): per position the ADE update of every order
 +	void PreMerged(const float* field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext,
 +				   FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders, unsigned int x0, unsigned int x1);

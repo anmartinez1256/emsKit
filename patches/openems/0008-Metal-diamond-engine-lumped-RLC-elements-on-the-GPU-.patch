@@ -1,7 +1,7 @@
 From 7ac3438ec17355f1992b98e25ca582ad25bc4b0a Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 08:01:27 -0600
-Subject: [PATCH 08/40] Metal diamond engine: lumped RLC elements on the GPU
+Subject: [PATCH 08/43] Metal diamond engine: lumped RLC elements on the GPU
  (snapshot cg20)
 
 The lumped RLC extension runs per tile in the engine's Apply order, mixed

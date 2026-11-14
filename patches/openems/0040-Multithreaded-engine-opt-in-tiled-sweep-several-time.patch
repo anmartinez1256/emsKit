@@ -1,7 +1,7 @@
 From 0ef186b792cf302809775489a5c015897ba9d8d6 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 21:15:46 -0600
-Subject: [PATCH 40/40] Multithreaded engine: opt-in tiled sweep, several
+Subject: [PATCH 40/43] Multithreaded engine: opt-in tiled sweep, several
  timesteps per pass over one shared tile (snapshot cg32d)
 
 Off by default. OPENEMS_TBLOCK=k (or auto) runs k timesteps on one tile of

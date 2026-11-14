@@ -41,7 +41,7 @@ import Testing
 
     @Test func registryEqualsBuildMdSection7() throws {
         let names = try Self.buildMdNames()
-        #expect(names.count == 41)
+        #expect(names.count == 43)
         #expect(FdtdKnobs.registry.map { $0.name } == names)
         #expect(Set(FdtdKnobs.registry.map { $0.name }).count == FdtdKnobs.registry.count)
     }
@@ -54,6 +54,25 @@ import Testing
             let transport: FdtdKnobTransport = command == .bench || command == .ab ? .cfgList : .environment
             #expect(Self.issue(text, command, transport) == nil, "\(text) on \(command)")
         }
+    }
+
+    /// OPENEMS_TUNE_START takes the one word `p` (the thread search's start rule up to patch 0040); OPENEMS_ADE_PACKED
+    /// 0 or 1 (patches 0041 and 0042).
+    @Test func tunerStartAndPackedHookKnobs() throws {
+        for text in ["OPENEMS_TUNE_START=p", "OPENEMS_ADE_PACKED=0", "OPENEMS_ADE_PACKED=1"] {
+            for command in [FdtdCommandName.bench, .ab, .validate, .e2e, .run] {
+                let transport: FdtdKnobTransport = command == .bench || command == .ab ? .cfgList : .environment
+                #expect(Self.issue(text, command, transport) == nil, "\(text) on \(command)")
+            }
+        }
+        for text in ["OPENEMS_TUNE_START=P", "OPENEMS_TUNE_START=0", "OPENEMS_TUNE_START=", "OPENEMS_TUNE_START=perf",
+                     "OPENEMS_ADE_PACKED=2", "OPENEMS_ADE_PACKED=off", "OPENEMS_ADE_PACKED="] {
+            #expect(Self.issue(text)?.code == .knobValue, "\(text)")
+        }
+        #expect(FdtdKnobs.knob(named: "OPENEMS_TUNE_START")?.readOncePerProcess == false)
+        #expect(FdtdKnobs.knob(named: "OPENEMS_ADE_PACKED")?.readOncePerProcess == false)
+        // check, debye-check and diamond-check take no knob
+        #expect(Self.issue("OPENEMS_ADE_PACKED=0", .check, .environment)?.code == .knobNotAllowed)
     }
 
     /// OPENEMS_TBLOCK takes `auto` or a depth (0 = off); its width an integer >= 1; its hook switch 0 or 1.

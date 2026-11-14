@@ -1,5 +1,15 @@
 The fork on a second machine: Apple M5 Pro (Mac mini), 2026-11-12
 ====================================================================================================
+CORRECTION 2026-11-13 (stock's best thread count): the "stock" column of section 4 took stock's best from runs at 5 and 10 threads
+only. On 2026-11-13 stock was measured at 1, 2, 3, 4, 5, 10 and 15 threads on the six models (3 interleaved rounds, half the steps of
+stage C, cg31 at 15 threads in the same rounds; results/cpu_items_cg33_2026-11-13.txt, section 3 part a). Stock's best on this chip,
+MC/s (threads): GCPW line 305 (4), SMA launch 472 (5), notch tutorial 343 (5), notch x3 1164 (10), patch tutorial 270 (2), patch x5
+1488 (10). The fork's CPU engine (cg31, 15 threads) over stock's best, paired median of those rounds: x14.06 (GCPW line), x9.33 (SMA),
+x12.45 (notch tutorial), x4.27 (notch x3), x9.67 (patch tutorial) and x2.73 (patch x5), so x2.7 to x14.1 where the table of section 4 has
+x2.74 to x17.3 (the patch tutorial's stock figure of 152 came from 5 threads; stock runs 270 MC/s at 2 threads and 36 at 15). The figures
+below stay as they were measured; the cg31 and Metal columns and the GPU/CPU ratios are those of 2026-11-12, the stock column and
+the CPU/stock ratio of section 4 are replaced by the ones named here.
+
 Bandwidth, thread sweep, speed table, allocation-placement valley, scheduling switches and the two boards end to end.
 MACHINE: Mac mini, Apple M5 Pro (Mac17,16), 5 "Super" cores (hw.perflevel0, one L2 of 16 MiB) + 10 "Performance" cores
 (hw.perflevel1, two L2 of 8 MiB), 24 GB, macOS 27.2.1 (26B131). Every other speed of this repository was measured on an Apple M5

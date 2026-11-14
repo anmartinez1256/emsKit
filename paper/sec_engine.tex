@@ -12,12 +12,13 @@ reads as 0 (so \code{off} too), and an empty value of any of the fork's variable
 those of v0.37.0 and of the gpu-engine base 7bb294f that the patches apply to (Section~\ref{sec:baseline}); upstream
 master reorganised these classes on 2026-11-02, and the patches do not apply to it as they are. A companion document in
 the repository (Section~\ref{sec:repro}), \code{paper/code\_notes.md}, written from the diffs by an AI review agent,
-gives file names, line counts and code fragments for every item of patches 0001--0006 (cg18) and, in a section added
-on 2026-11-11, for patch 0040; it does not cover
+gives file names, line counts and code fragments for every item of patches 0001--0006 (cg18) and, in sections added
+on 2026-11-11 and 2026-11-13, for patches 0040 to 0043; it does not cover
 patches 0007--0039, whose commit messages describe them: the Metal diamond engine of patches 0007--0016 is in
 Section~\ref{sec:gpu}, the CPU items of patches 0017--0027 (cg29) in Section~\ref{sec:cg29}, patches 0028--0039
 (cg31) in Section~\ref{sec:cg31}, which also has the opt-in tiled sweep of patch 0040
-(Section~\ref{sec:tiled}). This section keeps to the
+(Section~\ref{sec:tiled}); patches 0041--0043 (the thread-search start and the packed dispersive hooks, the fork's
+head) are in Section~\ref{sec:cg33}. This section keeps to the
 mechanisms.
 
 \paragraph{Memory layout, for reference.} The SSE engines store each field as a 4-D array of \code{f4vector}s in
@@ -101,8 +102,9 @@ voltage update reads only currents and vice versa, and each line is written by e
 path (next item) threads own contiguous slabs and \code{BalanceSlabs()} moves the slab boundaries after every
 \code{IterateTS} call once 20\,ms of sweeps have accumulated, to equal cumulative cost per thread from the measured
 busy time per line (\code{OPENEMS\_BALANCE=0} turns it off). And the automatic thread count is chosen by measurement
-on the running simulation: starting at the P-core count (\code{hw.perflevel0.physicalcpu} on Apple, half the available
-hardware threads elsewhere), \code{IterateTS} runs in pieces of an eighth of a 150\,ms window
+on the running simulation: starting, up to cg31 and with \code{OPENEMS\_TUNE\_START=p}, at the P-core count
+(\code{hw.perflevel0.physicalcpu} on Apple, half the available hardware threads elsewhere; since patch 0041 on Apple at every
+core whose performance level is not named ``Efficiency'', going down by 2 while each step is the fastest, Section~\ref{sec:cg33}), \code{IterateTS} runs in pieces of an eighth of a 150\,ms window
 (\code{OPENEMS\_TUNE\_WINDOW\_MS}) with balancing between pieces; each candidate count is timed for one window after a
 settling time of 0.4 windows; the search goes P, P+2, P+4, \ldots\ (stopping once a count falls below 85\,\% of the
 best), then P$-$2, then $\pm1$ around the best, and prints the result. Every candidate is clamped to the number of

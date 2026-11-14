@@ -1,7 +1,7 @@
 From a072d85191ae27ad8ec3da6e8892b0f58ec1f14f Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 30/40] Metal diamond engine: three dispatches per block
+Subject: [PATCH 30/43] Metal diamond engine: three dispatches per block
  (snapshot cg30b)
 
 A mountain x valley tile reads mountain x mountain cells and its own, a valley x mountain tile the same, and no cell

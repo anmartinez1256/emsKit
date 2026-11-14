@@ -1,7 +1,7 @@
 From ee251d29bf9ac2340383650307a8a51d809f114b Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 36/40] Metal diamond engine: dispersive materials three
+Subject: [PATCH 36/43] Metal diamond engine: dispersive materials three
  components of a cell at a time (snapshot cg30j)
 
 The Pre, Post and Apply stages of the Drude/Lorentz, conducting-sheet and Debye elements go over cells instead of

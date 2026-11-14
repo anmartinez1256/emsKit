@@ -14,8 +14,8 @@ solver with GPU acceleration as well~\cite{xfdtd}. Beyond the solvers, these pac
 meshing with convergence control, parameter optimisation, a graphical front end, vendor validation and support.
 fdtdKit touches none of this: model setup, meshing and post-processing are openEMS's and the author's scripts.
 
-\paragraph{Raw speed.} Section~\ref{sec:ceiling} shows that the CPU engine runs close to what the cores can draw from
-memory. A commercial FDTD/FIT solver on a data-centre GPU is therefore bounded far higher: an NVIDIA H100 SXM has
+\paragraph{Raw speed.} Section~\ref{sec:ceiling} shows that on the M5 the CPU engine runs close to what the cores can draw from
+memory on large grids (on the M5 Pro only the largest grid measured, 16.8\,M cells, was held back by it, Section~\ref{sec:m5pro}). A commercial FDTD/FIT solver on a data-centre GPU is therefore bounded far higher: an NVIDIA H100 SXM has
 3.35\,TB/s of memory bandwidth~\cite{h100}, which at the 74 bytes per cell of an unfused update is a roofline bound of
 about 45\,000\,\MC, some 20 times the M5's bound for the same traffic (Section~\ref{sec:ceiling}). Real codes reach a
 fraction of their roofline, and we have no measurement of any commercial code, but on large models fdtdKit should not
@@ -197,13 +197,14 @@ since stock openEMS has no reference to be identical to.
 This subsection is an outlook: no cluster was built or run. Apart from the memory figures, which were measured for
 this report on small boxes, and one STREAM figure of the M5 Pro (Section~\ref{sec:m5pro}), its numbers are published
 hardware figures or arithmetic on them. The result of
-Section~\ref{sec:ceiling} (on one machine the CPU engine is limited by one memory bus) points to the natural way to
-scale: add buses. Every Mac mini or Mac Studio brings its own unified memory and its own bus, and since macOS 26.2
+Section~\ref{sec:ceiling} (on the M5 the CPU engine on large grids sits near the bandwidth of one memory bus; on the M5
+Pro only the largest grid measured, 16.8\,M cells, did, Section~\ref{sec:m5pro}) points to the natural way to scale for grids that do
+not fit: add buses. Every Mac mini or Mac Studio brings its own unified memory and its own bus, and since macOS 26.2
 machines connected by Thunderbolt~5 can exchange data by remote direct memory access (RDMA)~\cite{rdmatb5}, over
 links with a nominal rate of 80\,Gb/s (real throughput is lower). Published figures for current machines: a Mac mini
 with M5 Pro has up to 64\,GB at 307\,GB/s~\cite{macmini}; a Mac Studio with M5 Ultra up to 512\,GB at
 1.2\,TB/s~\cite{studiom5}. On a 24\,GB Mac mini with M5 Pro, STREAM's Triad measured 259\,GB/s at 15 threads, and the
-five Super cores alone reached that limit (Section~\ref{sec:m5pro}).
+five Super cores alone reached that rate (Section~\ref{sec:m5pro}).
 
 \paragraph{Parameter studies.} Two simulations side by side on one machine gain nothing, because they share the bus
 (Section~\ref{sec:rejected}). On separate machines they do not, so a sweep or an optimisation run spread over $n$

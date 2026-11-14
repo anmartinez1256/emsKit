@@ -81,12 +81,13 @@ P-core count \\
 \bottomrule
 \end{tabular}
 \caption{Snapshots. Each is a complete set of dylibs plus the cumulative patch, kept for bisection on the author's
-machine. \code{patches/openems/} publishes the fork as patches 0001--0040: 0001--0006 end at cg18 (0001 = cg8, 0002 =
+machine. \code{patches/openems/} publishes the fork as patches 0001--0043: 0001--0006 end at cg18 (0001 = cg8, 0002 =
 cg9, 0003 = cg10--cg15, 0004 = cg16, 0005 = cg17, 0006 = cg18), the build installed on the author's Mac from
 2026-11-04 to 2026-11-06; 0007--0016 are cg19--cg28, one per snapshot (Table~\ref{tab:gpucov}); 0017--0027 are cg29,
 one per topic (Table~\ref{tab:cg29}), the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are cg31
-(Section~\ref{sec:cg31}), the build installed since, and 0040 is the opt-in tiled sweep of the fork's head
-(snapshot cg32d, Section~\ref{sec:tiled}); neither has a row here. A row lists what the snapshot added
+(Section~\ref{sec:cg31}), the build installed since, 0040 is the opt-in tiled sweep (snapshot cg32d,
+Section~\ref{sec:tiled}), and 0041--0043 are the thread-search start, the packed dispersive hooks and their guard, the
+fork's head 13350ca (snapshots cg33a, cg33c and cg33d, Section~\ref{sec:cg33}); none of these three groups has a row here. A row lists what the snapshot added
 over the row above; the intermediate snapshots cg3--cg5 and cg7 appear inside the cg6 and cg8
 rows.}\label{tab:snapshots}
 \end{table}
@@ -313,7 +314,7 @@ fdff4b5; fdtdKit: cg29, as installed that day. Part B ran the two builds interle
 minutes
 earlier, so its \code{cpu} and \code{gpu} columns are not paired with the fork. The tool's spread was below 5\,\%
 in most rows and above 10\,\% in ten of the 120 (master's dispersive S rows in part B, 23 and 26\,\%, among
-them); the file has every row.}\label{tab:upstream}
+them); the file has every row. The ideal, pml and dispersive rows ran on zero fields (see the flaw described below).}\label{tab:upstream}
 \end{table}
 
 On the engine both builds have, the fork runs 1.23--8.5$\times$ as fast as master at 8\,M cells and
@@ -327,13 +328,28 @@ on the ideal case (0.97$\times$), 1.08--1.14$\times$ on pml, inhomogeneous and a
 cylindrical mesh and 2.5$\times$ on the dispersive case. At 1\,M cells the fork is ahead of the \code{cpu} engine on
 five cases (1.18--1.50$\times$ as measured) and behind on the dispersive one (0.52$\times$). So on large grids
 upstream's own new engine is level with or ahead of this fork's CPU engine, and well ahead with dispersive material;
-a paired run of the two on these cases, with the probes compared, has not been made (on another model, run
+a paired run of the two on these cases with the probes compared was made later, on the M5 Pro, with a source on the
+mesh (Section~\ref{sec:cg33}); on this M5 none has been made (on another model, run
 interleaved on 2026-11-11, cg31's CPU engine was 1.27$\times$ master's \code{cpu} engine at 3.0\,M cells and
-0.86$\times$ at 17\,M; Table~\ref{tab:threebuilds}). The fork's tiled sweep of 2026-11-11, which blocks in time as
-that engine does, was not run on these cases or next to it (Section~\ref{sec:tiled}). The fork's Metal diamond engine
+0.86$\times$ at 17\,M, with the fork's row the better of 8 and 10 threads and master's at 8; Table~\ref{tab:threebuilds}). The fork's tiled sweep of 2026-11-11, which blocks in time as
+that engine does, was not run on these cases or next to it on the M5; on the M5 Pro it was run on two of them at 8\,M cells
+(Section~\ref{sec:cg33}). The fork's Metal diamond engine
 was not part of
 this run: every case of the tool uses the steady-state detection, which that engine runs on its CPU loops
 (Section~\ref{sec:future}).
+
+\paragraph{A flaw in upstream's cases, found on 2026-11-13.} In \code{benchmark/cases.py} of master 1d710c2 the function
+that builds the uniform meshes puts its lines at \code{arange(n) - (n-1)/2}. With an even number of lines, which the default
+sizes S (100 lines) and M (200 lines) have (the sizes XS, 37 lines, and L, 311, are odd), no mesh line passes through the
+origin, so the dipole that the cases place at $(0,0,z)$ excites nothing: openEMS prints ``Voltage excitations: 0'', and the
+cases \code{ideal}, \code{pml} and \code{dispersive} run with all fields zero. The other three cases have their own
+sources and are not affected. Two consequences for this report. First, every ``probes identical'' of those three cases at
+S or M, here and in the record of 2026-11-10, is an empty statement. Second, the S and M rates of Table~\ref{tab:upstream}
+for those cases are rates on zero fields. On the M5 Pro the cases were run again with a source on the mesh (101 and 201
+lines) and, at 8\,M cells and 15 threads, the empty case and the dispersive case ran at the same rates with and without a
+source within the spread of the rows (Section~\ref{sec:cg33}), so the rates stand there; on this M5 they were not run again,
+so the same equality is expected, not measured. The fork's bit identity on these cases rests on the XS size and on the runs
+with 101 lines (Section~\ref{sec:cg33}). The finding has not been reported upstream.
 
 \paragraph{STREAM.}
 The introduction takes the machine's memory bus as about 150\,GB/s from Apple's figure. STREAM~\cite{stream}, the

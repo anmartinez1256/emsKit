@@ -1,7 +1,7 @@
 From 1a9df2323563ded7b33fd8b57a78a63dff9853fe Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 34/40] Metal diamond engine: a Mur stage ends early for the
+Subject: [PATCH 34/43] Metal diamond engine: a Mur stage ends early for the
  threads without an element (snapshot cg30h)
 
 A face has fewer cells in a tile than the tile has threads; the others now leave after one load instead of copying

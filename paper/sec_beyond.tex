@@ -53,6 +53,9 @@ leaves probes and dumps to the CPU, between its command buffers and on the share
 busy 78\,\% of the time-stepping loop (cg24, \code{results/diamond\_engine\_cg24\_cg27\_2026-11-04.txt}, section 6).
 
 \subsection{Where the ceiling is, and the GPU engines}\label{sec:ceiling}
+This subsection is about the M5 (4 + 6 cores, 153\,GB/s). On the M5 Pro (Section~\ref{sec:m5pro}) the bus held the
+CPU engine back only on the largest grid measured, a 16.8\,M-cell box: the fused sweep reaches 5\,602\,\MC\ on a
+2.95\,M-cell box at 15 threads and scales to 15 threads on every other model.
 Figure~\ref{fig:bandwidth} puts the engines measured up to snapshot cg14 on one axis: effective DRAM traffic, the
 product of the speed and the bytes a cell update moves in the traffic model of Section~\ref{sec:fused}. An engine that
 keeps a tile's fields on chip for several time steps has no such figure, so the diamond-blocked Metal engine of

@@ -11,7 +11,7 @@ mkdir -p $OPENEMS_BENCH_RUNS $O/logs
 # machine of the record macOS's own indexing kept the others at 1 to 3.5 cores all night, so a stricter gate made nearly
 # every run wait its full time and run twice. Every line still records the others' CPU and GPU: read that column.
 Q=(--quiet 300 --quiet-max 20)
-GATE=${GATE:-60}
+GATE=${GATE:-300}   # seconds the start gate of a stage may wait; wait_quiet.zsh needs 6 samples 20 s apart, so below 120 it can never pass
 load() { ps -A -o %cpu= | awk '{s+=$1} END{printf "%.0f", s}' }
 ab() {  # name model scale steps rounds configs...
   local n=$1 m=$2 s=$3 ts=$4 r=$5; shift 5

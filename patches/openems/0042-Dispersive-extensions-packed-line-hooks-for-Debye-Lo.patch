@@ -1,0 +1,673 @@
+From c6ef5c5912f9eff3a2ac91a1a5c523e24986209b Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 03:16:10 -0600
+Subject: [PATCH 42/43] Dispersive extensions: packed line hooks for Debye,
+ Lorentz and Drude cells
+
+The line hooks of Engine_Ext_DebyeMaterial and
+Engine_Ext_LorentzMaterial walked one position at a time through about
+fifteen separate arrays (39 ns per Debye cell and 14 ns per Lorentz
+cell on one thread).
+
+Engine_Ext_Dispersive::SetupGroups now puts the positions of order 0,
+sorted by x, into groups of up to four positions of one x-line, so a
+group is never shared by two threads. Each group keeps its state and
+its coefficients in one block and is updated four lanes at a time with
+the same operations per lane as the scalar loops (the Debye
+pre-update keeps its fused multiply-add). While a side is packed,
+every hook of that side uses the blocks, so there is one copy of the
+state. Packing is used by the multithreaded engine only and is skipped
+when the blocks would need more than twice the memory of the field
+arrays. OPENEMS_ADE_PACKED=0 keeps the old paths.
+
+Results are bit-identical to the unpacked hooks and to v0.37.0:
+probes, HDF5 dumps and raw fields on Lorentz, Drude, multi-pole Debye,
+mixed and cylindrical cases at 1 to 15 threads, fused, unfused and
+tiled.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/engine_ext_debyematerial.cpp  | 170 ++++++++++++++++
+ FDTD/extensions/engine_ext_debyematerial.h    |  16 ++
+ FDTD/extensions/engine_ext_dispersive.cpp     |  71 +++++++
+ FDTD/extensions/engine_ext_dispersive.h       |  16 ++
+ .../extensions/engine_ext_lorentzmaterial.cpp | 190 ++++++++++++++++++
+ FDTD/extensions/engine_ext_lorentzmaterial.h  |  28 +++
+ 6 files changed, 491 insertions(+)
+
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index 71abdfb..1821af3 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -18,10 +18,16 @@
+ #include "engine_ext_debyematerial.h"
+ #include "operator_ext_debyematerial.h"
+ #include "FDTD/engine_sse.h"
++#include "tools/global.h"
++#include <cstdlib>
++#include <iostream>
++#include <new>
+ 
+ Engine_Ext_DebyeMaterial::Engine_Ext_DebyeMaterial(Operator_Ext_DebyeMaterial* op_ext_debye) : Engine_Ext_Dispersive(op_ext_debye)
+ {
+ 	m_Op_Ext_Deb = op_ext_debye;
++	m_Packed = false;
++	m_BlockStride = 0;
+ 	// the base allocated volt_ADE[0], which carries the joint correction
+ 	unsigned int count = m_Op_Ext_Deb->m_LM_Count.at(0);
+ 
+@@ -94,6 +100,8 @@ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdates()
+ {
++	if (m_Packed)
++		return PrePacked(0, ~0u);
+ 	ENG_DISPATCH(DoPreVoltageUpdatesImpl);
+ }
+ 
+@@ -120,11 +128,171 @@ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdates()
+ {
++	if (m_Packed)
++		return PostPacked(0, ~0u);
+ 	ENG_DISPATCH(DoPostVoltageUpdatesImpl);
+ }
+ 
++void Engine_Ext_DebyeMaterial::Apply2Voltages()
++{
++	if (m_Packed)
++		return ApplyPacked(0, ~0u);
++	Engine_Ext_Dispersive::Apply2Voltages();
++}
++
++void Engine_Ext_DebyeMaterial::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	if (m_Packed)
++		return ApplyPacked(x0, x1);
++	Engine_Ext_Dispersive::Apply2VoltagesLines(x0, x1);
++}
++
++void Engine_Ext_DebyeMaterial::SetupPacked()
++{
++	m_Packed = false;
++	std::vector<float>().swap(m_Block);
++	const char* env = getenv("OPENEMS_ADE_PACKED");
++	if (env && *env && (atoi(env)==0))
++		return;
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	// Debye has voltage ADE of order 0 only; the packed hooks replace exactly those
++	if ((P<1) || (m_Op_Ext_Deb->m_Order!=1) || !m_Op_Ext_Deb->m_volt_ADE_On[0] || m_Op_Ext_Deb->m_curr_ADE_On[0])
++		return;
++	if (!SetupGroups())
++		return;
++	const size_t groups = m_GroupX.size();
++	m_BlockStride = 3*(3*P+3)*4;
++	if ((uint64_t)groups*m_BlockStride*sizeof(float) > 2*FieldBytes())
++	{
++		ClearGroups();
++		return;
++	}
++	try
++	{
++		m_Block.assign((size_t)groups*m_BlockStride, 0.0f);
++	}
++	catch (std::bad_alloc&)
++	{
++		ClearGroups();
++		return;
++	}
++	// coefficients, and the current state (zero before the first step) of every used lane
++	for (size_t g=0; g<groups; ++g)
++		for (unsigned int l=0; l<m_GroupLanes[g]; ++l)
++		{
++			const unsigned int i = m_GroupK[g]+l;   // = the original position index (SetupGroups: in x order)
++			for (unsigned int n=0; n<3; ++n)
++			{
++				float* c = &m_Block[g*m_BlockStride + (size_t)n*(3*P+3)*4];
++				for (unsigned int o=0; o<P; ++o)
++				{
++					c[4*o+l] = volt_pole_ADE[o][n][i];
++					c[4*(P+2+o)+l] = m_Op_Ext_Deb->v_relax_ADE[o][n][i];
++					c[4*(2*P+2+o)+l] = m_Op_Ext_Deb->v_drive_ADE[o][n][i];
++				}
++				c[4*P+l] = volt_pre_ADE[n][i];
++				c[4*(P+1)+l] = volt_ADE[0][n][i];
++				c[4*(3*P+2)+l] = m_Op_Ext_Deb->v_solve_ADE[n][i];
++			}
++		}
++	m_Packed = true;
++	if (g_settings.GetVerboseLevel()>1)
++		std::cout << GetExtensionName() << ": packed hooks, " << groups << " groups of " << m_Op_Ext_Deb->m_LM_Count.at(0)
++				  << " positions, " << m_Block.size()*sizeof(float)/1048576.0 << " MiB" << std::endl;
++}
++
++// the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
++void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
++{
++	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			float* __restrict c = b + n*cs;
++			const unsigned int* fn = f + 4*n;
++			const v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++			v4sf pre = {0.0f, 0.0f, 0.0f, 0.0f};
++			for (unsigned int o=0; o<P; ++o)
++			{
++				const v4sf w = Load4(c+4*o);
++				const v4sf W = Load4(c+4*(P+2+o))*w + Load4(c+4*(2*P+2+o))*v;
++				pre += W - w;
++				Store4(c+4*o, W);
++			}
++			Store4(c+4*P, pre);
++		}
++	}
++}
++
++// the operations of DoPostVoltageUpdatesLines() per lane: V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
++void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1)
++{
++	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			float* __restrict c = b + n*cs;
++			const unsigned int* fn = f + 4*n;
++			const v4sf v_raw = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++			const v4sf v_n = (v_raw - Load4(c+4*P)) * Load4(c+4*(3*P+2));
++			Store4(c+4*(P+1), v_raw - v_n);
++			for (unsigned int o=0; o<P; ++o)
++				Store4(c+4*o, Load4(c+4*o) + Load4(c+4*(2*P+2+o))*v_n);
++		}
++	}
++}
++
++// the operation of Apply2VoltagesLines() per lane: V -= correction (only the used lanes are written)
++void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1)
++{
++	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		const float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		const unsigned int lanes = m_GroupLanes[g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const float* c = b + n*cs + 4*(P+1);
++			const unsigned int* fn = f + 4*n;
++			if (lanes==4)
++			{
++				v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++				v = v - Load4(c);
++				volt[fn[0]] = v[0];
++				volt[fn[1]] = v[1];
++				volt[fn[2]] = v[2];
++				volt[fn[3]] = v[3];
++			}
++			else
++				for (unsigned int l=0; l<lanes; ++l)
++					volt[fn[l]] = volt[fn[l]] - c[l];
++		}
++	}
++}
++
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
++	if (m_Packed)
++		return PrePacked(x0, x1);
+ 	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int k0, k1;
+ 	LineRange(0, x0, x1, k0, k1);
+@@ -153,6 +321,8 @@ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigne
+ 
+ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
++	if (m_Packed)
++		return PostPacked(x0, x1);
+ 	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int k0, k1;
+ 	LineRange(0, x0, x1, k0, k1);
+diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
+index b8372f2..677908a 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.h
++++ b/FDTD/extensions/engine_ext_debyematerial.h
+@@ -65,8 +65,24 @@ public:
+ 	//! (every position has its own state and reads only its own cell); same operations per position
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
++	//! with the packed groups, the whole-grid Apply runs the packed line hook over every x-line (one state)
++	virtual void Apply2Voltages();
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 
+ protected:
++	//! Packed groups (OPENEMS_ADE_PACKED=0: off): the positions in groups of up to four of one x-line
++	//! (Engine_Ext_Dispersive::SetupGroups), the state and coefficients of a group in one block of m_BlockStride
++	//! floats, per component n at n*(3P+3)*4: W[pole] (P x 4 lanes), pre (4), correction volt_ADE (4),
++	//! v_relax[pole] (P x 4), v_drive[pole] (P x 4), v_solve (4). Four lanes at a time, the same operations per lane
++	//! as the one-position loops. While packed, every hook (whole grid or lines) uses the blocks.
++	virtual void SetupPacked();
++	bool m_Packed;
++	unsigned int m_BlockStride;
++	std::vector<float> m_Block;
++	void PrePacked(unsigned int x0, unsigned int x1);
++	void PostPacked(unsigned int x0, unsigned int x1);
++	void ApplyPacked(unsigned int x0, unsigned int x1);
++
+ 	template <typename EngType>
+ 	void DoPreVoltageUpdatesImpl(EngType* eng);
+ 
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index a1bd1e4..44cfb7b 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -22,6 +22,7 @@
+ #include <algorithm>
+ #include <cstdlib>
+ #include <iostream>
++#include <new>
+ 
+ Engine_Ext_Dispersive::Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_disp) : Engine_Extension(op_ext_disp)
+ {
+@@ -159,6 +160,76 @@ void Engine_Ext_Dispersive::SetupLines()
+ 	if (g_settings.GetVerboseLevel()>1)
+ 		std::cout << GetExtensionName() << ": line hooks, " << (m_Op_Ext_Disp->m_Order>0 ? m_Op_Ext_Disp->m_LM_Count.at(0) : 0) << " positions of order 0, orders merged: voltages "
+ 				  << (m_VoltMerged ? m_VoltOrders.size() : 0) << ", currents " << (m_CurrMerged ? m_CurrOrders.size() : 0) << std::endl;
++	SetupPacked();
++}
++
++uint64_t Engine_Ext_Dispersive::FieldBytes() const
++{
++	const Engine_sse* eng = (const Engine_sse*)m_Eng;
++	return 2*(uint64_t)eng->f4_volt_ptr->size()*sizeof(f4vector);
++}
++
++void Engine_Ext_Dispersive::ClearGroups()
++{
++	std::vector<unsigned int>().swap(m_GroupX);
++	std::vector<unsigned int>().swap(m_GroupK);
++	std::vector<unsigned char>().swap(m_GroupLanes);
++	std::vector<unsigned int>().swap(m_GroupFi);
++}
++
++bool Engine_Ext_Dispersive::SetupGroups()
++{
++	ClearGroups();
++	if (!m_LinesReady || (m_Op_Ext_Disp->m_Order<1))
++		return false;
++	const std::vector<unsigned int>& idx = m_SortedIdx[0];
++	const std::vector<unsigned int>& X = m_SortedX[0];
++	const std::vector<unsigned int>& fi = m_FloatIdx[0];
++	const size_t count = idx.size();
++	if (count==0)
++		return false;
++	// the packed state is kept per sorted position k: the positions must already be in x order, and each listed once
++	// (four lanes of one group are written together)
++	for (size_t k=0; k<count; ++k)
++		if (idx[k]!=k)
++			return false;
++	{
++		std::vector<unsigned int> f(count);
++		for (size_t k=0; k<count; ++k)
++			f[k] = fi[3*k];
++		std::sort(f.begin(), f.end());
++		if (std::adjacent_find(f.begin(), f.end())!=f.end())
++			return false;
++	}
++	try
++	{
++		for (size_t k=0; k<count; )
++		{
++			const unsigned int x = X[k];
++			unsigned char lanes = 0;
++			while ((k+lanes<count) && (lanes<4) && (X[k+lanes]==x))
++				++lanes;
++			m_GroupX.push_back(x);
++			m_GroupK.push_back((unsigned int)k);
++			m_GroupLanes.push_back(lanes);
++			for (unsigned int n=0; n<3; ++n)
++				for (unsigned int l=0; l<4; ++l)
++					m_GroupFi.push_back(fi[3*(k+(l<lanes ? l : 0))+n]);
++			k += lanes;
++		}
++	}
++	catch (std::bad_alloc&)
++	{
++		ClearGroups();
++		return false;
++	}
++	return true;
++}
++
++void Engine_Ext_Dispersive::GroupRange(unsigned int x0, unsigned int x1, unsigned int& g0, unsigned int& g1) const
++{
++	g0 = std::lower_bound(m_GroupX.begin(), m_GroupX.end(), x0) - m_GroupX.begin();
++	g1 = std::lower_bound(m_GroupX.begin(), m_GroupX.end(), x1) - m_GroupX.begin();
+ }
+ 
+ bool Engine_Ext_Dispersive::MergeOrders(const bool* on, std::vector<int>& orders) const
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index 06cc8ac..b79af78 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -68,7 +68,23 @@ protected:
+ 	//! the merged Apply2*Lines(): field[float index] -= ADE of every order, in order
+ 	void ApplyMerged(float* field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
+ 	void SetupLines();
++	//! called at the end of SetupLines(): subclasses build their packed groups here
++	virtual void SetupPacked() {}
+ 	void LineRange(int o, unsigned int x0, unsigned int x1, unsigned int& k0, unsigned int& k1) const;
++
++	//! Groups for packed hooks: the positions of order 0 (in x order, each listed once) in groups of up to four
++	//! positions of ONE x-line, so a group is never shared by two threads; built by SetupGroups(), false (and empty)
++	//! when the positions do not allow it
++	bool SetupGroups();
++	void ClearGroups();
++	//! the groups of the x-lines [x0, x1)
++	void GroupRange(unsigned int x0, unsigned int x1, unsigned int& g0, unsigned int& g1) const;
++	std::vector<unsigned int> m_GroupX;      //!< [g]: x-line of group g (ascending)
++	std::vector<unsigned int> m_GroupK;      //!< [g]: first position (index k of order 0) of group g
++	std::vector<unsigned char> m_GroupLanes; //!< [g]: positions in group g, 1..4
++	std::vector<unsigned int> m_GroupFi;     //!< [12*g+4*n+l]: float index of component n of lane l (unused lanes: lane 0's)
++	//! the bytes of the engine's voltage and current arrays (the limit for packed copies: twice this)
++	uint64_t FieldBytes() const;
+ 	bool AnyVoltADE() const;
+ 	bool AnyCurrADE() const;
+ 
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index c1c0650..5a68795 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -18,6 +18,10 @@
+ #include "engine_ext_lorentzmaterial.h"
+ #include "operator_ext_lorentzmaterial.h"
+ #include "FDTD/engine_sse.h"
++#include "tools/global.h"
++#include <cstdlib>
++#include <iostream>
++#include <new>
+ 
+ Engine_Ext_LorentzMaterial::Engine_Ext_LorentzMaterial(Operator_Ext_LorentzMaterial* op_ext_lorentz) : Engine_Ext_Dispersive(op_ext_lorentz)
+ {
+@@ -76,6 +80,184 @@ Engine_Ext_LorentzMaterial::~Engine_Ext_LorentzMaterial()
+ 	volt_Lor_ADE=NULL;
+ }
+ 
++void Engine_Ext_LorentzMaterial::SetupPacked()
++{
++	m_PV = PackedSide();
++	m_PI = PackedSide();
++	const char* env = getenv("OPENEMS_ADE_PACKED");
++	if (env && *env && (atoi(env)==0))
++		return;
++	if (!m_VoltMerged && !m_CurrMerged)
++		return;
++	if (!SetupGroups())
++		return;
++	Operator_Ext_LorentzMaterial* op = m_Op_Ext_Lor;
++	const bool v = SetupSide(m_PV, m_VoltMerged, m_VoltOrders, volt_ADE, volt_Lor_ADE, op->v_int_ADE, op->v_ext_ADE,
++							 op->v_Lor_ADE, op->m_volt_Lor_ADE_On);
++	const bool i = SetupSide(m_PI, m_CurrMerged, m_CurrOrders, curr_ADE, curr_Lor_ADE, op->i_int_ADE, op->i_ext_ADE,
++							 op->i_Lor_ADE, op->m_curr_Lor_ADE_On);
++	if (!v && !i)
++	{
++		ClearGroups();
++		return;
++	}
++	if (g_settings.GetVerboseLevel()>1)
++		std::cout << GetExtensionName() << ": packed hooks, " << m_GroupX.size() << " groups of " << m_Op_Ext_Lor->m_LM_Count.at(0)
++				  << " positions, voltages " << (v ? m_PV.orders.size() : 0) << " orders, currents " << (i ? m_PI.orders.size() : 0)
++				  << " orders, " << (m_PV.block.size()+m_PI.block.size())*sizeof(float)/1048576.0 << " MiB" << std::endl;
++}
++
++bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade,
++	FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on)
++{
++	s = PackedSide();
++	// the groups are built on the positions of order 0; MergeOrders() made sure every merged order has the same ones
++	if (!merged || orders.empty() || (m_FloatIdx[orders[0]]!=m_FloatIdx[0]))
++		return false;
++	const size_t groups = m_GroupX.size();
++	const unsigned int no = orders.size();
++	const unsigned int stride = 3*no*20;
++	if ((uint64_t)(m_PV.block.size()+m_PI.block.size()+groups*stride)*sizeof(float) > 2*FieldBytes())
++		return false;
++	try
++	{
++		s.block.assign(groups*stride, 0.0f);
++	}
++	catch (std::bad_alloc&)
++	{
++		s = PackedSide();
++		return false;
++	}
++	s.stride = stride;
++	s.orders = orders;
++	for (int o : orders)
++		s.lor.push_back(lor_on[o] ? 1 : 0);
++	// coefficients, and the current state (zero before the first step) of every used lane
++	for (size_t g=0; g<groups; ++g)
++		for (unsigned int l=0; l<m_GroupLanes[g]; ++l)
++		{
++			const unsigned int k = m_GroupK[g]+l;   // the position index of every merged order (in x order)
++			for (unsigned int n=0; n<3; ++n)
++				for (unsigned int m=0; m<no; ++m)
++				{
++					const int o = orders[m];
++					float* c = &s.block[g*stride + (size_t)(n*no+m)*20];
++					c[l] = ade[o][n][k];
++					c[8+l] = c_int[o][n][k];
++					c[12+l] = c_ext[o][n][k];
++					if (lor_on[o])
++					{
++						c[4+l] = lor[o][n][k];
++						c[16+l] = c_lor[o][n][k];
++					}
++				}
++		}
++	s.on = true;
++	return true;
++}
++
++// the operations of PreMerged() per lane
++void Engine_Ext_LorentzMaterial::PrePacked(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1)
++{
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int no = s.orders.size();
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		float* __restrict b = &s.block[(size_t)g*s.stride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const unsigned int* fn = f + 4*n;
++			const v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++			for (unsigned int m=0; m<no; ++m)
++			{
++				float* __restrict c = b + (n*no+m)*20;
++				v4sf a = Load4(c);
++				if (s.lor[m])
++				{
++					v4sf l = Load4(c+4);
++					l += Load4(c+16)*a;
++					a *= Load4(c+8);
++					a += Load4(c+12)*(v-l);
++					Store4(c+4, l);
++				}
++				else
++				{
++					a *= Load4(c+8);
++					a += Load4(c+12)*v;
++				}
++				Store4(c, a);
++			}
++		}
++	}
++}
++
++// the operations of ApplyMerged() per lane: field -= ADE of every merged order, in order (only the used lanes are written)
++void Engine_Ext_LorentzMaterial::ApplyPacked(float* __restrict field, const PackedSide& s, unsigned int x0, unsigned int x1)
++{
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int no = s.orders.size();
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		const float* __restrict b = &s.block[(size_t)g*s.stride];
++		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
++		const unsigned int lanes = m_GroupLanes[g];
++		for (unsigned int n=0; n<3; ++n)
++		{
++			const unsigned int* fn = f + 4*n;
++			const float* c = b + n*no*20;
++			if (lanes==4)
++			{
++				v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++				for (unsigned int m=0; m<no; ++m)
++					v = v - Load4(c + m*20);
++				field[fn[0]] = v[0];
++				field[fn[1]] = v[1];
++				field[fn[2]] = v[2];
++				field[fn[3]] = v[3];
++			}
++			else
++				for (unsigned int l=0; l<lanes; ++l)
++				{
++					float v = field[fn[l]];
++					for (unsigned int m=0; m<no; ++m)
++						v = v - c[m*20+l];
++					field[fn[l]] = v;
++				}
++		}
++	}
++}
++
++void Engine_Ext_LorentzMaterial::Apply2Voltages()
++{
++	if (m_PV.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, 0, ~0u);
++	Engine_Ext_Dispersive::Apply2Voltages();
++}
++
++void Engine_Ext_LorentzMaterial::Apply2Current()
++{
++	if (m_PI.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, 0, ~0u);
++	Engine_Ext_Dispersive::Apply2Current();
++}
++
++void Engine_Ext_LorentzMaterial::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
++{
++	if (m_PV.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, x0, x1);
++	Engine_Ext_Dispersive::Apply2VoltagesLines(x0, x1);
++}
++
++void Engine_Ext_LorentzMaterial::Apply2CurrentLines(unsigned int x0, unsigned int x1)
++{
++	if (m_PI.on)
++		return ApplyPacked((float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, x0, x1);
++	Engine_Ext_Dispersive::Apply2CurrentLines(x0, x1);
++}
++
+ unsigned int Engine_Ext_LorentzMaterial::GetUsedHooks() const
+ {
+ 	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_LorentzMaterial);
+@@ -144,6 +326,8 @@ void Engine_Ext_LorentzMaterial::PreMerged(const float* __restrict field, FDTD_F
+ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	if (m_PV.on)
++		return PrePacked(volt, m_PV, x0, x1);
+ 	if (m_VoltMerged)
+ 		return PreMerged(volt, volt_ADE, volt_Lor_ADE, m_Op_Ext_Lor->v_int_ADE, m_Op_Ext_Lor->v_ext_ADE,
+ 						 m_Op_Ext_Lor->v_Lor_ADE, m_Op_Ext_Lor->m_volt_Lor_ADE_On, m_VoltOrders, x0, x1);
+@@ -190,6 +374,8 @@ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsig
+ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	const float* __restrict curr = (const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data();
++	if (m_PI.on)
++		return PrePacked(curr, m_PI, x0, x1);
+ 	if (m_CurrMerged)
+ 		return PreMerged(curr, curr_ADE, curr_Lor_ADE, m_Op_Ext_Lor->i_int_ADE, m_Op_Ext_Lor->i_ext_ADE,
+ 						 m_Op_Ext_Lor->i_Lor_ADE, m_Op_Ext_Lor->m_curr_Lor_ADE_On, m_CurrOrders, x0, x1);
+@@ -278,6 +464,8 @@ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdates()
+ {
++	if (m_PV.on)
++		return PrePacked((const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, 0, ~0u);
+ 	ENG_DISPATCH(DoPreVoltageUpdatesImpl);
+ }
+ 
+@@ -326,5 +514,7 @@ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesImpl(EngType* eng)
+ 
+ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdates()
+ {
++	if (m_PI.on)
++		return PrePacked((const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, 0, ~0u);
+ 	ENG_DISPATCH(DoPreCurrentUpdatesImpl);
+ }
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.h b/FDTD/extensions/engine_ext_lorentzmaterial.h
+index b26c1e3..c20e5b0 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.h
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.h
+@@ -37,7 +37,35 @@ public:
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void DoPreCurrentUpdatesLines(unsigned int x0, unsigned int x1);
+ 
++	//! with packed groups, the whole-grid Apply hooks run the packed line hooks over every x-line (one state)
++	virtual void Apply2Voltages();
++	virtual void Apply2Current();
++	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
++	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
++
+ protected:
++	//! Packed groups (OPENEMS_ADE_PACKED=0: off), per side (voltages, currents) whose orders are merged
++	//! (m_VoltMerged/m_CurrMerged) on the positions of order 0: the positions in groups of up to four of one x-line
++	//! (Engine_Ext_Dispersive::SetupGroups), a group's state and coefficients in one block: per component n, per merged
++	//! order m, five vectors of four lanes: ADE, Lorentz ADE, c_int, c_ext, c_lor (the last two of each unused without
++	//! the Lorentz term). Four lanes at a time, the same operations per lane as PreMerged()/ApplyMerged(); while packed,
++	//! every hook of that side (whole grid or lines) uses the blocks.
++	struct PackedSide
++	{
++		bool on;
++		std::vector<int> orders;
++		std::vector<char> lor;
++		unsigned int stride;   //!< floats per group
++		std::vector<float> block;
++		PackedSide() : on(false), stride(0) {}
++	};
++	PackedSide m_PV, m_PI;
++	virtual void SetupPacked();
++	bool SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor,
++				   FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on);
++	void PrePacked(const float* field, PackedSide& s, unsigned int x0, unsigned int x1);
++	void ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1);
++
+ 	//! the merged DoPre*UpdatesLines() (see m_VoltMerged): per position the ADE update of every order
+ 	void PreMerged(const float* field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext,
+ 				   FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
+-- 
+2.54.0 (Apple Git-157)
+

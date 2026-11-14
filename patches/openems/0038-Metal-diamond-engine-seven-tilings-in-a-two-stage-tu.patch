@@ -1,7 +1,7 @@
 From b59d989681ac2aa42ea37811dbbc6ad41e1b4ae0 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 38/40] Metal diamond engine: seven tilings in a two-stage
+Subject: [PATCH 38/43] Metal diamond engine: seven tilings in a two-stage
  tuner; per-tile lists in a buffer of their own (snapshot cg30l)
 
 A sweep of thirteen tilings on eight models added three candidates: K=4 with tiles 10,6 (6-8 % ahead of the four on

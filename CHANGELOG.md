@@ -9,6 +9,122 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-13: three CPU patches (0041 to 0043), the stock baseline and the benchmark sources corrected, master's CPU engine measured
+
+Patches 0041 to 0043 are added; the fork's head is now 13350ca and the knob registry has 43 names. All three are
+bit-identical to stock v0.37.0 in every check below, and none is installed: the build on the author's Mac stays cg31 (patches
+0001 to 0039, ff2538a). The measurements are of 2026-11-12 and 2026-11-13 on the M5 Pro Mac mini (a set of its own, never
+mixed with the M5 MacBook Air's), in `results/cpu_items_cg33_2026-11-13.txt`; the other processes' CPU is given there for
+every part, and the identity checks ran on a loaded machine, so their verdicts count and their speeds do not.
+
+- Patch 0041, 8bcec90 (snapshot cg33a): the thread search of `numThreads=0` starts at every core that is not an efficiency
+  core. Up to patch 0040 it started at the cores of the first performance level (`hw.perflevel0`: 5 on the M5 Pro, 4 on the M5)
+  and went up in steps of 2; on the M5 Pro, where the fused sweep scales to all 15 cores, that took 8 timing windows on notch x3
+  (5 7 9 11 13 15 3 14 15) and cost 4 to 19 % of a short run. Now it starts at every core whose performance level is not named
+  "Efficiency" (15 on the M5 Pro; 4 on the M5, whose second level is the efficiency one, so nothing changes there), steps
+  down by 2 for as long as each step is the fastest so far and then tries one thread either side of the best (notch x3: 15 13
+  14, three windows). `OPENEMS_TUNE_START=p` restores the old rule and reproduces cg31's sequence. Four paired rounds on the M5
+  Pro (night of 2026-11-12, the other processes at 20 to 37 % of one core), the automatic count over 15 fixed threads of cg31:
+  cg31 auto x0.81 (GCPW line, 34300 steps), x0.96 (SMA launch, 50320), x0.82 (notch x3, 2000) and x0.87 (patch x5, 1200); the
+  new search x0.97, x1.00, x0.97 and x0.99; the new build with `OPENEMS_TUNE_START=p` x0.81, x0.98, x0.81 and x0.86.
+- Patch 0042, c6ef5c5 (snapshot cg33c): the Debye, Lorentz and Drude line hooks work on packed groups. The positions of a
+  dispersive extension are put in groups of up to four positions of one x-line (so no group is shared by two threads), and
+  the state and coefficients of a group sit in one block of memory instead of about fifteen separate arrays; four positions
+  are updated at a time with the same floating-point operations per position in the same order as the one-position loops.
+  Only the multithreaded engine packs (on Cartesian meshes sse-compressed, basic and the Metal engine's CPU fallback keep the
+  old paths and serve as independent references), and not when the blocks would need more than twice the field memory.
+  `OPENEMS_ADE_PACKED=0` turns it off. Before, a Debye cell cost about 39 ns on one thread and a Lorentz cell about 14 ns
+  (rough single-thread figures on a loaded machine, not results: the Debye extra per cell went from 38.7 to 8.4 ns and the
+  Lorentz one from 13.7 to 6.9). Against cg31, upstream's `bench.py`, interleaved, 3 repeats, fixed thread counts: the
+  `dispersive` case x1.94 at 5 threads and x1.90 at 15 on 1 M cells, x2.11 at 5 and x1.14 at 15 on 8 M; `antenna` x1.10 and
+  x1.08 (the second inside the spread) on 1 M, x1.06 and x1.03 (inside the spread) on 8 M. These dispersive runs were on
+  upstream's meshes, which have no source (below), so their rates are rates on zero fields; the control of 2026-11-13 gave
+  the same rates within the spread, and the packed hooks' identity rests on the checks listed below. The author's GCPW board,
+  whose conducting sheets run packed (1793 groups), did not change (34300 steps, 15 threads, 4 rounds, the other processes at
+  17 to 29 % of one core): cg31 4201.5 MC/s, cg33d 4190.4 (x0.998 [0.995 to 1.002]), cg33d with `OPENEMS_ADE_PACKED=0` 4194.7
+  (x0.998 [0.987 to 1.013]).
+- Patch 0043, 13350ca (snapshot cg33d; cg33 when rebuilt from the commit, banner v0.37.0-61-g13350ca): the packed code sits
+  under the GCC/clang guard with stubs for other compilers (its vector types are a GNU extension); when the packing is refused
+  for memory or a failed allocation the engine prints one line at verbose 1 or above ("... ADE packing not used ... would
+  need N bytes, limit L ..."); the limit of twice the field memory now counts all dispersive extensions of one engine
+  together. No arithmetic changed.
+- Identity checks (cg33d, the machine loaded): the new `scripts/ade_check/ade_check2.py` runs six kinds of dispersive model
+  (`dispersive`, `antenna`, `mixed`, `debye4`, `refuse`, `cyl`) in-process against stock and cg31, the new build at 4, 1, 15
+  and 7 threads, unfused, tiled, packing off, sse-compressed and basic, on the probes, the HDF5 dumps and the raw fields, and
+  fails a row whose log lacks "packed hooks" where packing applies or whose probes are all zero: 66 of 66 rows identical at
+  37 lines and 3000 steps; at 101 lines and 600 steps (a 1 M-cell grid with a source on the mesh) dispersive, mixed, antenna,
+  debye4 and refuse 9 rows each; the closed-cylinder case at 1500 steps 9 rows and again 7 of 7 (at 600 steps its far probe is
+  still zero in every build, stock included, so the script's guard stops those rows: that case needs 1500 steps or more).
+  `emskit fdtd check cg33d --lite` 18 of 18 rows identical to stock, the Debye check, `diamond-check` 72 of 72, the validation
+  suite 15 of 15 twice, six models in eight configurations 48 of 48 identical to stock, `scripts/tiled_sweep/check.zsh`
+  and the cylindrical multigrid (43 datasets, 0 differences).
+- The stock baseline of the M5 Pro was corrected. The speed table of 2026-11-12 (`results/m5pro_speed_set_2026-11-12.txt`, the
+  README's M5 Pro section, the paper's section on the M5 Pro) took stock's best from runs at 5 and 10 threads only. On
+  2026-11-13 stock ran at 1, 2, 3, 4, 5, 10 and 15 threads on the six models (3 interleaved rounds, half the steps of the
+  speed table, cg31 at 15 threads in the same rounds; the other processes at 20 to 60 % of one core, in two runs at 171 and 182
+  %). Stock's best, MC/s (threads): GCPW line 305 (4), SMA launch 472 (5), notch tutorial 343 (5), notch x3 1164 (10), patch
+  tutorial 270 (2), patch x5 1488 (10), where the table had 283, 449, 270, 1124, 152 and 1406. The CPU engine's gain over
+  stock's best, as the paired median over the rounds: x14.06, x9.33, x12.45, x4.27, x9.67 and x2.73, so x2.7 to x14.1 where
+  the table of 2026-11-12 said x2.7 to x17 (its patch tutorial figure, x17.3, came from stock's 152 MC/s at 5 threads; stock
+  runs 270 at 2 threads and 36 at 15). The cg31 and Metal columns and the GPU/CPU ratios of that table stand; the README,
+  `ROADMAP.md`, the paper and the record (a dated note at its top) now say so; the CHANGELOG entry of
+  2026-11-12 is left as written. The end-to-end figures of 2026-11-12 are unchanged (stock ran there at the toolkit's
+  fallback thread counts, 4 for the GCPW line and 8 for the SMA launch). The README's end-to-end text now says that the
+  25 to 32 times of the M5 Pro has three parts: the probe-end criterion stops these runs after 2.4 to 2.7 times fewer steps,
+  the faster engine supplies the rest, and the 32 is the opt-in Metal engine on the GCPW line, where the CPU engine
+  reaches 27.
+- Upstream's benchmark cases without a source (a finding of 2026-11-13). In upstream master 1d710c2 `benchmark/cases.py` builds
+  its uniform meshes as `arange(n) - (n-1)/2`; with an even line count (`bench.py`'s sizes S and M, 100 and 200 lines; 37 and
+  311 are odd) no mesh line passes through the origin, so the dipole of the cases `ideal`, `pml` and `dispersive` excites
+  nothing (openEMS prints "Voltage excitations: 0") and those runs have all fields zero; `inhomogeneous`, `antenna` and
+  `cylindrical` have sources of their own. Every "probes identical" on those three cases at S or M in this repository
+  (`results/common_benchmarks_2026-11-10.txt`, the master-against-fork table of 2026-11-12) is therefore an empty statement,
+  and their S/M speeds were measured on zero fields. A control on 2026-11-13 (M, 15 threads, master / fork, MC/s: ideal 3870 /
+  4071 without a source and 3671 / 3985 with one; dispersive 2437 / 1344 and 2460 / 1338) shows the rates equal within the
+  spread, so the rates stand; the identity of the fork on these cases rests on the 37-line size and on the 101-line runs of
+  `ade_check2.py`. The tools of this repository that used the cases (`ade_check2.py`, `scripts/m5pro/master/bench_launch.py`
+  with `BENCH_ODD_LINES=1`) give even counts one more line. The finding has not been reported upstream. Dated notes are at the
+  top of the 2026-11-10 and 2026-11-12 records; the rest of those records is as written.
+- Master's CPU engine beside the fork's (M5 Pro, 2026-11-13; `bench.py` of master 1d710c2, master's `cpu` engine against the
+  fork's cg33d multithreaded engine, run for run, 3 repeats, a source on the mesh with 101 and 201 lines, the other processes at
+  a median of 20 % of one core). Fork over master at 5 / 10 / 15 threads: ideal 1 M 1.42 / 2.20 / 2.52 and 8 M 1.02 / 1.03 /
+  1.09; PML 1 M 1.61 / 2.16 / 2.42 and 8 M 0.93 / 1.07 / 1.14; dispersive 1 M 0.96 / 1.30 / 1.45 and 8 M 0.73 / 0.70 / 0.54
+  (the absolute rates are in the record's section 3, part c). So the fork is ahead at 1 M cells except dispersive at 5 threads
+  (level), level to 14 % ahead at 8 M on ideal and PML (x0.93 on PML at 5 threads), and behind on the 8 M dispersive case (the fork peaks at 10 threads there
+  and its dispersive setup takes 2.5 to 5.5 times master's). Master's engine is a different algorithm (one cache-sized tile
+  shared by all threads, several timesteps per pass) and its probes differ from the fork's by 5e-6 to 3e-5 relative, where the
+  fork equals stock bit for bit. From the night of 2026-11-12 (cg31, cases with sources of their own): inhomogeneous 1 M
+  1.56 / 2.18 / 2.43 and 8 M 0.98 / 1.11 / 1.19, antenna 1.41 / 1.90 / 2.18 and 0.92 / 1.04 / 1.14, cylindrical 1.53 / 2.15 / 2.57
+  and 1.04 / 1.17 / 1.30, master's probes differing by 3e-7 to 1e-5. The tiled sweep (patch 0040) at 8 M cells with a source:
+  `OPENEMS_TBLOCK=auto` +8 / +22 / +15 % over the fused sweep on ideal at 5 / 10 / 15 threads (3183 / 4450 / 4569 against 2954 /
+  3647 / 3969 MC/s; `=4` -4 / +11 / -1 %; `auto` with W=31 +2 / +10 / +2 %), and slower on dispersive in every variant (`auto`
+  -19 / -27 / -44 %, `=4` -24 / -30 / -59 %, W=31 -29 / -37 / -23 %): it stays opt-in and does not close the dispersive gap.
+- Other corrections: the README now has the comparison with master's `cpu` engine that it lacked (the bullet above), and
+  `ROADMAP.md` Phases 0 and 4 name the 8 M dispersive gap as the open CPU item. The "1.27 times master" of `results/engines_on_luikore_model_2026-11-11.txt` (fork CPU against master `cpu`,
+  3.0 M cells) compared the fork at the better of 8 and 10 threads with master at 8, and the model file's `endCriteria="0"` made
+  both programs run the periodic field-energy estimate that luikore's build did not; the record has a dated note and the README
+  names the conditions. The README's statement that cg31 raised the Metal engine's rates by 1.07 to 1.53 times on the six
+  models agrees with `results/metal_engine_cg31_2026-11-11.txt` (the PML cube's 1.58 is not one of the six). The gate of the
+  M5 Pro stages could not pass: `scripts/m5pro/common.zsh` set `GATE` to 60 s, `wait_quiet.zsh` needs six samples 20 s apart,
+  so every stage started without a quiet machine (the runs' own gates and the others' load per run are unaffected); the
+  default is now 300. The command line's version string stays 0.1.0 (the author decides when it changes).
+- Scripts added: `scripts/ade_check/ade_check2.py`; under `scripts/m5pro/` `tune33.zsh`, `master33.zsh`, `slotF.zsh` and
+  `master/` (`build.zsh` for upstream master, `bench_launch.py`, `fork_as_cpu.zsh`, `fork_snap_cpu.zsh`), with the machine's
+  paths replaced by `M5PRO_OUT`, `RFSIM_PATH`, `MASTER_DIR`, `OPENEMS_PREFIX` and `OPENEMS_BENCH_SNAPS`. In `slotF.zsh` the
+  load log now counts every process that is not a descendant of the script (the first version excluded by name and counted
+  the python children of `abtest.py` as others in parts a and b) and the probe-peak summary prints one line per run folder.
+- Patches and command line: `patches/openems/` holds 0001 to 0043 (`git format-patch 7bb294f..13350ca`; 0001 to 0040 changed
+  only in their subject numbering, `[PATCH nn/43]`), `cumulative_vs_gpu-engine.patch` 68 files, +7685/-265; `git am` of the 43
+  patches and `git apply` of the cumulative diff both give tree 211a3de8300454a37bda032ecf7514db1514579b (checked 2026-11-13);
+  the CSXCAD patch did not change. The knob registry of `emskit fdtd` has 43 names (`OPENEMS_TUNE_START`, which takes `p`,
+  and `OPENEMS_ADE_PACKED`, 0 or 1), with one more unit test and the library row of snapshot cg33; the count is 260 tests
+  in 28 suites (246 unit tests, which passed on 2026-11-13, and 14 smoke tests, of which the three that start no simulation
+  were run and passed; the other eleven were not repeated). `BUILD.md` section 7 has the two rows and says which switches read a number or a word.
+- Who wrote what: the code of patches 0041 to 0043 was written by Claude Opus 5.5 (the hardening of 0043 by an Opus 5.5
+  subagent) and planned and reviewed by Claude Fable 5.2; the commit trailers name Claude Opus 5.5 (`Generated-by:`) above the
+  author's `Signed-off-by:`. `ade_check2.py` was written by a Claude Sonnet subagent. This documentation pass was written by
+  Claude Sonnet subagents directed and checked by Claude Fable 5.2.
+
 ## 2026-11-12: the fork on a second machine, an M5 Pro Mac mini
 
 The fork's libraries were measured on a second machine: a Mac mini with an Apple M5 Pro (Mac17,16; 5 "Super" cores,

@@ -1,7 +1,7 @@
 From 3db279110375b75d19e17dddd38fb3a4860b9dcf Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 20:47:04 -0600
-Subject: [PATCH 13/40] Metal diamond engine: runs for the excitation and the
+Subject: [PATCH 13/43] Metal diamond engine: runs for the excitation and the
  dispersive materials (snapshot cg25)
 
 The per-tile lists of the excitation entries and of the dispersive elements (conducting

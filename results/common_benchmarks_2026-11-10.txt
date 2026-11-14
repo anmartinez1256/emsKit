@@ -1,5 +1,15 @@
 Common benchmarks, 2026-11-10 (Apple M5, 4 P + 6 E cores, 16 GB, macOS 27.0.1)
 ==================================================================================
+CORRECTION 2026-11-13 (benchmark cases without a source): in upstream master 1d710c2, benchmark/cases.py builds its uniform
+meshes as arange(n) - (n-1)/2. With an even line count (bench.py's sizes S = 100 and M = 200 lines) no mesh line passes through the
+origin, so the dipole that the cases `ideal`, `pml` and `dispersive` put at (0, 0, z) excites nothing (openEMS prints "Voltage
+excitations: 0") and those three cases ran with all fields zero in section 1 below (part A and part B); `inhomogeneous`, `antenna` and `cylindrical`
+have their own sources. The rates of those three cases below are therefore rates on zero fields. A control on 2026-11-13, on the M5 Pro, (results/
+cpu_items_cg33_2026-11-13.txt, section 3 part c, with a source on the mesh: 101 / 201 lines) gave master's and the fork's rates within
+the spread of the runs without a source on this chip (ideal M at 15 threads: master 3671 with a source and 3870 without, fork 3985 and
+4071; dispersive M: master 2460 and 2437, fork 1338 and 1344), so the rates stand as rates; a "probes identical" on those three cases
+says nothing, and the finding has not been reported upstream.
+
 Four measurements that readers outside this project know by name. The fork is the installed build cg29
 (patches 0001-0027; banner v0.37.0-44-g074a687), stock is openEMS v0.37.0 (snapshot `stock`).
 The machine was shared: each section gives what the other processes used.

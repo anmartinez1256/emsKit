@@ -1,0 +1,305 @@
+From 13350cacc15ad32b667536fef3b101f26b3b35f7 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 03:16:10 -0600
+Subject: [PATCH 43/43] Dispersive extensions: guard the packed hooks and
+ report a refused packing
+
+The packed hooks use GCC/clang vector extensions: they are now under
+the same compiler guard as the rest of the vector code, with empty
+stubs otherwise, so other compilers build the unpacked paths.
+
+The memory limit (twice the field arrays) is counted per engine over
+all dispersive extensions instead of per extension, and a packing that
+is refused by the limit or by a failed allocation prints one line at
+verbose 1 with the bytes needed, the limit and the bytes already
+packed. OPENEMS_ADE_PACKED=0 is reported at verbose 2.
+
+No arithmetic changes: results are identical to the commit before.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/engine_ext_debyematerial.cpp  | 25 ++++++++--
+ FDTD/extensions/engine_ext_debyematerial.h    |  1 +
+ FDTD/extensions/engine_ext_dispersive.cpp     | 30 +++++++++++
+ FDTD/extensions/engine_ext_dispersive.h       | 12 +++++
+ .../extensions/engine_ext_lorentzmaterial.cpp | 50 ++++++++++++++++---
+ FDTD/extensions/engine_ext_lorentzmaterial.h  |  5 +-
+ 6 files changed, 111 insertions(+), 12 deletions(-)
+
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index 1821af3..6c40aa0 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -151,20 +151,27 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ {
+ 	m_Packed = false;
+ 	std::vector<float>().swap(m_Block);
+-	const char* env = getenv("OPENEMS_ADE_PACKED");
+-	if (env && *env && (atoi(env)==0))
+-		return;
++#if defined(__GNUC__) || defined(__clang__)
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+ 	// Debye has voltage ADE of order 0 only; the packed hooks replace exactly those
+ 	if ((P<1) || (m_Op_Ext_Deb->m_Order!=1) || !m_Op_Ext_Deb->m_volt_ADE_On[0] || m_Op_Ext_Deb->m_curr_ADE_On[0])
+ 		return;
+ 	if (!SetupGroups())
+ 		return;
++	if (PackedOff())
++	{
++		ClearGroups();
++		ReportPackRefusal(PACK_OFF, "", 0, 0);
++		return;
++	}
+ 	const size_t groups = m_GroupX.size();
+ 	m_BlockStride = 3*(3*P+3)*4;
+-	if ((uint64_t)groups*m_BlockStride*sizeof(float) > 2*FieldBytes())
++	const uint64_t need = (uint64_t)groups*m_BlockStride*sizeof(float);
++	const uint64_t used = PackedBytesOfOthers();
++	if (used+need > 2*FieldBytes())
+ 	{
+ 		ClearGroups();
++		ReportPackRefusal(PACK_LIMIT, "", need, used);
+ 		return;
+ 	}
+ 	try
+@@ -173,7 +180,9 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 	}
+ 	catch (std::bad_alloc&)
+ 	{
++		std::vector<float>().swap(m_Block);
+ 		ClearGroups();
++		ReportPackRefusal(PACK_ALLOC, "", need, used);
+ 		return;
+ 	}
+ 	// coefficients, and the current state (zero before the first step) of every used lane
+@@ -199,8 +208,10 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 	if (g_settings.GetVerboseLevel()>1)
+ 		std::cout << GetExtensionName() << ": packed hooks, " << groups << " groups of " << m_Op_Ext_Deb->m_LM_Count.at(0)
+ 				  << " positions, " << m_Block.size()*sizeof(float)/1048576.0 << " MiB" << std::endl;
++#endif
+ }
+ 
++#if defined(__GNUC__) || defined(__clang__)
+ // the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
+ void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
+ {
+@@ -288,6 +299,12 @@ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1)
+ 		}
+ 	}
+ }
++#else
++// without the vector extensions SetupPacked() never packs (m_Packed stays false), so these are never called
++void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++#endif
+ 
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
+index 677908a..c35567d 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.h
++++ b/FDTD/extensions/engine_ext_debyematerial.h
+@@ -76,6 +76,7 @@ protected:
+ 	//! v_relax[pole] (P x 4), v_drive[pole] (P x 4), v_solve (4). Four lanes at a time, the same operations per lane
+ 	//! as the one-position loops. While packed, every hook (whole grid or lines) uses the blocks.
+ 	virtual void SetupPacked();
++	virtual uint64_t PackedBytes() const {return (uint64_t)m_Block.size()*sizeof(float);}
+ 	bool m_Packed;
+ 	unsigned int m_BlockStride;
+ 	std::vector<float> m_Block;
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index 44cfb7b..e2e6a15 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -169,6 +169,36 @@ uint64_t Engine_Ext_Dispersive::FieldBytes() const
+ 	return 2*(uint64_t)eng->f4_volt_ptr->size()*sizeof(f4vector);
+ }
+ 
++uint64_t Engine_Ext_Dispersive::PackedBytesOfOthers() const
++{
++	uint64_t sum = 0;
++	if (!m_Eng)
++		return 0;
++	for (size_t n=0; n<m_Eng->GetExtensionCount(); ++n)
++	{
++		const Engine_Ext_Dispersive* e = dynamic_cast<const Engine_Ext_Dispersive*>(m_Eng->GetExtension(n));
++		if (e && (e!=this))
++			sum += e->PackedBytes();
++	}
++	return sum;
++}
++
++bool Engine_Ext_Dispersive::PackedOff()
++{
++	const char* env = getenv("OPENEMS_ADE_PACKED");
++	return env && *env && (atoi(env)==0);
++}
++
++void Engine_Ext_Dispersive::ReportPackRefusal(PackRefusal r, const char* what, uint64_t need, uint64_t used) const
++{
++	if ((r==PACK_OFF) && (g_settings.GetVerboseLevel()>1))
++		std::cout << GetExtensionName() << ": ADE packing not used" << what << " (OPENEMS_ADE_PACKED=0)" << std::endl;
++	else if (((r==PACK_LIMIT) || (r==PACK_ALLOC)) && (g_settings.GetVerboseLevel()>0))
++		std::cout << GetExtensionName() << ": ADE packing not used" << what << " (" << (r==PACK_LIMIT ? "memory limit" : "allocation failed")
++				  << "): would need " << need << " bytes, limit " << 2*FieldBytes() << " bytes (twice the field arrays), "
++				  << used << " bytes already packed in this engine" << std::endl;
++}
++
+ void Engine_Ext_Dispersive::ClearGroups()
+ {
+ 	std::vector<unsigned int>().swap(m_GroupX);
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index b79af78..ba5e8ef 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -85,6 +85,18 @@ protected:
+ 	std::vector<unsigned int> m_GroupFi;     //!< [12*g+4*n+l]: float index of component n of lane l (unused lanes: lane 0's)
+ 	//! the bytes of the engine's voltage and current arrays (the limit for packed copies: twice this)
+ 	uint64_t FieldBytes() const;
++	//! Packed blocks need the GCC/clang vector extensions (v4sf, Load4/Store4); other compilers never build them.
++	//! The limit counts per engine: the packed blocks of all dispersive extensions of one engine together stay
++	//! within twice the field bytes (summed over the extensions of m_Eng, so every engine starts at zero).
++	enum PackRefusal {PACK_OK=0, PACK_NOT_ELIGIBLE, PACK_OFF, PACK_LIMIT, PACK_ALLOC};
++	//! the bytes of this extension's packed blocks
++	virtual uint64_t PackedBytes() const {return 0;}
++	//! the bytes of the packed blocks of the other dispersive extensions of this engine
++	uint64_t PackedBytesOfOthers() const;
++	//! OPENEMS_ADE_PACKED=0
++	static bool PackedOff();
++	//! the line for packing not used: OPENEMS_ADE_PACKED=0 at verbose > 1, memory limit / failed allocation at verbose >= 1
++	void ReportPackRefusal(PackRefusal r, const char* what, uint64_t need, uint64_t used) const;
+ 	bool AnyVoltADE() const;
+ 	bool AnyCurrADE() const;
+ 
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index 5a68795..8061978 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -84,18 +84,28 @@ void Engine_Ext_LorentzMaterial::SetupPacked()
+ {
+ 	m_PV = PackedSide();
+ 	m_PI = PackedSide();
+-	const char* env = getenv("OPENEMS_ADE_PACKED");
+-	if (env && *env && (atoi(env)==0))
+-		return;
++#if defined(__GNUC__) || defined(__clang__)
+ 	if (!m_VoltMerged && !m_CurrMerged)
+ 		return;
+ 	if (!SetupGroups())
+ 		return;
+ 	Operator_Ext_LorentzMaterial* op = m_Op_Ext_Lor;
++	PackRefusal rv, ri;
++	uint64_t nv, ni, uv, ui;
+ 	const bool v = SetupSide(m_PV, m_VoltMerged, m_VoltOrders, volt_ADE, volt_Lor_ADE, op->v_int_ADE, op->v_ext_ADE,
+-							 op->v_Lor_ADE, op->m_volt_Lor_ADE_On);
++							 op->v_Lor_ADE, op->m_volt_Lor_ADE_On, rv, nv, uv);
+ 	const bool i = SetupSide(m_PI, m_CurrMerged, m_CurrOrders, curr_ADE, curr_Lor_ADE, op->i_int_ADE, op->i_ext_ADE,
+-							 op->i_Lor_ADE, op->m_curr_Lor_ADE_On);
++							 op->i_Lor_ADE, op->m_curr_Lor_ADE_On, ri, ni, ui);
++	// one line for the extension: a side refused by the memory limit or a failed allocation, else OPENEMS_ADE_PACKED=0
++	{
++		const bool mv = (rv==PACK_LIMIT) || (rv==PACK_ALLOC);
++		const bool mi = (ri==PACK_LIMIT) || (ri==PACK_ALLOC);
++		if (mv || mi)
++			ReportPackRefusal(mv ? rv : ri, mv && mi ? " for voltages and currents" : (mv ? " for voltages" : " for currents"),
++							  (mv ? nv : 0) + (mi ? ni : 0), mv ? uv : ui);
++		else if ((rv==PACK_OFF) || (ri==PACK_OFF))
++			ReportPackRefusal(PACK_OFF, "", 0, 0);
++	}
+ 	if (!v && !i)
+ 	{
+ 		ClearGroups();
+@@ -105,20 +115,36 @@ void Engine_Ext_LorentzMaterial::SetupPacked()
+ 		std::cout << GetExtensionName() << ": packed hooks, " << m_GroupX.size() << " groups of " << m_Op_Ext_Lor->m_LM_Count.at(0)
+ 				  << " positions, voltages " << (v ? m_PV.orders.size() : 0) << " orders, currents " << (i ? m_PI.orders.size() : 0)
+ 				  << " orders, " << (m_PV.block.size()+m_PI.block.size())*sizeof(float)/1048576.0 << " MiB" << std::endl;
++#endif
+ }
+ 
+ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade,
+-	FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on)
++	FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on,
++	PackRefusal& r, uint64_t& need, uint64_t& used)
+ {
+ 	s = PackedSide();
++	r = PACK_NOT_ELIGIBLE;
++	need = 0;
++	used = 0;
+ 	// the groups are built on the positions of order 0; MergeOrders() made sure every merged order has the same ones
+ 	if (!merged || orders.empty() || (m_FloatIdx[orders[0]]!=m_FloatIdx[0]))
+ 		return false;
++	if (PackedOff())
++	{
++		r = PACK_OFF;
++		return false;
++	}
+ 	const size_t groups = m_GroupX.size();
+ 	const unsigned int no = orders.size();
+ 	const unsigned int stride = 3*no*20;
+-	if ((uint64_t)(m_PV.block.size()+m_PI.block.size()+groups*stride)*sizeof(float) > 2*FieldBytes())
++	// the limit counts every packed block of this engine: the other extensions' and this one's other side (s is empty)
++	need = (uint64_t)groups*stride*sizeof(float);
++	used = PackedBytesOfOthers() + PackedBytes();
++	if (used+need > 2*FieldBytes())
++	{
++		r = PACK_LIMIT;
+ 		return false;
++	}
+ 	try
+ 	{
+ 		s.block.assign(groups*stride, 0.0f);
+@@ -126,8 +152,10 @@ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std
+ 	catch (std::bad_alloc&)
+ 	{
+ 		s = PackedSide();
++		r = PACK_ALLOC;
+ 		return false;
+ 	}
++	r = PACK_OK;
+ 	s.stride = stride;
+ 	s.orders = orders;
+ 	for (int o : orders)
+@@ -156,6 +184,7 @@ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std
+ 	return true;
+ }
+ 
++#if defined(__GNUC__) || defined(__clang__)
+ // the operations of PreMerged() per lane
+ void Engine_Ext_LorentzMaterial::PrePacked(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1)
+ {
+@@ -229,6 +258,13 @@ void Engine_Ext_LorentzMaterial::ApplyPacked(float* __restrict field, const Pack
+ 		}
+ 	}
+ }
++#else
++// without the vector extensions SetupPacked() never packs (m_PV.on, m_PI.on stay false), so these are never called
++void Engine_Ext_LorentzMaterial::PrePacked(const float* field, PackedSide& s, unsigned int x0, unsigned int x1)
++{UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_LorentzMaterial::ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1)
++{UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1);}
++#endif
+ 
+ void Engine_Ext_LorentzMaterial::Apply2Voltages()
+ {
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.h b/FDTD/extensions/engine_ext_lorentzmaterial.h
+index c20e5b0..9b7a4da 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.h
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.h
+@@ -61,8 +61,11 @@ protected:
+ 	};
+ 	PackedSide m_PV, m_PI;
+ 	virtual void SetupPacked();
++	virtual uint64_t PackedBytes() const {return (uint64_t)(m_PV.block.size()+m_PI.block.size())*sizeof(float);}
++	//! r: why the side was not packed, need: the bytes it would have needed, used: the bytes already packed in this engine
+ 	bool SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor,
+-				   FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on);
++				   FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on,
++				   PackRefusal& r, uint64_t& need, uint64_t& used);
+ 	void PrePacked(const float* field, PackedSide& s, unsigned int x0, unsigned int x1);
+ 	void ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1);
+ 
+-- 
+2.54.0 (Apple Git-157)
+

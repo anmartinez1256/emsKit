@@ -1,7 +1,7 @@
 From 3c75b0b8ba895c3be23da78f8595e3ffcfb88073 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 01:51:09 -0600
-Subject: [PATCH 21/40] Steady-state detection: line hooks for the fused sweep
+Subject: [PATCH 21/43] Steady-state detection: line hooks for the fused sweep
 
 A sinusoidal excitation adds the steady-state detection (Engine_Ext_SteadyState), and that extension had
 no line hooks, so the multithreaded engine ran every such simulation (all cases of upstream's benchmark,

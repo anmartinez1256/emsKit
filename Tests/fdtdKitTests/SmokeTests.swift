@@ -31,6 +31,7 @@ enum Smoke {
     static let afterCg29: Set<String> = ["OPENEMS_DIAMOND_MERGE", "OPENEMS_DIAMOND_MURMERGE", "OPENEMS_DIAMOND_EVEN",
                                          "OPENEMS_DIAMOND_FASTIDX", "OPENEMS_DIAMOND_TGFLAG", "OPENEMS_DIAMOND_PML4",
                                          "OPENEMS_DIAMOND_PML3", "OPENEMS_DIAMOND_CAND", "OPENEMS_TBLOCK",
+                                         "OPENEMS_TUNE_START", "OPENEMS_ADE_PACKED",
                                          "OPENEMS_TBLOCK_W", "OPENEMS_TBLOCK_HOOKS"]
 
     /// Spec 16.2: only through `--filter ...SmokeTests --no-parallel`, so that no other suite runs beside these runs

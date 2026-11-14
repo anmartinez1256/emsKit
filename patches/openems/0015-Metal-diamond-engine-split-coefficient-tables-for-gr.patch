@@ -1,7 +1,7 @@
 From 282707b7fa8e8f323b9ebbe3abd51dd2daa24986 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 20:47:41 -0600
-Subject: [PATCH 15/40] Metal diamond engine: split coefficient tables for
+Subject: [PATCH 15/43] Metal diamond engine: split coefficient tables for
  graded meshes (snapshot cg27)
 
 A graded PCB mesh has an operator for every few f4vectors (the SMA launch: 64410 operators

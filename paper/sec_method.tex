@@ -2,7 +2,7 @@
 
 \subsection{Models}
 Six models span the sizes and features that matter (Table~\ref{tab:models}). Four are the openEMS Python tutorials,
-two of them with the mesh refined (``x5'', ``x3'') to a size that is clearly bandwidth-bound; two are the author's
+two of them with the mesh refined (``x5'', ``x3'') to a size that is clearly bandwidth-bound on the M5 (on the M5 Pro they still scale to 15 threads, Section~\ref{sec:m5pro}); two are the author's
 real boards, built by the author's toolkit. Every feature in daily use is covered: Mur and PML boundaries (full-z slabs
 and a z-only slab), lumped, microstrip-line (MSL) and coaxial ports, conducting sheets (the dispersive-material
 extension), near-field-to-far-field (nf2ff) dumps, frequency-domain field dumps. The cylindrical multigrid was checked
@@ -118,10 +118,16 @@ The installed build, cg31 (patches 0001--0039, installed in cg29's place on 2026
 each of its snapshots and on the installed library), the validation suite on the Metal engine (15 of 15, on snapshot
 cg30l, patches 0001--0038) and both boards end to end with the toolkit's defaults, which stopped at the steps of cg29
 (34\,300 and 50\,320; Section~\ref{sec:cg31}, \code{results/metal\_engine\_cg31\_2026-11-11.txt}).
-Patch 0040, the opt-in tiled sweep of the fork's head (snapshot cg32d, not installed), was checked both ways: with
+Patch 0040, the opt-in tiled sweep (snapshot cg32d, not installed), was checked both ways: with
 its switch unset the reduced check is identical to stock on all six models (18 of 18 rows), and with it set the
 probes of six models and the raw fields of a closed cylinder and of a steady-state run equal those of the fused
 sweep (Section~\ref{sec:tiled}, \code{results/tiled\_sweep\_cg32\_2026-11-11.txt}).
+Patches 0041 to 0043, the fork's head (snapshots cg33a to cg33d and cg33, not installed), were checked on the M5 Pro on
+2026-11-13: the reduced check, the Debye check, the diamond check, the validation suite, six models in eight configurations
+and the cylindrical multigrid example are identical to stock as before, and a new script, \code{scripts/ade\_check/ade\_check2.py},
+compares the dispersive cases (the packed hooks of patch 0042 against stock, cg31, the unpacked paths and the other engines,
+with a guard that stops a row whose probes are all zero) in 66 of 66 rows at 37 mesh lines and in the rows with a source at
+101 lines (Section~\ref{sec:cg33}; \code{results/cpu\_items\_cg33\_2026-11-13.txt}).
 
 \subsection{Verification policy}\label{sec:policy}
 \begin{itemize}
@@ -212,7 +218,9 @@ sweep (Section~\ref{sec:tiled}, \code{results/tiled\_sweep\_cg32\_2026-11-11.txt
   \code{OPENEMS\_DIAMOND\_K}, \code{OPENEMS\_DIAMOND\_TILE} and \code{OPENEMS\_DIAMOND\_COEF} fix the tiling and the
   coefficient layout (Section~\ref{sec:gpu}); its changes of cg31 have eight switches of their own
   (Section~\ref{sec:cg31}). The tiled sweep of patch 0040 is opt-in too: it runs only when \code{OPENEMS\_TBLOCK}
-  is set (Section~\ref{sec:tiled}).
+  is set (Section~\ref{sec:tiled}). Patches 0041 and 0042 add two switches: \code{OPENEMS\_TUNE\_START=p} restores the start of
+  the thread search of cg31, and \code{OPENEMS\_ADE\_PACKED=0} turns the packed dispersive hooks off (Section~\ref{sec:cg33});
+  with 43 switches in all in the command line's list.
 \item \textbf{What ``bit-identical'' rests on.} Three rewrites depend on the compiler fusing a multiply-add the same
   way in the old and the new expression; this was verified by comparison on every model with Apple clang builds, not
   forced in the source (Section~\ref{sec:contract}). In the standalone kernel the rewritten inner loop matches the stock

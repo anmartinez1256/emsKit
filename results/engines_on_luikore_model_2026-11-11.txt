@@ -1,5 +1,14 @@
 Three builds on luikore's benchmark model, same Apple M5, interleaved, 2026-11-11 06:35-06:43 (quiet machine)
 ================================================================================================================
+NOTE 2026-11-13 (conditions of the fork-against-master CPU ratio): "fork CPU against master cpu x1.27 and x0.86" below compares the
+fork's multithreaded engine at the better of 8 and 10 threads with master's cpu engine at 8 threads only (master's was not run at 10).
+In these runs the model file's endCriteria="0" also made both programs (not luikore's build) run the periodic field-energy estimate
+described below, which was measured only for the Metal engine; its cost on the CPU engines was not measured. Master's cpu engine is a
+different algorithm (one cache-sized tile shared by all threads, several timesteps per pass) and its probes differ from the fork's. A
+paired comparison on the M5 Pro on 2026-11-13, with thread counts equal on both sides and a source on the mesh, is in
+results/cpu_items_cg33_2026-11-13.txt (section 3 part c): the fork is ahead at 1 M cells and level to 14 % ahead at 8 M on the cases
+without dispersion (x0.93 on pml at 5 threads), and behind on the 8 M dispersive case.
+
 scripts/luikore_compare/compare3.py: luikore's Metal engine (openEMS pull request 228, commit 55ce11b), upstream master 1d710c2
 (engines gpu, cpu, multithreaded) and the fork as installed that morning (cg31, v0.37.0-57-gff2538a = patches 0001 to 0039) on
 luikore's own model (macos/bench/bench_metal.py: a uniform 1 mm grid with PEC walls, one dielectric box, a Gaussian point

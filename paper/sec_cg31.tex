@@ -5,8 +5,9 @@ published, twelve commits followed (patches 0028 to 0039): one on the energy sch
 (0028), ten on the Metal diamond engine (0029 to 0038) and one on the cylinder extension (0039). The build, cg31, has
 been the installed one on the author's Mac since that day. This section records what was looked for, what changed and
 what it gave (\code{results/metal\_engine\_cg31\_2026-11-11.txt}). A thirteenth commit of that day, patch 0040, adds
-an opt-in tiled sweep to the CPU engine (Section~\ref{sec:tiled}); it is the fork's head and is not part of the
-installed build.
+an opt-in tiled sweep to the CPU engine (Section~\ref{sec:tiled}); it is not part of the installed build, and
+three more commits of 2026-11-13 (patches 0041 to 0043, now the fork's head, 13350ca) are the subject of
+Section~\ref{sec:cg33}.
 
 \subsection{Where the Metal engine's time went}
 Three observations set the work list.
@@ -21,7 +22,8 @@ criteria and Nyquist periods above a thousand steps: for them the estimate costs
 
 \emph{Extensions cost by being present.} In a timing-only build that leaves parts of the kernel out (results wrong by
 design), the GCPW line ran 1.35$\times$ as fast without its Mur faces, 1.32$\times$ without its conducting sheets and
-2.0$\times$ without any extension; the SMA launch 1.69$\times$ without its UPML slab on one z face.
+2.0$\times$ without any extension; the SMA launch 1.69$\times$ without its UPML slab on one z face (the record gives no load of the machine for these
+timing-only runs).
 But on a later snapshot, where the same builds of the GCPW line gave 1.26$\times$, 1.22$\times$ and 1.94$\times$,
 skipping one stage at run time, with the code still in the kernel, gave only 1.02--1.07$\times$ each (the sheets' Pre
 and Apply, Mur's Pre and Post). The cost is tied to the code being compiled into the kernel, not
@@ -149,7 +151,8 @@ fast at 17\,M; the night before, cg29's had run 3\,728 and 3\,092, 0.94$\times$ 
 run (3\,958 and 2\,848; \code{results/luikore\_compare\_cg29\_2026-11-11.txt}). cg31's engine is 2.4$\times$ and
 2.1$\times$ master's \code{gpu} engine here, luikore's 2.4$\times$ and 1.8$\times$.
 On the CPU, cg31 is 1.27$\times$ master's new \code{cpu} engine at 3.0\,M cells and 0.86$\times$ at 17\,M: on the large
-grid master's engine is ahead, as in Table~\ref{tab:upstream}. Two things qualify the table. It is one model, the best
+grid master's engine is ahead, as in Table~\ref{tab:upstream}. Three things qualify the table. The CPU rows were not tuned equally: the fork's row is the better of 8 and 10 threads,
+and master's \code{cpu} engine ran at 8 threads only. It is one model, the best
 case of a GPU engine (a regular grid, no boundary work). And a model file whose \code{endCriteria} is 0 makes the
 \code{openEMS} program use its default of $-60$\,dB, so here the fork and master make the energy estimates of
 Section~\ref{sec:cg31} and luikore's build does not: run from Python, where 0 means no criteria, cg31's Metal engine
@@ -273,9 +276,10 @@ other five models (0.41--0.97$\times$): there the fused sweep keeps gaining up t
 peaks at 10. The verdict below holds on that machine too.
 
 The verdict: the tiled sweep is a switch for large grids with little extension work on a quiet machine, not a
-default. The fused sweep stays the engine's default, and the installed build, cg31, does not have the switch. Not
-measured: the tiled sweep against upstream master's \code{cpu} engine in one paired run, so where it stands against
-that engine is not known. Not built: a choice between the two sweeps at run time.
+default. The fused sweep stays the engine's default, and the installed build, cg31, does not have the switch. On the M5 the tiled
+sweep was not measured against upstream master's \code{cpu} engine in one paired run; on the M5 Pro the fused sweep was
+(Section~\ref{sec:cg33}), and the tiled sweep was timed on two 8\,M-cell cases beside the fused one, not run side by
+side with master's engine. Not built: a choice between the two sweeps at run time.
 
 \subsection{A shorter pulse (tested, not adopted)}\label{sec:pulse}
 The toolkit excites with a Gaussian of centre $f_{\max}/2$ and width $f_{\max}/2$. A baseband Gaussian (centre 0,

@@ -1,7 +1,7 @@
 From 68c1c8215b8e569e811a2962b3b9d594637031d2 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 4 Nov 2026 21:50:11 -0600
-Subject: [PATCH 16/40] Metal diamond engine: pick the tiling at run time
+Subject: [PATCH 16/43] Metal diamond engine: pick the tiling at run time
  (snapshot cg28)
 
 No single tiling is best for every model: in the cg23 and cg27 sweeps the GCPW line and

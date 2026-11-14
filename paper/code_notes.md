@@ -4,12 +4,13 @@ Written from the diffs by an AI review agent (Claude, through Claude Code; see t
 section) on 2026-11-01, updated for patch 0005 on 2026-11-02 and for the final review on 2026-11-03; this
 header and the snapshot names were brought up to date for patches 0007–0027 on 2026-11-05.
 "I" in these notes is that agent. The section on patch 0040 (the tiled sweep) was added on 2026-11-11 by another
-agent of the same kind, from that patch's diff; it does not use "I". Sources: the openEMS patches `patches/openems/0001`–`0005` and their
+agent of the same kind, from that patch's diff, and the section on patches 0041–0043 (thread search, packed
+dispersive hooks, guard) on 2026-11-13 by a third; neither uses "I". Sources: the openEMS patches `patches/openems/0001`–`0005` and their
 cumulative diff against the base 7bb294f (upstream branch `gpu-engine`) as it stood on 2026-11-02, and
 `patches/csxcad/0001` against CSXCAD v0.7.0. Totals through patch 0005:
 openEMS 43 files, +3098/−179 lines; CSXCAD 3 files, +9/−0. Every line count below is from that
 cumulative diff; patch 0006 (snapshot cg18, section "Final review fixes") changes some of them, and the file
-`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0040 (68 files, +7042/−265). Patch 0001 holds
+`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0043 (68 files, +7685/−265). Patch 0001 holds
 steps 2 and 3 (items A–E, Field_Gather_SSE, the Mur line hooks; snapshots ABCDEG to cg8), 0002 cg9,
 0003 cg10–cg15, 0004 cg16 and 0005 cg17. Through patch 0006 the GPU engine sources (`FDTD/engine_gpu*`,
 `gpu_backend*`, `FDTD/metal`, `FDTD/hip`, `operator_gpu*`) are **not touched** by the fork, and every
@@ -19,8 +20,10 @@ engine (`--engine=metal-diamond`, in the new files `FDTD/engine_metal_diamond.h`
 `FDTD/metal/engine_metal_diamond.mm`, with a friend declaration in 13 extension headers and small changes to
 `openems.cpp`, `openems.h`, `tools/arraylib/array_e.h` and `FDTD/CMakeLists.txt`: 19 files, +1717/−1 against
 cg18); patches 0017–0027 (snapshot cg29) are CPU items. These notes describe
-patches 0001–0006 and, in the section "Tiled sweep of the multithreaded engine", patch 0040 (the fork's head, snapshot
-cg32d; not in the installed build, which is cg31 = patches 0001–0039). They do not describe the patches between:
+patches 0001–0006 and, in the sections "Tiled sweep of the multithreaded engine" and "Thread search start, packed
+dispersive hooks and guard", patch 0040 (snapshot cg32d) and patches 0041–0043 (snapshots cg33a, cg33c, cg33d; the
+fork's head is 13350ca; none of the four is in the installed build, which is cg31 = patches 0001–0039). They do not
+describe the patches between:
 0028–0039 (the build cg31) are described in the `CHANGELOG.md` entry of 2026-11-11 and in the
 paper's Section "After publication"; 0007–0027 are described in the `CHANGELOG.md` entries of 2026-11-04 and 2026-11-05, in
 the paper's Section "A diamond-blocked Metal engine" and in its subsection "The second review's CPU items and
@@ -1251,6 +1254,113 @@ where the fused sweep gains up to 15 threads and the tiled sweep peaks at 10, al
 sweep against upstream master's `cpu` engine in one paired run, and what the engine loses against the
 kernel at many threads. Not built: a choice between the two sweeps at run time.
 
+## Thread search start, packed dispersive hooks and guard (cg33, patches 0041–0043, 2026-11-12 and 2026-11-13)
+
+Written from the diffs of the three patches alone (commits 8bcec90, c6ef5c5 and 13350ca on 0ef186b = patch
+0040); the line counts are theirs. Base of the three: the tiled-sweep tree of patch 0040. None is in the installed
+build (cg31, patches 0001–0039). All three are checked bit-identical to stock v0.37.0
+(`results/cpu_items_cg33_2026-11-13.txt`, section 1); the measurements are on the M5 Pro only.
+
+### Patch 0041: the thread search starts at every non-efficiency core (8bcec90)
+
+**Files.** `FDTD/engine_multithread.cpp` and `.h`: `NonEfficiencyCores()`, `TuneStartAtPerflevel0()`, `StartThreads()`, the field `m_Tuner.descend` and a line in
+`TuneThreads`. Two files, +59/−6.
+
+**Before (up to patch 0040).** `StartThreads()` returned `PerformanceCores()` (`hw.perflevel0.physicalcpu` on
+Apple, half the available hardware threads elsewhere, clamped to the thread maximum). The search then timed P,
+P+2, P+4, … (stopping once a count fell below 85 % of the best), then P−2, then ±1 of the best. On an M5 Pro,
+where `hw.perflevel0` is the 5 "Super" cores and the fused sweep scales to all 15 cores, that was eight
+windows to reach 15 threads on notch x3.
+
+**New: the start.** `NonEfficiencyCores()` (Apple only; 0 elsewhere or when a sysctl fails) reads `hw.nperflevels`
+and, for every level k, `hw.perflevelK.name`; the physical cores (`hw.perflevelK.physicalcpu`) of every level
+whose name is not "Efficiency" are summed (M5 Pro: 5 + 10 = 15; M5: 4, because its second level is named
+Efficiency, so the start there is unchanged). `StartThreads()` uses that sum, falls back to `PerformanceCores()`
+when it is 0 and to half the hardware threads after that, and clamps to the maximum.
+`OPENEMS_TUNE_START=p` (exactly the word `p`; any other value, an empty one included, means the new rule) makes
+`StartThreads()` skip the sum, so the start is `PerformanceCores()` again.
+
+**New: stepping down.** `m_Tuner.descend` is `!TuneStartAtPerflevel0()`. In `TuneThreads`, after a window is
+timed: when `descend` is set, the coarse search has not been refined yet, the count just timed is below the
+start, it is the best so far, it is above 2 and the count two lower has not been timed, that count is put at the
+front of the queue. So the search goes 15, 13, 11, … for as long as each step is the fastest, and stops at the
+first step that is not; the existing refinement then tries one thread either side of the best (notch x3: 15, 13,
+14, three windows). With `p` the queue and the stop rules are the ones of patch 0040 and the sequence is cg31's.
+
+**Correctness.** Scheduling only: the thread count changes which thread owns which x-lines, never the arithmetic
+of a cell (the same argument as for item C and the tiled sweep). Probes identical to stock at fixed and automatic
+thread counts on six models (48 of 48 rows in the record, section 1).
+
+**Numbers** (record, section 2, T1; M5 Pro, 4 paired rounds, others 20–37 % of a core; relative to cg31 at a
+fixed 15 threads): cg31 auto 0.81 (GCPW), 0.96 (SMA), 0.82 (notch x3), 0.87 (patch x5); cg33a auto 0.97, 1.00,
+0.97, 0.99; cg33a with `OPENEMS_TUNE_START=p` 0.81, 0.98, 0.81, 0.86.
+
+### Patch 0042: packed line hooks for Debye, Lorentz and Drude cells (c6ef5c5)
+
+**Files.** `FDTD/extensions/engine_ext_dispersive.cpp` (+71) and `.h` (+16), `engine_ext_debyematerial.cpp`
+(+170) and `.h` (+16), `engine_ext_lorentzmaterial.cpp` (+190) and `.h` (+28). Six files, +491/−0.
+
+**Before.** The line hooks of the dispersive extensions (cg12, patch 0003; the Debye ones, patch 0022) walked one
+position at a time through about fifteen separate arrays per extension (the state, the coefficients and the
+float indices). At one thread a Debye cell cost about 39 ns and a Lorentz cell about 14 ns (the commit message;
+rough figures of a loaded machine).
+
+**New: groups (`Engine_Ext_Dispersive::SetupGroups`).** Called at the end of `SetupLines()` through the new
+virtual `SetupPacked()`. The positions of order 0, already sorted by x, are cut into groups of up to four
+positions of ONE x-line: `m_GroupX[g]` (the x-line), `m_GroupK[g]` (the first position), `m_GroupLanes[g]`
+(1 to 4) and `m_GroupFi[12·g + 4·n + l]` (the float index of component n of lane l; unused lanes repeat lane
+0's). A group is therefore never shared by two threads, which own whole x-lines. `GroupRange(x0, x1, g0, g1)`
+finds the groups of an x-line range by binary search on `m_GroupX`. `FieldBytes()` is the size of the voltage and the current array together, in bytes; the packing limit is twice that.
+
+**New: Debye (`SetupPacked`, `PrePacked`, `PostPacked`, `ApplyPacked`).** Only an extension with one order (the
+Debye ADE has order 0 only), at least one pole, voltage ADE on and current ADE off is packed. Per group and
+component the block holds, in `m_Block` with `m_BlockStride = 3·(3P+3)·4` floats per group (P = poles): the pole
+state W[P], the joint pre-update value, the correction, `v_relax[P]`, `v_drive[P]` and `v_solve`, four lanes
+each. The three hooks do four positions at a time with the operations of the one-position loops in the same
+order per lane (the pre-update `W = fma(v_relax, W, v_drive·V)` keeps its fused multiply-add; `pre += W − W_old`).
+The groups are not packed when the blocks would need more than twice the memory of the field arrays.
+
+**New: Lorentz and Drude (`SetupSide`, `PackedSide`).** For the voltage side and the current side separately,
+when the engine has the merged-order plan (`m_VoltMerged`, `m_CurrMerged`), each merged order gets its ADE
+state, its Lorentz ADE state and the three coefficients (`c_int`, `c_ext`, `c_lor`) in one block per group, in
+`PackedSide::block`. While a side is packed every hook of that side uses the blocks, whole-grid ones (the
+unfused plan, `sse-compressed`, the Metal engine's CPU fallback) included, so there is one copy of the state.
+Only the multithreaded engine calls `SetupLines()`, so only it packs; on Cartesian meshes the other engines keep
+the unpacked paths and are independent references. On a cylindrical mesh the `basic` and `sse-compressed`
+requests also run the multithreaded cylinder engine and therefore pack.
+
+**Switch.** `OPENEMS_ADE_PACKED=0` (any value `atoi` reads as 0, an empty one is unset) keeps the unpacked paths.
+At `verbose>1` one line per extension names the groups, positions per group and block size.
+
+**Correctness.** Same floating-point operations per lane in the same order as the one-position loops, so the
+results do not change. Checked in the record (section 1): `ade_check2.py` (stock and cg31 as references,
+a "packed hooks" line required, a stop on all-zero probes) 66 of 66 rows at 37 lines and 3000 steps, and 5 cases
+of 9 rows each with a source on the mesh at 101 lines and 600 steps; the cylinder case needs at least 1500 steps
+before its far probe is non-zero; raw fields, HDF5 dumps and probes at 1, 4, 7 and 15 threads, fused, unfused,
+tiled and with packing off.
+
+**Numbers** (record, section 2, T2 and section 3, part b; M5 Pro, `bench.py` interleaved, cg31 against cg33c,
+3 repeats): dispersive 1 M cells 1.94× at 5 threads and 1.90× at 15, 8 M cells 2.11× and 1.14×; antenna 1.10×,
+1.08×, 1.06×, 1.03× (the last two inside the spread). The author's GCPW board, whose conducting sheets run
+packed (1793 groups), at 15 threads and 34 300 steps: 4201.5 MC/s on cg31, 4190.4 on cg33d, 4194.7 with
+packing off, so no change. Upstream's dispersive case at its default sizes ran on zero fields (see the
+CHANGELOG entry of 2026-11-13); the rates stand, the identity of those rows does not count.
+
+### Patch 0043: guard and refusal line (13350ca)
+
+**Files.** The same six files as patch 0042: +111/−12.
+
+**New.** The packed code sits under `#if defined(__GNUC__) || defined(__clang__)` (it uses the compilers' vector
+extension), with empty stubs otherwise, so a build with another compiler has the unpacked paths. The memory
+limit of twice the field memory is counted over all dispersive extensions of one engine:
+`PackedBytesOfOthers()` walks the engine's extensions, and a new extension packs only when the bytes already
+packed plus its own stay within the limit. `PackedOff()` is the `OPENEMS_ADE_PACKED=0` test. A packing refused by
+the limit or by a failed allocation (`std::bad_alloc`, after which the block is released) calls
+`ReportPackRefusal(reason, …)`, which prints one line at `verbose>=1` with the bytes needed, the limit and the
+bytes already packed ("… ADE packing not used … would need N bytes, limit L …"); `OPENEMS_ADE_PACKED=0` is
+reported at `verbose>1`. The two refusal paths were exercised by the `refuse` case of `ade_check2.py` (a Debye
+block above the limit). No arithmetic line changed: the results are identical to those of the commit before.
+
 ## Numbers checked against the code
 
 - Barriers per timestep: stock `2 + 6·N_ext` (`boost::barrier`; 50 on patch x5 with N_ext = 8,
@@ -1261,7 +1371,9 @@ kernel at many threads. Not built: a choice between the two sweeps at run time.
   `yield` on arm, `pause` on x86.
 - Hook flags: `PRE_VOLT=1, POST_VOLT=2, APPLY_VOLT=4, PRE_CURR=8, POST_CURR=16, APPLY_CURR=32,
   PREPOST_WRITES_FIELDS=64, LINE_HOOKS=128, LEGACY_HOOKS=~0u`.
-- Auto threads: start = `hw.perflevel0.physicalcpu` (Apple) or `(max+1)/2`; candidates
+- Auto threads: up to patch 0040 (and with `OPENEMS_TUNE_START=p`) start = `hw.perflevel0.physicalcpu` (Apple) or
+  `(max+1)/2`; since patch 0041 on Apple the cores of every level not named "Efficiency", stepping down by 2 for as
+  long as each step is the fastest; candidates
   start+2, +4, … ≤ max (max clamped to the number of x-lines since patch 0005), then start−2
   (if start > 2), then best±1; start−2 and the start itself are clamped to the number of
   x-lines too since patch 0006; window 150 ms

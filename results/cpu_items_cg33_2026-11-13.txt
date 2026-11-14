@@ -1,0 +1,236 @@
+fdtdKit: the CPU items of 2026-11-12/13 on the Apple M5 Pro Mac mini (5 Super + 10 Performance cores, 24 GB, macOS 27.2.1).
+Fork commits 8bcec90 (patch 0041, thread search start), c6ef5c5 (patch 0042, packed Debye/Lorentz/Drude line hooks),
+13350ca (patch 0043, guard + refusal line). Snapshots: stock = openEMS v0.37.0; cg31 = fork ff2538a (the installed build);
+cg33a = 0ef186b + 0041; cg33c = + 0042; cg33d = + 0043 (built before the three commits were made, so its banner reads
+v0.37.0-58-g0ef186b); cg33 = 13350ca rebuilt (banner v0.37.0-61-g13350ca, same sources as cg33d); master = upstream openEMS
+1d710c2 with CSXCAD fdff4b5. An M5 Pro set: none of these numbers belongs in a table of the M5 MacBook Air.
+$M5PRO_OUT stands for the output folder of scripts/m5pro on that machine.
+
+Contents: 1 identity checks of cg33d; 2 night of 2026-11-12 (thread search; master's cpu engine against cg31; cg31 against
+cg33c; all on upstream's meshes, see the correction at its end); 3 night of 2026-11-13 (stock at 1 to 15 threads; the GCPW
+board with the packed hooks; master's cpu engine against cg33d with a source on the mesh; the tiled sweep at 8 M cells).
+
+==========================================================================================================================
+1. IDENTITY CHECKS OF cg33d (2026-11-13 00:29-02:55 and 15:48-16:05; the machine was loaded, so verdicts only)
+==========================================================================================================================
+scripts/ade_check/ade_check2.py runs every case through FDTD.Run in a child process, takes stock AND cg31 as references,
+requires the line "packed hooks" in the new build's log where packing applies, and stops a row whose probes are all zero.
+Cases: dispersive and antenna (upstream's benchmark cases), mixed (two-order Lorentz with electric and magnetic poles, a
+Drude order, a two-pole Debye block), debye4 (four-pole Debye), refuse (a Debye block above the memory limit, so the packing
+is refused and the one-position hooks run), cyl (a dispersive ring on a cylindrical mesh). Configurations of the new build:
+multithreaded at 4, 1, 15 and 7 threads, unfused, tiled (OPENEMS_TBLOCK=3), packed off (OPENEMS_ADE_PACKED=0), sse-compressed,
+basic. Compared: probe files, HDF5 dumps, raw field arrays (OPENEMS_EXPORT_FIELDS).
+- XS (37 lines), 3000 steps: 66 of 66 rows identical to stock and to cg31.
+- S with a source on the mesh (101 lines), 600 steps: dispersive 9, mixed 9, antenna 9, debye4 9, refuse 9 rows identical
+  (the last two refuse rows, sse-compressed and basic, in the run of 15:48).
+- cyl at S: 9 rows identical at 1500 steps (00:29 run); again 7 of 7 at 4 threads or fewer at 1500 steps (15:57 run). At 600
+  steps the far probe of this case is still zero in every build, stock included: the guard stops those rows, none differs.
+- emskit fdtd check cg33d --lite: 18 of 18 rows identical to stock on the six models; debye-check PASS; diamond-check 72 of
+  72; validate 15 of 15 on fastest and on multithreaded at 15 threads.
+- Six models x eight configurations (15 threads, auto, auto with OPENEMS_TUNE_START=p, packed off, tiled auto, tiled K=4 at
+  13 threads, K=5 W=23 at 7 threads, unfused at 10 threads): 48 of 48 identical to stock.
+- scripts/tiled_sweep/check.zsh PASS; CylindricalWave_CC multigrid: 43 datasets, 0 differences.
+- On a cylindrical mesh the basic and sse-compressed requests also run the multithreaded cylinder engine, so they pack there;
+  on Cartesian meshes sse-compressed and the Metal engine's CPU fallback never pack and serve as independent references.
+
+==========================================================================================================================
+2. NIGHT OF 2026-11-12
+==========================================================================================================================
+M5 Pro (Mac mini, macOS 27.2.1), night block 2026-11-12. T1 21:15-21:25, T2 21:26-21:44, both exit 0.
+Others' CPU during T2 (5 s samples, n 209): median 22 %, p90 37 %, max 143 % of one core. T1: others 20-37 % per table.
+
+=== T1: thread tuner (cg33a = non-efficiency cores start + step down by 2), 4 paired rounds, median MC/s, x = vs cg31 fixed 15 thr
+-- tune33_kgcpw_s1.txt
+c0 cg31@multithreaded:15                                          4053.4 [3995-4183]  x1.000 [1.000-1.000]  others 20%/3%  identical,reference
+c1 cg31@multithreaded:0                                           3290.5 [3245-3363]  x0.809 [0.800-0.822]  others 22%/3%  identical
+c2 cg33a@multithreaded:0                                          3982.6 [3878-4068]  x0.972 [0.971-0.995]  others 21%/3%  identical
+c3 cg33a@multithreaded:0#OPENEMS_TUNE_START=p                     3282.9 [3238-3365]  x0.808 [0.804-0.815]  others 22%/3%  identical
+-- tune33_ksma_s1.txt
+c0 cg31@multithreaded:15                                          3999.3 [3488-4116]  x1.000 [1.000-1.000]  others 25%/3%  identical,reference
+c1 cg31@multithreaded:0                                           3856.4 [3205-3914]  x0.956 [0.919-0.968]  others 24%/3%  identical
+c2 cg33a@multithreaded:0                                          3980.3 [3485-4093]  x0.997 [0.989-1.001]  others 26%/3%  identical
+c3 cg33a@multithreaded:0#OPENEMS_TUNE_START=p                     3903.7 [3675-3939]  x0.976 [0.957-1.054]  others 24%/3%  identical
+-- tune33_notch_s3.txt
+c0 cg31@multithreaded:15                                          4803.7 [4760-4866]  x1.000 [1.000-1.000]  others 27%/4%  identical,reference
+c1 cg31@multithreaded:0                                           3920.0 [3876-3987]  x0.816 [0.811-0.822]  others 33%/3%  identical
+c2 cg33a@multithreaded:0                                          4671.9 [4626-4702]  x0.970 [0.966-0.977]  others 33%/4%  identical
+c3 cg33a@multithreaded:0#OPENEMS_TUNE_START=p                     3887.8 [3848-3892]  x0.806 [0.799-0.817]  others 33%/4%  identical
+-- tune33_patch_s5.txt
+c0 cg31@multithreaded:15                                          3944.2 [3880-3953]  x1.000 [1.000-1.000]  others 37%/4%  identical,reference
+c1 cg31@multithreaded:0                                           3441.9 [3323-3562]  x0.874 [0.841-0.914]  others 30%/4%  identical
+c2 cg33a@multithreaded:0                                          3877.2 [3862-3903]  x0.987 [0.980-0.995]  others 36%/4%  identical
+c3 cg33a@multithreaded:0#OPENEMS_TUNE_START=p                     3345.9 [3333-3444]  x0.855 [0.843-0.874]  others 31%/4%  identical
+
+=== T2a: upstream bench.py, master 1d710c2 --engine=cpu (A) vs installed fork cg31 multithreaded (B), interleaved, 3 repeats
+compare master (A) with fork (B)
+  A: openEMS v0.37.0, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-12T21:26:59
+  B: openEMS v0.37.0-57-gff2538a, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-12T21:26:59
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+ideal          S    cpu                5/5    2541.9    3804.8  1.497    5.0%     +50%      1.27  identical
+ideal          S    cpu              10/10    2468.7    5456.6  2.210    0.9%    +121%      1.67  identical
+ideal          S    cpu              15/15    2616.3    6473.2  2.474    2.1%    +147%      2.18  identical
+ideal          M    cpu                5/5    3011.8    3052.5  1.013    4.5%    noise      0.92  identical
+ideal          M    cpu              10/10    3705.6    3772.0  1.018    0.9%    noise      1.37  identical
+ideal          M    cpu              15/15    3732.2    4078.4  1.093    7.1%      +9%      1.90  identical
+pml            S    cpu                5/5    1019.4    1618.4  1.588    3.7%     +59%      1.17  identical
+pml            S    cpu              10/10    1170.1    2500.0  2.137    1.5%    +114%      1.63  identical
+pml            S    cpu              15/15    1292.2    3064.3  2.371    2.2%    +137%      1.84  identical
+pml            M    cpu                5/5    1717.5    1647.8  0.959    2.0%      -4%      0.93  identical
+pml            M    cpu              10/10    2188.6    2310.9  1.056    0.6%      +6%      1.36  identical
+pml            M    cpu              15/15    2269.9    2590.9  1.141    4.5%     +14%      1.75  identical
+inhomogeneous  S    cpu                5/5     982.9    1528.9  1.556    3.0%     +56%      1.15  1.7e-06
+inhomogeneous  S    cpu              10/10    1111.7    2422.1  2.179    1.0%    +118%      1.57  2.0e-06
+inhomogeneous  S    cpu              15/15    1234.8    3004.0  2.433    5.6%    +143%      1.81  2.3e-06
+inhomogeneous  M    cpu                5/5    1648.5    1615.4  0.980    2.1%    noise      0.80  1.0e-05
+inhomogeneous  M    cpu              10/10    2063.9    2287.3  1.108    1.6%     +11%      1.26  1.6e-06
+inhomogeneous  M    cpu              15/15    2151.1    2556.8  1.189    0.9%     +19%      1.63  1.6e-06
+dispersive     S    cpu                5/5    1340.0     675.8  0.504   10.3%     -50%      2.30  identical
+dispersive     S    cpu              10/10    1616.0    1031.1  0.638    6.2%     -36%      3.60  identical
+dispersive     S    cpu              15/15    1646.0    1296.8  0.788   10.2%     -21%      4.42  identical
+dispersive     M    cpu                5/5    1744.2     607.8  0.348    4.7%     -65%      2.37  identical
+dispersive     M    cpu              10/10    2231.7     946.1  0.424    4.9%     -58%      3.95  identical
+dispersive     M    cpu              15/15    2536.4    1198.7  0.473    2.8%     -53%      5.34  identical
+antenna        S    cpu                5/5     989.4    1392.2  1.407    6.0%     +41%      1.29  9.9e-07
+antenna        S    cpu              10/10    1087.8    2069.7  1.903    6.8%     +90%      1.53  9.9e-07
+antenna        S    cpu              15/15    1197.0    2613.1  2.183    3.9%    +118%      1.90  9.9e-07
+antenna        M    cpu                5/5    1615.7    1483.0  0.918    3.1%      -8%      1.14  2.7e-07
+antenna        M    cpu              10/10    2017.9    2103.6  1.042    1.6%      +4%      1.66  4.8e-07
+antenna        M    cpu              15/15    2084.1    2380.2  1.142    6.3%     +14%      2.16  4.8e-07
+cylindrical    S    cpu                5/5    2073.3    3161.0  1.525    2.8%     +52%      1.43  7.6e-06
+cylindrical    S    cpu              10/10    2282.0    4913.1  2.153    1.2%    +115%      1.89  7.6e-06
+cylindrical    S    cpu              15/15    2407.9    6191.8  2.571    2.0%    +157%      2.19  7.6e-06
+cylindrical    M    cpu                5/5    2840.6    2953.3  1.040    3.8%      +4%      1.28  1.9e-06
+cylindrical    M    cpu              10/10    3494.2    4080.5  1.168    2.6%     +17%      2.00  1.9e-06
+cylindrical    M    cpu              15/15    3396.0    4415.5  1.300    2.3%     +30%      2.39  1.9e-06
+
+
+=== T2b: upstream bench.py, cg31 (A) vs cg33c packed ADE hooks (B), interleaved, 3 repeats
+compare cg31 (A) with cg33c (B)
+  A: openEMS v0.37.0-57-gff2538a, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-12T21:40:44
+  B: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-12T21:40:44
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+dispersive     S    multithreaded      5/5     695.7    1347.2  1.937   12.9%     +94%      0.99  identical
+dispersive     S    multithreaded    15/15    1276.1    2424.1  1.900    6.0%     +90%      0.99  identical
+dispersive     M    multithreaded      5/5     621.2    1310.5  2.110    7.8%    +111%      1.02  identical
+dispersive     M    multithreaded    15/15    1182.8    1344.7  1.137    4.5%     +14%      1.00  identical
+antenna        S    multithreaded      5/5    1164.7    1280.6  1.099    4.5%     +10%      1.03  identical
+antenna        S    multithreaded    15/15    2500.1    2708.8  1.083    8.7%    noise      1.10  identical
+antenna        M    multithreaded      5/5    1436.5    1524.0  1.061    3.5%      +6%      0.96  identical
+antenna        M    multithreaded    15/15    2383.6    2452.2  1.029    3.2%    noise      1.00  identical
+
+
+CORRECTION 2026-11-13: upstream's uniform meshes at S (100 lines) and M (200 lines) have no mesh line through the origin, so the
+dipole of the cases ideal, pml and dispersive excites nothing: those runs had ALL FIELDS ZERO. Their "probes identical" lines are
+therefore empty statements, and their speeds are speeds on zero fields (expected equal on these cores, not yet measured). The
+cases inhomogeneous, antenna and cylindrical have their own sources and are not affected. A rerun with a source (101 / 201 lines)
+is queued as slot F part c.
+
+==========================================================================================================================
+3. NIGHT OF 2026-11-13
+==========================================================================================================================
+Slot F on the Mac mini M5 Pro (5 Super + 10 Performance cores, 24 GB, macOS 27.2.1), 2026-11-13 21:03:25-21:49:16, exit 0.
+Timed queue of the night (one job at a time). Others' CPU: part a per run 20-60 % of one core (two runs 171 and 182 %),
+part b 17-29 %, parts c and d median 20 % (max 197 % in c, 85 % in d; from slotF/load.log, which counts abtest's own
+python children in parts a and b, so its whole-slot figure "median 68 %, p90 421 %" is not the others' load).
+Snapshots: stock = v0.37.0, cg31 = fork ff2538a (installed), cg33d = fork 13350ca's sources (banner of the build says 0ef186b),
+master = upstream 1d710c2 (CSXCAD fdff4b5). Raw files: $M5PRO_OUT/slotF_*.txt, slotF/, logs/slotF.out.
+
+PART a: stock at 1-15 threads, six models, 3 interleaved rounds, half of stage C's steps; all probes identical to stock 1 thread.
+model            steps | stock MC/s at 1 / 2 / 3 / 4 / 5 / 10 / 15 threads | best (thr) | cg31 15 thr | cg31/stock best, paired median [min-max] | others CPU median (max) %
+patch tutorial    5000 | 254 / 270 / 252 / 213 / 166 / 61 / 36 | 270 (2) | 2615 | x9.67 [9.66-9.99] | 36 (59)
+patch x5           600 | 398 / 756 / 1030 / 1245 / 1326 / 1488 / 1303 | 1488 (10) | 4050 | x2.73 [2.71-2.76] | 36 (182)
+notch tutorial    8000 | 135 / 236 / 305 / 342 / 343 / 170 / 112 | 343 (5) | 4258 | x12.45 [12.43-12.92] | 47 (171)
+notch x3          1000 | 288 / 541 / 757 / 897 / 1021 / 1164 / 1084 | 1164 (10) | 4944 | x4.27 [4.20-4.31] | 44 (65)
+GCPW board        7500 | 154 / 247 / 291 / 305 / 280 / 125 / 82 | 305 (4) | 4287 | x14.06 [13.86-14.52] | 32 (91)
+SMA launch        3000 | 155 / 275 / 371 / 432 / 472 / 349 / 255 | 472 (5) | 4431 | x9.33 [9.29-9.63] | 26 (51)
+=> the stage C table of 2026-11-12 took "stock best" from 5 and 10 threads only (GCPW 283, SMA 449, notch tutorial 270,
+   notch x3 1124, patch tutorial 152, patch x5 1406). Stock's real best on this chip: GCPW 305 at 4, SMA 472 at 5, notch
+   tutorial 343 at 5 (342 at 4), notch x3 1164 at 10, patch tutorial 270 at 2, patch x5 1488 at 10. CPU engine (cg31, 15
+   threads) over stock's best: x2.73-x14.06 (was stated x2.7-17).
+
+PART b: GCPW board, 34300 steps, 15 threads, 4 rounds (the packed dispersive hooks on the board's conducting sheets)
+c0 cg31@multithreaded:15                                          4201.5 [4182-4215]  x1.000 [1.000-1.000]  others 17%/3%  identical,reference
+c1 cg33d@multithreaded:15                                         4190.4 [4176-4207]  x0.998 [0.995-1.002]  others 20%/3%  identical
+c2 cg33d@multithreaded:15#OPENEMS_ADE_PACKED=0                    4194.7 [4157-4237]  x0.998 [0.987-1.013]  others 21%/3%  identical
+=> no change on the board (x0.998 with the packed hooks, x0.998 with OPENEMS_ADE_PACKED=0, both inside the spread).
+
+PART c: upstream benchmark/bench.py, master's cpu engine (A) against the fork cg33d CPU engine (B), run for run, 3 repeats,
+with a source ON the mesh (BENCH_ODD_LINES=1: 101 / 201 lines). Probe peaks of every run folder non-zero (et 0.31-0.32).
+compare master (A) with cg33d (B)
+  A: openEMS v0.37.0, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:34:52
+  B: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:34:52
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+ideal          S    cpu                5/5    2292.9    3257.8  1.421    4.8%     +42%      1.27  1.2e-05
+ideal          S    cpu              10/10    2338.0    5137.7  2.197    1.0%    +120%      1.69  1.2e-05
+ideal          S    cpu              15/15    2523.5    6345.9  2.515    2.8%    +151%      2.22  1.5e-05
+ideal          M    cpu                5/5    2868.6    2931.8  1.022    5.7%    noise      0.88  8.5e-06
+ideal          M    cpu              10/10    3567.6    3690.1  1.034    1.9%      +3%      1.39  8.7e-06
+ideal          M    cpu              15/15    3671.3    3985.2  1.086    6.5%      +9%      1.97  8.7e-06
+pml            S    cpu                5/5    1023.0    1650.9  1.614    2.5%     +61%      1.18  1.5e-05
+pml            S    cpu              10/10    1135.2    2453.5  2.161    1.0%    +116%      1.68  1.5e-05
+pml            S    cpu              15/15    1296.7    3132.8  2.416    3.0%    +142%      1.86  1.5e-05
+pml            M    cpu                5/5    1762.7    1629.9  0.925    1.5%      -8%      0.91  6.4e-06
+pml            M    cpu              10/10    2138.9    2283.3  1.068    0.8%      +7%      1.36  6.4e-06
+pml            M    cpu              15/15    2238.1    2560.7  1.144    1.7%     +14%      1.78  6.4e-06
+dispersive     S    cpu                5/5    1399.6    1342.9  0.959    3.1%      -4%      2.56  2.4e-05
+dispersive     S    cpu              10/10    1601.3    2080.0  1.299   12.4%     +30%      3.76  2.9e-05
+dispersive     S    cpu              15/15    1678.7    2435.8  1.451    1.7%     +45%      4.63  2.9e-05
+dispersive     M    cpu                5/5    1770.8    1296.2  0.732    2.0%     -27%      2.54  5.0e-06
+dispersive     M    cpu              10/10    2201.1    1539.8  0.700    1.2%     -30%      4.11  4.7e-06
+dispersive     M    cpu              15/15    2459.8    1338.2  0.544    2.1%     -46%      5.50  4.8e-06
+
+results: $M5PRO_OUT/slotF/src_result.json
+Probes column: master's cpu engine differs from the fork (= stock v0.37.0 bit for bit) by 5e-6..3e-5 relative.
+
+Control: upstream's own meshes (200 lines, no source: "Voltage excitations: 0", all probes 0), M, 15 threads
+compare master (A) with cg33d (B)
+  A: openEMS v0.37.0, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:41:46
+  B: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:41:46
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+ideal          M    cpu              15/15    3869.6    4070.5  1.052    2.0%      +5%      1.94  identical
+dispersive     M    cpu              15/15    2437.1    1343.8  0.551    1.5%     -45%      5.27  identical
+
+results: $M5PRO_OUT/slotF/nosrc_result.json
+=> zero-field and real-field rates agree within the spread (ideal M 15 thr: master 3870 vs 3671, fork 4071 vs 3985;
+   dispersive M: master 2437 vs 2460, fork 1344 vs 1338). The earlier S/M tables of ideal, pml, dispersive (2026-11-10,
+   T2 of 2026-11-12) were on zero fields; their rates stand as rates, their "probes identical" does not count.
+
+PART d: tiled sweep on cg33d, M size with a source, fused (A) against three tiled variants (B)
+compare fused (A) with tbauto (B)
+  A: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:42:42
+  B: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:42:42, OPENEMS_TBLOCK=auto
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+ideal          M    cpu                5/5    2953.9    3182.8  1.077    4.2%      +8%      1.06  identical
+ideal          M    cpu              10/10    3647.4    4450.4  1.220    3.6%     +22%      1.02  identical
+ideal          M    cpu              15/15    3968.8    4569.2  1.151    1.1%     +15%      1.02  identical
+dispersive     M    cpu                5/5    1293.5    1052.6  0.814    1.4%     -19%      0.99  identical
+dispersive     M    cpu              10/10    1518.3    1106.2  0.729   10.3%     -27%      1.00  identical
+dispersive     M    cpu              15/15    1323.8     737.3  0.557    4.8%     -44%      1.01  identical
+
+compare fused (A) with tb4 (B)
+  A: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:42:42
+  B: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:42:42, OPENEMS_TBLOCK=4
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+ideal          M    cpu                5/5    2953.9    2846.2  0.964    1.5%      -4%      0.98  identical
+ideal          M    cpu              10/10    3647.4    4058.8  1.113    2.6%     +11%      1.00  identical
+ideal          M    cpu              15/15    3968.8    3917.9  0.987    1.7%    noise      1.01  identical
+dispersive     M    cpu                5/5    1293.5     987.7  0.764    1.4%     -24%      0.98  identical
+dispersive     M    cpu              10/10    1518.3    1065.7  0.702   32.4%    noise      1.00  identical
+dispersive     M    cpu              15/15    1323.8     543.3  0.410    2.3%     -59%      1.00  identical
+
+compare fused (A) with tbw31 (B)
+  A: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:42:42
+  B: openEMS v0.37.0-58-g0ef186b, Apple M5 Pro, 5 cores, macOS-27.2.1-arm64-arm-64bit-Mach-O, 2026-11-13T21:42:42, OPENEMS_TBLOCK=auto OPENEMS_TBLOCK_W=31
+case           size engine         thr A/B    A MC/s    B MC/s    B/A  spread   change setup B/A  probes
+ideal          M    cpu                5/5    2953.9    3020.2  1.022    1.7%    noise      0.98  identical
+ideal          M    cpu              10/10    3647.4    4009.4  1.099    3.5%     +10%      0.99  identical
+ideal          M    cpu              15/15    3968.8    4047.7  1.020    3.0%    noise      0.99  identical
+dispersive     M    cpu                5/5    1293.5     914.0  0.707    1.4%     -29%      0.98  identical
+dispersive     M    cpu              10/10    1518.3     961.8  0.633   10.3%     -37%      1.00  identical
+dispersive     M    cpu              15/15    1323.8    1024.1  0.774    1.6%     -23%      0.99  identical
+
+results: $M5PRO_OUT/slotF/tb_result.json
+=> ideal 8 M: OPENEMS_TBLOCK=auto +8 / +22 / +15 % at 5 / 10 / 15 threads (4450-4569 MC/s; master cpu 3568-3671 in part c).
+   dispersive 8 M: every tiled variant is 19-59 % SLOWER than the fused sweep. The fused sweep itself peaks at 10 threads
+   there (1293 / 1518 / 1324) and stays at 0.54-0.73x of master's cpu engine; the fork's dispersive setup takes 2.5-5.5x
+   master's. bench.py picks the step count per run, so peaks differ between thread counts (494-585 steps at M).

@@ -98,7 +98,7 @@ v0.37.0 binding (`openEMS.pyx` beside the module in the user site-packages) and 
 | F4 | bench.py exits 2 on MISMATCH (bench.py:397) and also on argparse errors, which come before it prints its header (bench.py:287 vs :300); a refused config exits 1. check.sh:36-41 counts any exit 2 as FAIL | verdicts come from printed lines, never from an exit status alone |
 | F5 | abtest.py exits 0 even when runs differ. With `--run-redo` and `--quiet 0` it redoes every run (abtest.py:75); with `--redo` and `--quiet 0` it never redoes (:82) | the CLI parses the diffs itself; `--redo` and `--run-redo` require `--quiet` > 0 |
 | F6 | An unknown engine name silently runs the multithreaded engine (BUILD.md section 8) | engines are checked against the library's help strings before the run and against the Create line after it |
-| F7 | Version strings inside the libraries can be stale. BUILD.md section 5 gives the strings that the cg19 and cg20 tables print (-24-g087ce9e, -25-g315acee) and, since 2026-11-06, those of the files now in snap/cg19 and snap/cg20, which report the next ones (cg19 = v0.37.0-25-g315acee, cg20 = -26-gcd80d8c). The author's build folder build-gpu (prefix ~/opt/openEMS, ENABLE_METAL on) carries -26-gcd80d8c and matches no snapshot. The installed libopenEMS (string -24-g087ce9e) differed in bytes from snap/cg18 but was the same build (F20); from 2026-11-06 to 2026-11-11 it was cg29's build (string -44-g074a687), again in other bytes, and since 2026-11-11 it is cg31's (string -57-gff2538a, the commit of the build itself), in other bytes too (F20). Snapshot cg32d (patch 0040, the fork's head 0ef186b) carries cg31's string as well: it was built in the folder configured for cg31 (section 5.1) | identity is the sha256 (same bytes) and the LC_UUID (same build) of each file; the version, knob set and engine set only name candidates |
+| F7 | Version strings inside the libraries can be stale. BUILD.md section 5 gives the strings that the cg19 and cg20 tables print (-24-g087ce9e, -25-g315acee) and, since 2026-11-06, those of the files now in snap/cg19 and snap/cg20, which report the next ones (cg19 = v0.37.0-25-g315acee, cg20 = -26-gcd80d8c). The author's build folder build-gpu (prefix ~/opt/openEMS, ENABLE_METAL on) carries -26-gcd80d8c and matches no snapshot. The installed libopenEMS (string -24-g087ce9e) differed in bytes from snap/cg18 but was the same build (F20); from 2026-11-06 to 2026-11-11 it was cg29's build (string -44-g074a687), again in other bytes, and since 2026-11-11 it is cg31's (string -57-gff2538a, the commit of the build itself), in other bytes too (F20). Snapshot cg32d (patch 0040, 0ef186b) carries cg31's string as well: it was built in the folder configured for cg31 (section 5.1). Snapshot cg33 (patches 0001 to 0043, the fork's head 13350ca) was built after `cmake .` and reports its own commit, v0.37.0-61-g13350ca | identity is the sha256 (same bytes) and the LC_UUID (same build) of each file; the version, knob set and engine set only name candidates |
 | F8 | `~/opt/openEMS-dev/snap` holds 36 folders: 24 complete (stock, base, cg9 to cg29, cg29pre) and 12 incomplete. In an incomplete folder dyld loads the installed library for the missing file (diamond_check.sh:23) | an incomplete folder is refused as LIB; the tests check properties of each folder, never these counts |
 | F9 | In the v0.37.0 binding, `_SetLibraryArguments` turns a 1-valued non-integer option into True, then one equal to 0 (False, 0, 0.0, numpy zeros) into "", and that ends the option list. The integer options are verbose and numThreads | injected `FDTD.Run` options always go first; `optionsLost` is evaluated for that binding only |
 | F10 | rfsim's `core.run(m, sim_dir, threads=0, cleanup=True, probe_end_db=PROBE_END_DB, probe_end_hold=PROBE_END_HOLD)` (core.py:331) sets and pops `OPENEMS_PROBE_END_*` around `m.fdtd.Run(..., verbose=0, numThreads=threads)`. Read at import: PROBE_END_DB (-60, from `RFSIM_PROBE_END_DB`, 0 = off; :327), PROBE_END_HOLD (0.5; :328), Z_MULT (`RFSIM_Z_MULT`; :22), `launch.MIN_CELL` 0.05 (launch.py:28) and `launch.P0["min_cell"]` (`RFSIM_MIN_CELL`; :68) | the CLI never sets `RFSIM_*`, except `RFSIM_PATH` from discovery; e2e passes the toolkit's own values and records them |
@@ -356,7 +356,7 @@ section 10.2); what a `run` script writes by itself is not checked.
   `sys.path[0]` = the script's folder. `--lib` defaults to installed.
 - `--engine E` (present in the library), `--threads N` (>= 0) and `--nodumps` are injected into every `FDTD.Run`
   (section 4.3); the CLI's value wins, with `option_overridden` when the script's value differed.
-- All 41 knobs are allowed. `EXPORT_*` must name an existing folder; `PROBE_END_*` are allowed, but rfsim's core.run
+- All 43 knobs are allowed. `EXPORT_*` must name an existing folder; `PROBE_END_*` are allowed, but rfsim's core.run
   replaces them inside its own runs, and each call records the values in effect.
 - Concurrency gives a warning only.
 - Verdict: exit 0 is ok; a non-zero exit or an exception fails (1) with the exception text. With `--engine`, every
@@ -515,6 +515,7 @@ run 2 checks the stock and cg29 rows of the author's snapshots without that guar
 | cg31 | -57-gff2538a | 37 + 1 | | 644198c2... | 499C07FD-... |
 | installed since 2026-11-11 | -57-gff2538a | 37 + 1 | | 23630ed6... | 499C07FD-... (sameBuild cg31) |
 | cg32d | -57-gff2538a (cg31's string) | 40 + 1 | | 72e6d7ef... | 530052B0-... |
+| cg33 | -61-g13350ca | 42 + 1 | | 3e7095fd... | ABEE95D4-... |
 | build-split | | | | | 40BC8CFF-... (sameBuild cg29) |
 | build-gpu | -26-gcd80d8c | | | | 9A6EDCEE-... (none) |
 
@@ -522,7 +523,9 @@ The knob column counts the registry names in libopenEMS, plus `OPENEMS_NF2FF_LEG
 `knobs[]` holds both, so it lists 16 names for cg18 (and the installed library until 2026-11-06), 21 for cg19, 30
 for cg29 (and the installed library from 2026-11-06 to 2026-11-11), 38 for cg31 (and the installed library since
 2026-11-11): the eight more are the `OPENEMS_DIAMOND_*` switches of patches 0029 to 0038 (section 6.2); and 41 for
-cg32d: the three more are the `OPENEMS_TBLOCK` names of patch 0040, the tiled sweep. The
+cg32d: the three more are the `OPENEMS_TBLOCK` names of patch 0040, the tiled sweep; and 42 for cg33: the two more are
+`OPENEMS_TUNE_START` (patch 0041) and `OPENEMS_ADE_PACKED` (patch 0042), so that BUILD.md's table has 43 names with the
+one in libnf2ff. The
 installed libCSXCAD has sameBuild cg9 to cg29 and cg29pre, and sameBytes cg20 to cg29 and cg29pre; the
 installed libnf2ff has sameBuild cg18 to cg29 and cg29pre, and sameBytes cg20 to cg29 and cg29pre. These lists are
 what `.build/release/emskit fdtd info` printed on 2026-11-06 (section 16), before the install of cg29, which left
@@ -530,10 +533,11 @@ libCSXCAD and libnf2ff as they were; F20 names only some of these snapshots. The
 2026-11-11" is what `info` printed after that install (section 16): snap/cg29's build with the prefix's install name
 and rpath, re-signed, so other bytes than snap/cg29's file. The rows "cg31" and "installed since 2026-11-11" are the
 build of patches 0001 to 0039 (commit ff2538a), installed on 2026-11-11: one build (UUID 499C07FD-...), the
-installed file again in other bytes than snap/cg31's. The row "cg32d" is the build of patches 0001 to 0040 (the
-fork's head 0ef186b, the opt-in tiled sweep), which is not installed. It was built in the folder configured for
+installed file again in other bytes than snap/cg31's. The row "cg32d" is the build of patches 0001 to 0040 (0ef186b, the
+opt-in tiled sweep), which is not installed. It was built in the folder configured for
 cg31, so it reports cg31's version string, not v0.37.0-58-g0ef186b: its sha256, its UUID and its three knob names
-more tell the two apart, the version string does not (F7). The tests check the installed row whose sha256 the installed
+more tell the two apart, the version string does not (F7). The row "cg33" is the build of patches 0001 to 0043 (the fork's
+head 13350ca), not installed; it reports its own commit, and its sha256, UUID and two knob names more tell it from cg32d. The tests check the installed row whose sha256 the installed
 libopenEMS has (819179a2... until 2026-11-06, 0d81372e... until 2026-11-11, 23630ed6... since) and skip any other
 install: LibraryScanTests checks the row, smoke run 2 its sameBuild (section 12).
 
@@ -630,7 +634,7 @@ directly, never on `/bin/zsh`, which strips it, F1), the knobs (validate, e2e, r
 The CLI never starts anything through `/usr/bin/env`, `sh -c` with user data, `caffeinate` in front, `time`, `nice`,
 `xcrun` or `otool`.
 
-### 6.2 The knob registry: the 41 names of BUILD.md section 7
+### 6.2 The knob registry: the 43 names of BUILD.md section 7
 
 "Read once" means the library reads the variable once per process, at its first use.
 
@@ -651,9 +655,11 @@ The CLI never starts anything through `/usr/bin/env`, `sh -c` with user data, `c
 | `OPENEMS_COEF` | packed, geom | no | same |
 | `OPENEMS_BARRIER_SPIN_US` | integer >= 0 | yes | same |
 | `OPENEMS_TUNE_WINDOW_MS` | integer >= 1 | no | same |
+| `OPENEMS_TUNE_START` | p | no | same |
 | `OPENEMS_NO_PML_TABLE` | 1 | no | same |
 | `OPENEMS_PML_YVEC` | 0, 1 | no | same |
 | `OPENEMS_ADE_MERGED` | 0, 1 | no | same |
+| `OPENEMS_ADE_PACKED` | 0, 1 | no | same |
 | `OPENEMS_QOS` | 0, 1, 2 | no | same |
 | `OPENEMS_FTZ` | 1 | yes | same; warning `not_bit_identical_to_stock` |
 | `OPENEMS_NF2FF_LEGACY` | 1 | yes | same (searched in libnf2ff) |
@@ -682,7 +688,7 @@ The CLI never starts anything through `/usr/bin/env`, `sh -c` with user data, `c
   NF2FF_LEGACY, SETUP_TIMING) take only `1`; for "off" the knob is left out. Up to patch 0005 (cg9 to cg17, whose
   version strings cannot tell them apart) any value, 0 included, switched them on, while bench reads FTZ=0 as off
   (F23). Any other value gives `knob_value` (exit 2, hint "leave the knob out for off").
-- The number knobs (FUSED, FLAGS, BALANCE, QOS, PML_YVEC, ADE_MERGED) keep 0, and so do the seven Metal diamond
+- The number knobs (FUSED, FLAGS, BALANCE, QOS, PML_YVEC, ADE_MERGED, ADE_PACKED) keep 0, and so do the seven Metal diamond
   switches of patches 0029 to 0035 (DIAMOND_MERGE, DIAMOND_MURMERGE, DIAMOND_EVEN, DIAMOND_FASTIDX, DIAMOND_TGFLAG,
   DIAMOND_PML4, DIAMOND_PML3), which are on unless set to 0. The eighth new name, DIAMOND_CAND (patch 0038), takes
   the number of tilings the tuner keeps (0 = all seven). These eight are names that cg29's libopenEMS lacks (with
@@ -692,6 +698,11 @@ The CLI never starts anything through `/usr/bin/env`, `sh -c` with user data, `c
   `OPENEMS_TBLOCK=auto`. TBLOCK_W takes an integer >= 1, and TBLOCK_HOOKS keeps 0 like the number knobs. None is read
   once per process. cg31's libopenEMS, the installed one, lacks the three names (37 names against cg32d's 40), so on
   cg31, as on cg29, each gives `knob_unsupported`.
+- The two names of patches 0041 and 0042: TUNE_START takes the one word `p` (the old start of the thread search; any
+  other value, the empty one too, is the new rule in the library, and the CLI refuses it with `knob_value` so that nothing
+  is ambiguous), and ADE_PACKED keeps 0 like the number knobs (the library turns the packing off only at 0; `1` is
+  accepted and changes nothing). Neither is read once per process. cg31's and cg32d's libopenEMS lack both names (cg33's
+  has 42), so there each gives `knob_unsupported`.
 - An empty value gives `knob_value` (the fork treats empty as unset; the CLI refuses it so that nothing is ambiguous).
   An unknown name gives `knob_unknown` with the nearest name as the hint; a name not allowed on the command gives
   `knob_not_allowed` (both exit 2). A name absent from the target library's bytes gives `knob_unsupported` (exit 3):
@@ -1110,7 +1121,7 @@ toolchain, while xcode-select points at the Command Line Tools (F24):
 | suite | checks |
 |---|---|
 | GrammarTests | every usage example parses; the usage errors of section 4 exit 64 with their hints (`--confg`, `--config=x`, `--exact yes`, a repeated `--tag`, `ab --run-redo 2` without `--quiet`, `e2e gcpw --floor 0.05`, `check --lite --quiet-max 60`, `bench --nodes 2`, `--distribute runs`, `bench patch --scale 1.2345678 --nrts 10`, ...); a positional that starts with `-` is a usage error on every command (`check cgD --tag t -snaps DIR`, `debye-check -x`, `run -board.py`; nothing probed, nothing written), with the option meant or the path form as the hint, while an option's value and the tokens after run's `--` may start with one; `emskit fdtd` alone and an unknown command give usage on stderr, exit 64, no envelope |
-| KnobTests | the registry equals the 41 names parsed from BUILD.md section 7 (read through `#filePath`); the value rules (FTZ 1 ok, FTZ 0 and 2 and empty refused; TILE 12:8 and 7:0 everywhere, 7,0 only in the environment; FUSED_BLOCK 0 refused; EXPORT_FIELDS on bench not allowed; TBLOCK `auto`, 0 and 4 ok, `AUTO`, -1, +4, 4.5 and empty refused, TBLOCK_W 0 and `auto` refused, TBLOCK_HOOKS 2 refused); the warnings; `--knob` merging and conflicts |
+| KnobTests | the registry equals the 43 names parsed from BUILD.md section 7 (read through `#filePath`); the value rules (FTZ 1 ok, FTZ 0 and 2 and empty refused; TILE 12:8 and 7:0 everywhere, 7,0 only in the environment; FUSED_BLOCK 0 refused; EXPORT_FIELDS on bench not allowed; TBLOCK `auto`, 0 and 4 ok, `AUTO`, -1, +4, 4.5 and empty refused, TBLOCK_W 0 and `auto` refused, TBLOCK_HOOKS 2 refused); the warnings; `--knob` merging and conflicts |
 | ParserTests | every row and summary of `results/*_cg29.txt`, `*_cg28gpu.txt` and `*_step1.txt`; constructed fixtures for every format of section 4.4 (inf differences, busy lists with spaces, rows without `gpu dev`, abtest redo lines and -1 loads, the four check final lines, debye and diamond outputs, an e2e RESULT, a tool.log with call markers); `results/validation_cg18_mt4.json` (15 checks passed) and a NaN fixture read as JSON5 into a failed check |
 | EnvTests | the remove, keep and set rules of section 6.1; no DYLD on a zsh invocation |
 | DiscoveryTests | repo from `--repo`, the cwd walk and the executable walk; the old harness passed over; `/usr/bin/python3` passed over; `python_strips_dyld`, `python_name_mismatch`, `library_incomplete`; rfsim; the `-2` run folder suffix (FakeSystem) |
@@ -1137,8 +1148,9 @@ toolchain, while xcode-select points at the Command Line Tools (F24):
 | UnparsedLineTests | the rule of section 4.1 for a line that did not parse: for each of the ten commands an unknown option beside `--output FILE`, with and without `--overwrite`, FILE new, existing and inside each kind of protected folder, leaves every path and its bytes as they were, starts no probe and no child, installs no signal handling, exits 64 and prints the whole envelope on stdout with the stderr line; the same for every spelling of a discovery option that the attack rounds used (`--SNAPS`, `--snapshots`, `--snaps-dir`, `--py`, `--python-path`, `--snaps=DIR`, `-snaps DIR`, given twice, without a value) and for tokens after `--`; check's and validate's bad `--tag` (2) writes no file either; the same lines parsed follow the union rule |
 | PathOptionTests | the list of the options that take a DIR, a FILE or a PATH equals the grammar's; an empty value of each is a usage error (64) before any probe; ab's `--record` as a folder (64, with `--append` too), with a missing folder (2) and in a protected folder; a folder for `--output`, `--python`, `--hosts` and run's SCRIPT |
 
-27 unit suites with 245 tests; with SmokeTests, 28 suites and 259 tests (section 16; 244 and 258 until the test for
-the tiled sweep's knobs was added on 2026-11-11).
+27 unit suites; with SmokeTests, 28 suites and 260 tests (section 16; 259 on 2026-11-11 with 41 names, 244 and 258
+until the test for the tiled sweep's knobs was added on that day; the test of the two names of 2026-11-13 is one more
+unit test).
 
 **Smoke runs** (only with `EMSKIT_FDTD_SMOKE=1` through the command above; `@Suite(.serialized)`; real libraries, in
 process through `FdtdCLI.run` with the fake signal source; every run gets `--allow-concurrent`, because other
@@ -1927,6 +1939,20 @@ was made, so these hashes name commits of that history (section 13).
     skipped). No simulation, smoke or acceptance run was started for it. The
     checks of snapshot cg32d (`scripts/tiled_sweep/check.zsh`, and `check cg32d --lite` against stock with the
     switch unset, all identical, 18 of 18 rows) and its timing are in `results/tiled_sweep_cg32_2026-11-11.txt`.
+
+- **2026-11-13: the knob registry at 43 names, and cg33 in the tests' rows.** In the commit that brings the documents to
+  patch 0043 of the fork (`CHANGELOG.md`, 2026-11-13). Patch 0041 changes where the automatic thread count starts (switch
+  `OPENEMS_TUNE_START=p` for the old rule) and patch 0042 packs the Debye, Lorentz and Drude line hooks (switch
+  `OPENEMS_ADE_PACKED=0`; patch 0043 hardens it); `BUILD.md`, section 7, has both rows. In `Sources/`: the registry of
+  `Knobs.swift` has these two names more, 43 in all, in the order of `BUILD.md`'s table (section 6.2). In `Tests/`:
+  KnobTests expects 43 names and has one test more; `LibraryTests.swift` has a row for snapshot cg33 (sha256 3e7095fd...,
+  UUID ABEE95D4-..., version v0.37.0-61-g13350ca, 42 names in libopenEMS, one in libnf2ff); `SmokeTests.swift` counts the
+  two names among those that cg29's library lacks (section 12, smoke run 2); and the plan fixtures of
+  `Fixtures/plans/` that hold a fake library's names have another sha256. This plan: F7, the identity table of section
+  5.1 and the paragraph after it, section 6.2, KnobTests' row, the counts of section 12 and this entry.
+  - The counts of section 12 are 260 tests in 28 suites with the smoke runs (run on 2026-11-13: the 246 unit tests and the three smoke tests that start no simulation, all passing; the other eleven smoke tests were not repeated). The checks of snapshot cg33d (`scripts/ade_check/ade_check2.py`, `check cg33d --lite` against
+    stock, all identical, 18 of 18 rows, the Debye check, `diamond-check` 72 of 72 and the validation suite) are in
+    `results/cpu_items_cg33_2026-11-13.txt`.
 
 ## 17. Open questions (the author decides)
 

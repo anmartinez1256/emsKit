@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The knob registry (spec 4.3): the 41 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
+// The knob registry (spec 4.3): the 43 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
 // once per process, the commands that take them, and the library file their name is searched in. For bench and ab a
 // knob travels only inside the CFGs; for validate, e2e and run it goes into the Python process's environment.
 // check, debye-check and diamond-check take none.
@@ -64,7 +64,7 @@ struct FdtdKnobInfo: Codable, Sendable, Equatable {
 
 /// The registry and the knob rules.
 enum FdtdKnobs {
-    /// The 41 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
+    /// The 43 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
     static let registry: [FdtdKnob] = [
         entry("OPENEMS_FUSED", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_FUSED_BLOCK", .integer(min: 1), "integer >= 1"),
@@ -81,9 +81,11 @@ enum FdtdKnobs {
         entry("OPENEMS_COEF", .oneOf(["packed", "geom"]), "packed, geom"),
         entry("OPENEMS_BARRIER_SPIN_US", .integer(min: 0), "integer >= 0", once: true),
         entry("OPENEMS_TUNE_WINDOW_MS", .integer(min: 1), "integer >= 1"),
+        entry("OPENEMS_TUNE_START", .oneOf(["p"]), "p"),
         entry("OPENEMS_NO_PML_TABLE", .onlyOne, "1"),
         entry("OPENEMS_PML_YVEC", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_ADE_MERGED", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_ADE_PACKED", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_QOS", .oneOf(["0", "1", "2"]), "0, 1, 2"),
         entry("OPENEMS_FTZ", .onlyOne, "1", once: true),
         entry("OPENEMS_NF2FF_LEGACY", .onlyOne, "1", once: true, file: FdtdLibraries.nf2ffFile),

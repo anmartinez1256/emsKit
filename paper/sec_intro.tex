@@ -49,10 +49,13 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   the four models 4.73--6.89$\times$ and the two large ones 1.95$\times$ and 2.72$\times$ as fast as stock
   (Table~\ref{tab:current}); paired with cg18 in rounds of its own (5 rounds, other processes on 0.3--0.6 cores; the
   SMA launch on its 0.871\,M-cell mesh), 1.03--1.23$\times$ as fast at 4 threads and 1.13--1.44$\times$ at 8 over the
-  six models. An opt-in tiled sweep (patch 0040 of 2026-11-11, the fork's head, not in the installed build) runs
+  six models. An opt-in tiled sweep (patch 0040 of 2026-11-11, not in the installed build) runs
   several time steps on one cache-sized tile that all threads share; at 4 threads it is ahead of the fused sweep at
   its best on two large grids (1.08 and 1.23$\times$) and behind on four other models (0.71--0.92$\times$;
-  Section~\ref{sec:tiled}).
+  Section~\ref{sec:tiled}). Three further patches (0041 to 0043, written on 2026-11-12 and 2026-11-13, the fork's head, 13350ca, not
+  installed) start the automatic thread search at every core outside the efficiency class and pack the state of Debye,
+  Lorentz and Drude cells for the line hooks: on the M5 Pro the search then runs at 0.97--1.00 of a fixed 15 threads where cg31's
+  ran at 0.81--0.96, and upstream's dispersive case ran 1.9$\times$ as fast at 1\,M cells (Section~\ref{sec:cg33}).
 \item Setup and post-processing: a threaded operator construction (4.1\,s to 0.9\,s on the 7.9-million-cell patch
   model), a far-field transform written as complex matrix products, one per plane and block of directions (17.9\,s to
   1.0\,s on the same model; this path needs Apple's Accelerate, other builds keep the original loop), and two small
@@ -94,8 +97,9 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   1.22$\times$ and 1.37$\times$ as fast as the CPU engine (Table~\ref{tab:e2ecg29}, paired per round, on a loaded
   machine).
 \item A list of things that did not work, with numbers (Section~\ref{sec:rejected}), the installed build and the
-  tiled sweep measured again on a second machine, an M5 Pro Mac mini, as a set of their own
-  (Section~\ref{sec:m5pro}), and the artefact set (Section~\ref{sec:repro}).
+  tiled sweep measured again on a second machine, an M5 Pro Mac mini, as a set of their own, where the CPU engine of
+  cg31 runs 2.7 to 14.1$\times$ as fast as stock at stock's best thread count, together with the build of patches 0041 to
+  0043 and a paired comparison with upstream master's \code{cpu} engine (Section~\ref{sec:m5pro}), and the artefact set (Section~\ref{sec:repro}).
 \end{itemize}
 
 \paragraph{Scope.} All numbers are from one machine, an Apple M5 MacBook with 16\,GB, macOS~27.0.1, Apple clang~21,
@@ -117,8 +121,8 @@ the same kernel the rewrite gives the stock loop's results bit for bit under cla
 it differently (Section~\ref{sec:contract}). A GCC build of openEMS itself was not made, so the factors of this paper
 are against stock built with Apple clang, the default compiler on macOS, and the bit-identity checks used clang builds.
 The synchronisation and hook changes do not depend on the compiler. Six details are platform-specific and guarded:
-thread QoS (macOS), the starting point of the automatic thread search (the performance-core count on macOS, half the
-available hardware threads elsewhere; since cg29 the flag waits on macOS spin only while the thread count is at most
+thread QoS (macOS), the starting point of the automatic thread search (since patch 0041 the number of cores outside the efficiency class on
+macOS, before it the performance-core count; half the available hardware threads elsewhere; since cg29 the flag waits on macOS spin only while the thread count is at most
 that count, and other CPUs keep the barrier spin time), the separable far-field path (built only with Apple's
 Accelerate; other builds keep the original loop), the opt-in flush-to-zero of subnormals (any arm64 CPU), the
 Metal diamond engine (Apple only, opt-in, built with \code{ENABLE\_METAL}) and the cache size that the opt-in tiled

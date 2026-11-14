@@ -5,15 +5,19 @@ installed build and the tiled sweep of patch 0040 were measured on a second mach
 with the same library files, not rebuilt: cg31 is the fork's commit ff2538a (patches 0001--0039; the CPU engine
 \code{multithreaded} and the GPU engine \code{metal-diamond}), cg32d is 0ef186b (patch 0040), and stock is v0.37.0
 (\code{results/m5pro\_speed\_set\_2026-11-12.txt}, \code{results/m5pro\_tiled\_sweep\_2026-11-12.txt}; the scripts are
-in \code{scripts/m5pro/}). These numbers form a set of their own. They are compared only with each other: no table of
+in \code{scripts/m5pro/}). On 2026-11-13 stock was measured again at every thread count from 1 to 15
+(Table~\ref{tab:m5prostock}), which corrects the stock column of the speed table of 2026-11-12, and the fork's three
+later patches, 0041 to 0043 (the head, 13350ca), were timed there (Section~\ref{sec:cg33}; \code{results/cpu\_items\_cg33\_2026-11-13.txt}).
+These numbers form a set of their own. They are compared only with each other: no table of
 this section holds a number of the M5, and no ratio between the two machines is given, since the two chips differ in
 cores, caches and memory at once.
 
 \paragraph{The machine.} Mac mini, Apple M5 Pro (Mac17,16): 5 ``Super'' cores (\code{hw.perflevel0}, one L2 cache of
 16\,MiB) and 10 ``Performance'' cores (\code{hw.perflevel1}, two L2 caches of 8\,MiB), 24\,GB of unified memory,
 macOS~27.2.1 (26B131). Apple's figure for the M5 Pro's memory is 307\,GB/s~\cite{macmini}. The engine's automatic
-thread search (Section~\ref{sec:engine}) starts at the \code{hw.perflevel0} count, here 5, and the \code{auto} rule of
-the tiled sweep reads the 16\,MiB of that cluster's L2 cache.
+thread search (Section~\ref{sec:engine}) starts, in cg31 and before, at the \code{hw.perflevel0} count, here 5; since
+patch 0041 it starts at every core outside the efficiency class, here 15 (Section~\ref{sec:cg33}). The \code{auto}
+rule of the tiled sweep reads the 16\,MiB of the first cluster's L2 cache.
 
 \paragraph{How it was measured.} In two blocks of a night queue on the machine, with no other measured job beside
 them: the tiled sweep from 03:36 to 04:16 (\code{stageB.zsh}), the rest from 07:13 to 08:32 (\code{stageA.zsh}:
@@ -52,12 +56,16 @@ keeps them).
 
 \subsection*{Memory bandwidth and the standalone kernels}
 STREAM~\cite{stream} (version 5.10, 100\,M elements per array, 20 passes, OpenMP) gives a Triad rate of 131\,GB/s on
-one thread and 256, 244 and 259\,GB/s at 5, 10 and 15 (Table~\ref{tab:m5proband}): the five Super cores alone reach the
-bus limit, about 256 to 262\,GB/s. The standalone fused kernel (\code{scripts/kernel/kb\_idx.cpp} with
+one thread and 256, 244 and 259\,GB/s at 5, 10 and 15 (Table~\ref{tab:m5proband}): the five Super cores alone reach
+STREAM's rate, about 256 to 262\,GB/s. The standalone fused kernel (\code{scripts/kernel/kb\_idx.cpp} with
 \code{KB\_FUSED=1}, on a grid of the patch x5 size) gains with every thread count, and on one independent sub-grid per
 thread (\code{kb\_tile.cpp}) it runs at 4\,561\,\MC\ at 15 threads, 223\,GB/s at the 49\,B per cell of the traffic
 model, 86\,\% of STREAM Triad. The same program's shared tile, in which all threads work on one tile for several
-steps, is 1.21--1.30$\times$ its fused sweep at every thread count measured.
+steps, is 1.21--1.30$\times$ its fused sweep at every thread count measured. The bus is therefore not what limits the engine on
+most of the grids measured: the fused sweep of the engine ran the 2.95\,M-cell PEC box at 5\,602\,\MC\ at 15 threads
+(Table~\ref{tab:m5protiled}), and it scales to 15 threads on every model but the 16.8\,M-cell box. (At the 49\,B
+per cell of the M5 traffic model that rate would be 274\,GB/s, above STREAM's 259: a computed figure, which shows only
+that the model's byte count does not carry over to this grid on this chip.)
 
 \begin{table}[H]\centering\small
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -89,7 +97,8 @@ engine's own choice starts at 5 and tries 5, 7, 9, \ldots, 15, then 3, then one 
 (Section~\ref{sec:engine}): it took 15 threads in all four rounds of notch x3 and 9, 14, 9 and 14 on patch x5, where
 the dip misleads it; on the GCPW line it printed no choice, since the 15\,000-step run (about 1\,s) ends before the
 search does. On these runs of 1 to 2.7\,s the automatic count runs at 0.81$\times$ (notch x3), 0.88$\times$ (patch
-x5) and 0.72$\times$ (GCPW line) of the best fixed count: the search costs roughly 0.3 to 0.5\,s a run.
+x5) and 0.72$\times$ (GCPW line) of the best fixed count: the search costs roughly 0.3 to 0.5\,s a run. That is the
+search of cg31; the start of patch 0041 removes most of that loss (Table~\ref{tab:cg33tune}).
 
 \begin{table}[H]\centering\small
 \begin{tabular}{@{}lrrrrrrlrr@{}}
@@ -109,44 +118,87 @@ the count the engine printed in each round. Best: the best fixed count, 15 threa
 
 \subsection*{Speed: stock, the CPU engine and the Metal engine}
 Table~\ref{tab:m5prospeed} sets cg31 against stock on the six models, on the CPU at 5, 10 and 15 threads and with the
-automatic count, and on the Metal diamond engine. Stock is slower at 10 threads than at 5 on four of the six models;
-cg31's CPU engine is fastest at 15 threads on all six. At its best fixed count it runs the four models of up to about
-a million cells 9.6--17.3$\times$ as fast as stock at stock's best and the two large models 4.39$\times$ (notch x3) and
-2.74$\times$ (patch x5). The Metal engine leads on the two large grids (1.45$\times$ and 1.69$\times$ the CPU engine at
+automatic count, and on the Metal diamond engine. Stock's column is its best rate over the seven thread counts
+measured on 2026-11-13 (Table~\ref{tab:m5prostock}); the cg31 columns and the Metal column are of 2026-11-12. Stock is
+slower at 10 threads than at 5 on four of the six models; cg31's CPU engine is fastest at 15 threads on all six. At 15
+threads it runs the four models of up to about a million cells 9.33--14.06$\times$ as fast as stock at stock's best
+count and the two large models 4.27$\times$ (notch x3) and 2.73$\times$ (patch x5), paired round by round on
+2026-11-13. The first version of this table, of 2026-11-12, took stock's best from its runs at 5 and 10 threads only
+and gave 9.6 to 17.3$\times$ and 4.39 and 2.74$\times$ (14.6, 9.6, 15.2, 4.39, 17.3 and 2.74 in the order of the table);
+that missed stock's best count on two models, and the stock rates of the two nights differ, so it overstated the gain
+(17.3$\times$ against 9.67$\times$ on the patch tutorial). The Metal engine leads on the two large grids (1.45$\times$ and 1.69$\times$ the CPU engine at
 15 threads) and on the two tutorials (1.10$\times$ and 1.18$\times$); on the two boards the CPU engine at 15 threads
 is level with it (the GCPW line) or ahead (the SMA launch, 1.10$\times$).
 
 \begin{table}[H]\centering\small
-\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrrr@{}}
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrr@{}}
 \toprule
- & \multicolumn{2}{c}{stock v0.37.0} & \multicolumn{4}{c}{cg31, CPU engine} & cg31, & CPU / & GPU / \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-7}
-model & 5 thr & 10 thr & 5 thr & 10 thr & 15 thr & auto & Metal & stock & CPU \\
+ & stock v0.37.0, & \multicolumn{4}{c}{cg31, CPU engine} & cg31, & CPU / & GPU / \\
+\cmidrule(lr){3-6}
+model & best (threads) & 5 thr & 10 thr & 15 thr & auto & Metal & stock & CPU \\
 \midrule
-GCPW line, 0.24\,M & 283 & 130 & 2\,213 & 3\,096 & 4\,123 & 3\,034 & 4\,085 & 14.6$\times$ & 0.99$\times$ \\
-SMA launch, 0.87\,M & 449 & 345 & 1\,960 & 3\,170 & 4\,307 & 2\,966 & 3\,916 & 9.6$\times$ & 0.91$\times$ \\
-notch tutorial, 0.27\,M & 270 & 162 & 2\,252 & 3\,297 & 4\,111 & 2\,907 & 4\,836 & 15.2$\times^{*}$ & 1.18$\times$ \\
-notch x3, 5.25\,M & 952 & 1\,124 & 2\,598 & 4\,172 & 4\,931 & 4\,023 & 7\,140 & 4.39$\times$ & 1.45$\times$ \\
-patch tutorial, 0.10\,M & 152 & 60 & 2\,397 & 2\,436 & 2\,633 & 2\,390 & 2\,901 & 17.3$\times$ & 1.10$\times$ \\
-patch x5, 7.86\,M & 1\,135 & 1\,406 & 2\,668 & 3\,636 & 3\,857 & 3\,360 & 6\,511 & 2.74$\times^{\dagger}$ & 1.69$\times$ \\
+GCPW line, 0.24\,M & 305 (4) & 2\,213 & 3\,096 & 4\,123 & 3\,034 & 4\,085 & 14.06$\times$ & 0.99$\times$ \\
+SMA launch, 0.87\,M & 472 (5) & 1\,960 & 3\,170 & 4\,307 & 2\,966 & 3\,916 & 9.33$\times$ & 0.91$\times$ \\
+notch tutorial, 0.27\,M & 343 (5) & 2\,252 & 3\,297 & 4\,111 & 2\,907 & 4\,836 & 12.45$\times$ & 1.18$\times$ \\
+notch x3, 5.25\,M & 1\,164 (10) & 2\,598 & 4\,172 & 4\,931 & 4\,023 & 7\,140 & 4.27$\times$ & 1.45$\times$ \\
+patch tutorial, 0.10\,M & 270 (2) & 2\,397 & 2\,436 & 2\,633 & 2\,390 & 2\,901 & 9.67$\times$ & 1.10$\times$ \\
+patch x5, 7.86\,M & 1\,488 (10) & 2\,668 & 3\,636 & 3\,857 & 3\,360 & 6\,511 & 2.73$\times$ & 1.69$\times$ \\
 \bottomrule
 \end{tabular}}
-\caption{M5 Pro: stock v0.37.0 at 5 and 10 threads, cg31's CPU engine at 5, 10 and 15 threads and with the automatic
-count, and cg31's Metal diamond engine, in \MC, medians of 5 interleaved rounds. CPU / stock: cg31's best fixed count
-(15 threads on every model) over stock's best; GPU / CPU: the Metal engine over cg31's best fixed count; both are
-ratios of the medians. The SMA launch is on the toolkit's current mesh. Most rows ran beside 0.2 to 0.4 cores of other
-load, the patch tutorial's row with the automatic count beside 1.13. $^{*}$The notch tutorial's rows ran beside 1.15 cores and its stock rows spread from 220 to 350\,\MC, so
-12--19$\times$. $^{\dagger}$Patch x5 ran beside 1.27 cores (cg31 at 15 threads 3\,662 to 4\,083). Every CPU run's
-probes are identical to stock's at 5 threads; the Metal rows differ by $1.7\times10^{-7}$ to $9.4\times10^{-7}$
-relative. \code{results/m5pro\_speed\_set\_2026-11-12.txt}, section 4.}\label{tab:m5prospeed}
+\caption{M5 Pro: stock v0.37.0's best rate over 1, 2, 3, 4, 5, 10 and 15 threads (the count in brackets; the whole
+sweep is Table~\ref{tab:m5prostock}, measured 2026-11-13), cg31's CPU engine at 5, 10 and 15 threads and with the
+automatic count, and cg31's Metal diamond engine, in \MC. The cg31 columns and the Metal column are medians of 5
+interleaved rounds of 2026-11-12. CPU / stock: the median over the rounds of 2026-11-13 of cg31 at 15 threads over
+stock's best, which is not the quotient of the two columns shown (those are of different nights and step counts);
+GPU / CPU: the Metal engine over cg31's best fixed count, both of 2026-11-12, as before. The SMA launch is on the
+toolkit's current mesh. Most rows of 2026-11-12 ran beside 0.2 to 0.4 cores of other load, the patch tutorial's row with
+the automatic count beside 1.13; the notch tutorial's rows of that night ran beside 1.15 cores and patch x5's beside
+1.27 (cg31 at 15 threads 3\,662 to 4\,083\,\MC). Every CPU run's probes are identical to stock's at 5 threads; the Metal rows
+differ by $1.7\times10^{-7}$ to $9.4\times10^{-7}$ relative.
+\code{results/m5pro\_speed\_set\_2026-11-12.txt}, section 4 (with a dated correction at its end), and
+\code{results/cpu\_items\_cg33\_2026-11-13.txt}, section 3.}\label{tab:m5prospeed}
 \end{table}
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrrrr@{}}
+\toprule
+ & \multicolumn{7}{c}{stock v0.37.0, threads} & stock & cg31, & cg31 / stock \\
+\cmidrule(lr){2-8}
+model & 1 & 2 & 3 & 4 & 5 & 10 & 15 & best (thr) & 15 thr & best, paired \\
+\midrule
+GCPW line & 154 & 247 & 291 & 305 & 280 & 125 & 82 & 305 (4) & 4\,287 & 14.06$\times$ [13.86--14.52] \\
+SMA launch & 155 & 275 & 371 & 432 & 472 & 349 & 255 & 472 (5) & 4\,431 & 9.33$\times$ [9.29--9.63] \\
+notch tutorial & 135 & 236 & 305 & 342 & 343 & 170 & 112 & 343 (5) & 4\,258 & 12.45$\times$ [12.43--12.92] \\
+notch x3 & 288 & 541 & 757 & 897 & 1\,021 & 1\,164 & 1\,084 & 1\,164 (10) & 4\,944 & 4.27$\times$ [4.20--4.31] \\
+patch tutorial & 254 & 270 & 252 & 213 & 166 & 61 & 36 & 270 (2) & 2\,615 & 9.67$\times$ [9.66--9.99] \\
+patch x5 & 398 & 756 & 1\,030 & 1\,245 & 1\,326 & 1\,488 & 1\,303 & 1\,488 (10) & 4\,050 & 2.73$\times$ [2.71--2.76] \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Pro: stock v0.37.0 at 1, 2, 3, 4, 5, 10 and 15 threads on the six models, in \MC, medians of 3 interleaved
+rounds on 2026-11-13 (21:03 to 21:49) with half the steps of the speed table of 2026-11-12 (patch tutorial 5\,000,
+patch x5 600, notch tutorial 8\,000, notch x3 1\,000, GCPW line 7\,500, SMA launch 3\,000 steps); cg31 at 15 threads
+ran in the same rounds. Last column: the paired ratio of cg31 at 15 threads to stock's best count, median and
+[smallest--largest] of the rounds. The other processes used a median of 26 to 47\,\% of one core per model; the
+highest single readings were 182\,\% (patch x5) and 171\,\% (notch tutorial). All probes are identical to stock's on one
+thread. \code{results/cpu\_items\_cg33\_2026-11-13.txt}, section 3, part a.}\label{tab:m5prostock}
+\end{table}
+
+Stock peaks at 2 to 5 threads on the patch tutorial (2), the GCPW line (4), the SMA launch and the notch tutorial (5)
+and at 10 on the two large models, and it slows down beyond: the patch tutorial runs 36\,\MC\ at 15 threads against
+270 at 2, the GCPW line 82 against 305 at 4. The table of 2026-11-12 took stock's best from its runs at 5 and 10 threads only. That missed stock's best count on the
+patch tutorial (2) and the GCPW line (4), and its stock rates differ from those of this night (the notch tutorial at 5
+threads 270 then and 343 now; the patch tutorial 152 at 5 threads then and 166 now), so its factors were too large.
 
 \subsection*{The two boards end to end}
 Table~\ref{tab:m5proe2e} has the two boards end to end, as in Table~\ref{tab:e2e}, on this machine with the toolkit's
 defaults (the engine picks the threads, the probe end at $-60$\,dB with a hold of 0.5, on the SMA launch the 0.05\,mm
 mesh floor; \code{emskit fdtd e2e}, one run each, the other processes on 0.2 to 0.4 cores). Stock has no probe-end
-criterion, so its runs go to \code{max\_time}: the factors hold the steps that the probe end saves (2.7$\times$ on the
-GCPW line, 2.4$\times$ on the SMA launch) and the engine (10.9$\times$ and 11.3$\times$ in \MC). In these runs the
+criterion, so its runs go to \code{max\_time}, and the toolkit gave it its fallback thread counts, 4 for the GCPW line
+and 8 for the SMA launch (the GCPW count is stock's best of Table~\ref{tab:m5prostock}; the SMA launch's best of the
+counts measured there is 5). The factors of 25 to 32 therefore have three parts: the probe end stops these runs after
+2.7$\times$ (GCPW line) and 2.4$\times$ (SMA launch) fewer steps, the faster engine supplies the rest
+(10.9$\times$ and 11.3$\times$ in \MC), and the 32 is the opt-in Metal engine on one board, where the CPU engine
+reaches 27. In these runs the
 engine's own thread choice ran the GCPW line at 3\,281\,\MC, where 15 fixed threads ran 4\,123 in
 Table~\ref{tab:m5prospeed}, and the SMA launch at 4\,147 against 4\,307: on a run of a few seconds the search costs
 about 20\,\%, on the 11\,s SMA run about 4\,\%.
@@ -233,9 +285,185 @@ verdict is the one of Section~\ref{sec:tiled}: the tiled sweep stays opt-in, nev
 boards nothing. A rule that switched it on by itself would need the grid to be far past the cache and the fused sweep
 to be memory-bound, which only a timed comparison at run time can tell; that is not built.
 
-\paragraph{What this set shows.} On this chip the fork's CPU engine is fastest at 15 threads on every model measured
-(on the 16.8\,M-cell box and the patch tutorial it gains only about 1.1$\times$ from 5 to 15 threads), while stock is slower at 10 threads than at 5 on four of six; the automatic thread count costs 0.3 to 0.5\,s a run,
-which matters on runs of a few seconds; the Metal engine leads on the large grids and the tutorials and is level or
+\subsection{Patches 0041 to 0043: the thread search, packed dispersive hooks and the guard (cg33)}\label{sec:cg33}
+Three commits of 2026-11-13, written on 2026-11-12 and 2026-11-13, follow the tiled sweep, so the fork's head is now 13350ca (patches 0001 to
+0043); the installed build is still cg31. Snapshot cg33a is 0ef186b with patch 0041, cg33c adds 0042 and cg33d adds 0043;
+they were built before the commits were made, so their banners read v0.37.0-58-g0ef186b, and cg33, rebuilt from 13350ca,
+reads v0.37.0-61-g13350ca (the same sources as cg33d). The timings are those of the two nights of 2026-11-12 and
+2026-11-13 on the M5 Pro (\code{results/cpu\_items\_cg33\_2026-11-13.txt}); none of these numbers is a number of the M5.
+
+\paragraph{What changed.}
+\emph{Patch 0041, the start of the thread search.} With \code{numThreads=0} the engine times itself to choose a thread count.
+Up to patch 0040 it started at the cores of the first performance level (\code{hw.perflevel0}, 5 here) and went up in
+steps of 2: on notch x3 it timed 5, 7, 9, 11, 13, 15, 3 and 14 threads, eight windows, and on the M5 Pro, where the fused
+sweep scales to all 15 cores, it cost 4 to 19\,\% of a short run (cg31 columns of Table~\ref{tab:cg33tune}). It now starts
+at every core whose performance level is not named ``Efficiency'' (15 here; 4 on the M5, whose second level is named
+Efficiency, so nothing changes there), steps down by 2 while each step is the fastest so far, and then tries one thread
+either side of the best; on notch x3 that is 15, 13 and 14, three windows. \code{OPENEMS\_TUNE\_START=p} restores the old
+rule and reproduces cg31's sequence.
+\emph{Patch 0042, packed dispersive hooks.} The positions of a Debye, Lorentz or Drude extension are put in groups of up to
+four positions of one x-line, so that no group is shared by two threads, and the state and coefficients of a group sit in
+one block of memory instead of about fifteen separate arrays. Four positions are updated at a time, with the same
+floating-point operations per position in the same order as the one-position loops. Only the multithreaded engine packs;
+the \code{sse-compressed} and basic engines and the Metal engine's CPU fallback keep the old paths on Cartesian meshes, which
+makes them independent references for the check. Packing is skipped when the blocks would need more than twice the memory
+of the field arrays, and \code{OPENEMS\_ADE\_PACKED=0} turns it off. The reason: on one thread a Debye cell cost about 39\,ns
+and a Lorentz cell about 14\,ns (rough figures of a loaded machine, not results).
+\emph{Patch 0043, the guard.} The packed code sits under the same GCC/clang guard as the other vector code, with stubs
+for other compilers, since its vector types are a compiler extension. The limit of twice the field memory now counts all
+dispersive extensions of one engine together, and a refused packing prints one line at verbose level 1 or above with the
+bytes needed and the limit. No arithmetic changed.
+
+\paragraph{Identity.} The new build equals stock v0.37.0 in every check made; the machine was loaded during them, so
+only the verdicts count. \code{scripts/ade\_check/ade\_check2.py} runs six cases (dispersive, antenna, mixed, four-pole Debye, refused packing and the closed cylinder) through \code{FDTD.Run} against
+stock and cg31 and requires the packed hooks to be in use (with a guard against all-zero probes, Section~\ref{sec:common}): at
+37 mesh lines and 3\,000 steps 66 of 66 rows are identical, and with a source on the mesh (101 lines, 600 steps) the
+dispersive, mixed, antenna, four-pole Debye and refused-packing cases give 9 rows each; the closed cylinder with a
+dispersive ring is identical at 1\,500 steps (it needs at least that many before its far probe is non-zero). The configurations
+were 1, 4, 7 and 15 threads, the unfused plan, the tiled sweep, packing off, \code{sse-compressed} and the basic engine. The
+reduced check of the command line against stock is identical on the six models (18 of 18 rows), as are the Debye check, the
+diamond check (72 of 72), the validation suite (15 of 15 twice), six models in eight configurations (48 of 48), the tiled-sweep
+check and the cylindrical multigrid example (43 datasets, no difference).
+
+\paragraph{The thread search.} Table~\ref{tab:cg33tune} sets the automatic count against cg31 at a fixed 15 threads on four
+models, in four paired rounds on the night of 2026-11-12 (the other processes used 20 to 37\,\% of one core).
+cg31's search ran at 0.81 to 0.96 of the fixed rate, cg33a's at 0.97 to 1.00, and cg33a with
+\code{OPENEMS\_TUNE\_START=p} at 0.81 to 0.98, the values of cg31 within the spread. Patch 0041 therefore takes back most of
+the cost that Table~\ref{tab:m5prothreads} shows for cg31.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & cg31, & \multicolumn{3}{c@{}}{automatic count relative to cg31 at 15 threads} \\
+\cmidrule(l){3-5}
+model (steps) & 15 thr & cg31 & cg33a & cg33a, \code{TUNE\_START=p} \\
+\midrule
+GCPW line (34\,300) & 4\,053 & 0.81$\times$ & 0.97$\times$ & 0.81$\times$ \\
+SMA launch (50\,320) & 3\,999 & 0.96$\times$ & 1.00$\times$ & 0.98$\times$ \\
+notch x3 (2\,000) & 4\,804 & 0.82$\times$ & 0.97$\times$ & 0.81$\times$ \\
+patch x5 (1\,200) & 3\,944 & 0.87$\times$ & 0.99$\times$ & 0.86$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Pro: the automatic thread count of cg31, of cg33a (patch 0041) and of cg33a with \code{OPENEMS\_TUNE\_START=p},
+as a ratio to cg31 at a fixed 15 threads (the rate of that column in \MC), medians of 4 paired rounds, 2026-11-12. Others'
+CPU 20 to 37\,\% of one core. The probes of every run are identical to the reference's.
+\code{results/cpu\_items\_cg33\_2026-11-13.txt}, section 2, T1.}\label{tab:cg33tune}
+\end{table}
+
+\paragraph{The packed hooks.} Table~\ref{tab:cg33ade} compares cg31 with cg33c on upstream's \code{bench.py}, interleaved,
+three repeats, on the night of 2026-11-12. The dispersive case runs 1.9$\times$ as fast at 1\,M cells at both thread counts and
+2.11$\times$ at 8\,M cells and 5 threads, but only 1.14$\times$ at 15 threads (the fork's dispersive rate at 8\,M cells peaks at 10 threads, see below); the antenna case, whose dispersive part is small, gains 3 to 10\,\%, the last two inside the
+spread. Upstream's dispersive case ran on zero fields in these runs (the finding of Section~\ref{sec:common}); the rates stand as
+rates, the probe comparison of those rows does not count. On the author's GCPW board, whose conducting sheets run packed
+(1\,793 groups), 34\,300 steps at 15 threads in four rounds on the night of 2026-11-13 (the others 17 to 29\,\% of a core)
+gave 4\,201.5\,\MC\ for cg31, 4\,190.4 for cg33d (0.998$\times$ [0.995--1.002]) and 4\,194.7 for cg33d with packing off
+(0.998$\times$ [0.987--1.013]): no change on the board, inside the spread.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+case & size & threads & cg31 & cg33c & ratio & spread \\
+\midrule
+dispersive & 1\,M & 5 & 695.7 & 1\,347.2 & 1.94$\times$ & 12.9\,\% \\
+ & & 15 & 1\,276.1 & 2\,424.1 & 1.90$\times$ & 6.0\,\% \\
+ & 8\,M & 5 & 621.2 & 1\,310.5 & 2.11$\times$ & 7.8\,\% \\
+ & & 15 & 1\,182.8 & 1\,344.7 & 1.14$\times$ & 4.5\,\% \\
+antenna & 1\,M & 5 & 1\,164.7 & 1\,280.6 & 1.10$\times$ & 4.5\,\% \\
+ & & 15 & 2\,500.1 & 2\,708.8 & 1.08$\times$ & 8.7\,\% \\
+ & 8\,M & 5 & 1\,436.5 & 1\,524.0 & 1.06$\times$ & 3.5\,\% \\
+ & & 15 & 2\,383.6 & 2\,452.2 & 1.03$\times$ & 3.2\,\% \\
+\bottomrule
+\end{tabular}
+\caption{M5 Pro: cg31 and cg33c (packed dispersive hooks) on upstream's \code{benchmark/bench.py}, interleaved, median of 3
+repeats, in \MC, 2026-11-12 21:40; the spread is the tool's. The dispersive rows ran on zero fields (Section~\ref{sec:common});
+the antenna case has its own source. Others' CPU: a median of 22\,\% of one core. The probes of every row are identical.
+\code{results/cpu\_items\_cg33\_2026-11-13.txt}, section 2, T2b.}\label{tab:cg33ade}
+\end{table}
+
+\paragraph{Against master's cpu engine, with a source on the mesh.} Upstream's own benchmark has the flaw described in
+Section~\ref{sec:common}: at its default sizes its empty, PML and dispersive cases have no source. On the night of
+2026-11-13 \code{bench.py} was therefore run on meshes of 101 and 201 lines, so that the dipole sits on a mesh line, with
+master's \code{cpu} engine (1d710c2; A) against the multithreaded engine of cg33d (B), run for run, three repeats, the
+other processes a median of 20\,\% of one core (Table~\ref{tab:cg33master}). The fork is ahead at 1\,M cells, 1.4 to
+2.5$\times$ on the empty and PML boxes, and level at 5 threads and 1.3 to 1.45$\times$ ahead at 10 and 15 on the dispersive case. At
+8\,M cells it is level to 14\,\% ahead on the empty and PML boxes at 10 and 15 threads (0.93$\times$ on the PML box at 5), and it
+is behind on the dispersive case, 0.73, 0.70 and 0.54$\times$ master's rate; there the fork peaks at 10 threads
+(1\,296, 1\,540 and 1\,338\,\MC), and its operator setup takes 2.5 to 5.5 times master's. The spread of the rows is 0.8 to
+6.5\,\%, except the dispersive 1\,M-cell row at 10 threads (12.4\,\%). Master's \code{cpu} engine is a different algorithm (one
+cache-sized tile that all threads share, several time steps per pass), and its probes differ from the fork's by $5\times10^{-6}$
+to $3\times10^{-5}$ relative on these cases, while the fork equals stock v0.37.0 bit for bit.
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{5 threads} & \multicolumn{3}{c}{10 threads} & \multicolumn{3}{c}{15 threads} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(l){8-10}
+case, size & master & fork & B/A & master & fork & B/A & master & fork & B/A \\
+\midrule
+ideal, 1\,M & 2\,293 & 3\,258 & 1.42 & 2\,338 & 5\,138 & 2.20 & 2\,524 & 6\,346 & 2.52 \\
+ideal, 8\,M & 2\,869 & 2\,932 & 1.02 & 3\,568 & 3\,690 & 1.03 & 3\,671 & 3\,985 & 1.09 \\
+pml, 1\,M & 1\,023 & 1\,651 & 1.61 & 1\,135 & 2\,454 & 2.16 & 1\,297 & 3\,133 & 2.42 \\
+pml, 8\,M & 1\,763 & 1\,630 & 0.93 & 2\,139 & 2\,283 & 1.07 & 2\,238 & 2\,561 & 1.14 \\
+dispersive, 1\,M & 1\,400 & 1\,343 & 0.96 & 1\,601 & 2\,080 & 1.30 & 1\,679 & 2\,436 & 1.45 \\
+dispersive, 8\,M & 1\,771 & 1\,296 & 0.73 & 2\,201 & 1\,540 & 0.70 & 2\,460 & 1\,338 & 0.54 \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Pro: master's \code{cpu} engine (openEMS 1d710c2, CSXCAD fdff4b5; A) against the fork's multithreaded engine
+(cg33d; B), in \MC, \code{bench.py} interleaved, median of 3 repeats, with a source on the mesh (101 and 201 mesh lines),
+2026-11-13 21:34; B/A as the tool printed it. Others' CPU: a median of 20\,\% of one core. The probes differ between A and
+B by $5\times10^{-6}$ to $3\times10^{-5}$ relative.
+\code{results/cpu\_items\_cg33\_2026-11-13.txt}, section 3, part c.}\label{tab:cg33master}
+\end{table}
+
+The control of that night kept upstream's own meshes (200 lines, no source, all probes zero): at 8\,M cells and 15 threads
+the empty case ran 3\,870\,\MC\ on master and 4\,071 on the fork, the dispersive case 2\,437 and 1\,344, against 3\,671 and
+3\,985 and 2\,460 and 1\,338 with a source. The rates with and without a source agree within the spread of the rows, so the
+rates of the common benchmarks of Section~\ref{sec:common} stand, on this machine. The three cases that have their own
+sources (inhomogeneous, antenna, cylindrical) were run against master on the night of 2026-11-12 with cg31 (a different
+build from cg33d; $5$, $10$ and $15$ threads, B/A): inhomogeneous 1.56, 2.18 and 2.43 at 1\,M cells and 0.98, 1.11 and 1.19
+at 8\,M; antenna 1.41, 1.90 and 2.18, and 0.92, 1.04 and 1.14; cylindrical 1.53, 2.15 and 2.57, and 1.04, 1.17 and 1.30; master's
+probes differ from the fork's there by $3\times10^{-7}$ to $10^{-5}$.
+
+\paragraph{The tiled sweep at 8\,M cells.} Table~\ref{tab:cg33tiled} repeats the comparison of the fused and the tiled sweep of
+Section~\ref{sec:tiled} on the 8\,M-cell cases with a source, on cg33d, in the same night block. On the empty box the tiled
+sweep with \code{OPENEMS\_TBLOCK=auto} is ahead of the fused sweep, by 8, 22 and 15\,\% at 5, 10 and 15 threads (4\,450 and
+4\,569\,\MC\ at 10 and 15, against 3\,568 and 3\,671 for master's \code{cpu} engine in the run of the table above; the two
+were not run side by side). A fixed depth of 4 and a tile width of 31 lines are worse or equal. On the dispersive case every tiled variant is
+slower than the fused sweep, by 19 to 59\,\%: the tiled sweep does not close the gap to master's engine there. It stays opt-in.
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{ideal, 8\,M cells} & \multicolumn{3}{c}{dispersive, 8\,M cells} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+ & 5 thr & 10 thr & 15 thr & 5 thr & 10 thr & 15 thr \\
+\midrule
+fused sweep & 2\,954 & 3\,647 & 3\,969 & 1\,294 & 1\,518 & 1\,324 \\
+tiled, \code{auto} & 3\,183 ($+8$\,\%) & 4\,450 ($+22$\,\%) & 4\,569 ($+15$\,\%) & 1\,053 ($-19$\,\%) & 1\,106 ($-27$\,\%) & 737 ($-44$\,\%) \\
+tiled, $k=4$ & 2\,846 ($-4$\,\%) & 4\,059 ($+11$\,\%) & 3\,918 ($-1$\,\%) & 988 ($-24$\,\%) & 1\,066 ($-30$\,\%) & 543 ($-59$\,\%) \\
+tiled, \code{auto}, $W=31$ & 3\,020 ($+2$\,\%) & 4\,009 ($+10$\,\%) & 4\,048 ($+2$\,\%) & 914 ($-29$\,\%) & 962 ($-37$\,\%) & 1\,024 ($-23$\,\%) \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Pro: the fused sweep and three tiled settings of the multithreaded engine (cg33d, \code{OPENEMS\_TBLOCK=auto},
+\code{=4}, and \code{auto} with \code{OPENEMS\_TBLOCK\_W=31}) on upstream's ideal and dispersive cases at 8\,M cells with a source
+on the mesh, in \MC, \code{bench.py} interleaved, median of 3 repeats, 2026-11-13 21:42; in brackets the change against the
+fused sweep of the same thread count. Others' CPU: a median of 20\,\% of one core. The probes are identical to the fused
+sweep's in every row. \code{results/cpu\_items\_cg33\_2026-11-13.txt}, section 3, part d.}\label{tab:cg33tiled}
+\end{table}
+
+\paragraph{What is open.} The 8\,M-cell dispersive case is the open CPU item: the fork is at 0.54 to 0.73 of master's
+\code{cpu} engine there, and the packed hooks (Table~\ref{tab:cg33ade}) and the tiled sweep do not close the gap. The fork's fused
+sweep on that case peaks at 10 threads and loses at 15, and its dispersive setup costs 2.5 to 5.5 times master's; why the rate falls
+at 15 threads was not examined.
+
+\subsection*{What this set shows}
+On this chip the fork's CPU engine is fastest at 15 threads on every model measured
+(on the 16.8\,M-cell box and the patch tutorial it gains only about 1.1$\times$ from 5 to 15 threads), while stock is
+slower at 10 threads than at 5 on four of six and peaks at 2 to 5 threads on four models, so the CPU engine runs
+2.7 to 14.1$\times$ stock's best; the automatic thread count of cg31 costs 0.3 to 0.5\,s a run, which matters on runs
+of a few seconds, and patch 0041 removes most of that cost (Section~\ref{sec:cg33}); against upstream master's new
+\code{cpu} engine the fork is ahead at 1\,M cells, level to 14\,\% ahead at 8\,M cells on the empty and PML boxes (0.93$\times$ on the PML box at 5 threads) and
+behind on the 8\,M-cell dispersive case (Section~\ref{sec:cg33}); the Metal engine leads on the large grids and the tutorials and is level or
 behind on the two boards; the allocation-placement valley persists under macOS~27.2.1 and the stagger still removes it; the neighbour
 flags still pay; and the tiled sweep pays only on a memory-bound grid with little extension work. Bit identity held for
-every CPU run, as on the M5.
+every CPU run, as on the M5, and for the three patches of Section~\ref{sec:cg33}.

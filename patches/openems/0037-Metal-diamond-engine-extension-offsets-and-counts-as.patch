@@ -1,7 +1,7 @@
 From 32e0c7f6a7cb368f39538ec5fceeb90e7a287ce9 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Wed, 11 Nov 2026 05:25:21 -0600
-Subject: [PATCH 37/40] Metal diamond engine: extension offsets and counts as
+Subject: [PATCH 37/43] Metal diamond engine: extension offsets and counts as
  compile-time constants (snapshot cg30k)
 
 Where the extension data sit in the three buffers, and how many faces, boxes and extensions there are, is the same
