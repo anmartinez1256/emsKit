@@ -3,9 +3,9 @@
 Every table before this section is of snapshot cg29 or earlier. On 2026-11-11, the day after the repository was
 published, twelve commits followed (patches 0028 to 0039): one on the energy schedule of a run without an end criteria
 (0028), ten on the Metal diamond engine (0029 to 0038) and one on the cylinder extension (0039). The build, cg31, has
-been the installed one on the author's Mac since that day. This section records what was looked for, what changed and
+been the installed one on the author's Mac from that day to 2026-11-14. This section records what was looked for, what changed and
 what it gave (\code{results/metal\_engine\_cg31\_2026-11-11.txt}). A thirteenth commit of that day, patch 0040, adds
-an opt-in tiled sweep to the CPU engine (Section~\ref{sec:tiled}); it is not part of the installed build, and
+an opt-in tiled sweep to the CPU engine (Section~\ref{sec:tiled}); it is not part of cg31, and
 three more commits of 2026-11-13 (patches 0041 to 0043, now the fork's head, 13350ca) are the subject of
 Section~\ref{sec:cg33}.
 
@@ -276,7 +276,7 @@ other five models (0.41--0.97$\times$): there the fused sweep keeps gaining up t
 peaks at 10. The verdict below holds on that machine too.
 
 The verdict: the tiled sweep is a switch for large grids with little extension work on a quiet machine, not a
-default. The fused sweep stays the engine's default, and the installed build, cg31, does not have the switch. On the M5 the tiled
+default. The fused sweep stays the engine's default, and cg31, the installed build when this was measured, does not have the switch (cg33, installed since 2026-11-14, has it). On the M5 the tiled
 sweep was not measured against upstream master's \code{cpu} engine in one paired run; on the M5 Pro the fused sweep was
 (Section~\ref{sec:cg33}), and the tiled sweep was timed on two 8\,M-cell cases beside the fused one, not run side by
 side with master's engine. Not built: a choice between the two sweeps at run time.

@@ -1,0 +1,248 @@
+\section{The same build on a third machine: an M5 Max Mac Studio}\label{sec:studio}
+
+On 2026-11-14 the work moved to a third machine, a Mac Studio with an Apple M5 Max, and on 2026-11-15 the build of
+Section~\ref{sec:cg33} was measured on it, with the same library files as on the other two machines, not rebuilt:
+cg33 is the fork's commit 13350ca (patches 0001--0043, the head; the CPU engine \code{multithreaded} and the GPU engine
+\code{metal-diamond}), cg31 is ff2538a (patches 0001--0039) and stock is v0.37.0
+(\code{results/studio\_speed\_set\_2026-11-15.txt}; the scripts are in \code{scripts/studio/}). These numbers form a
+third set. They are compared only with each other: no table of this section holds a number of the M5 MacBook Air or of
+the M5 Pro Mac mini, and no ratio between machines is given, since the chips differ in cores, caches, memory and
+operating-system build at once. The M5 Pro Mac mini of Section~\ref{sec:m5pro} is no longer available, so its set is
+closed as it stands.
+
+\paragraph{The machine.} Mac Studio, Apple M5 Max (Mac17,14): 6 ``Super'' cores (\code{hw.perflevel0}, one L2 cache of
+16\,MiB) and 12 ``Performance'' cores (\code{hw.perflevel1}, L2 of 8\,MiB), a 32-core GPU, 36\,GB of unified
+memory, macOS~27.0 (26A425). With 18 cores outside the efficiency class, the automatic thread search of patch 0041
+(Section~\ref{sec:cg33}) starts at 18 threads here; cg31's rule starts at the 6 Super cores.
+
+\paragraph{Correctness on this chip.} On 2026-11-14, on a loaded machine (verdicts only), the command line was rebuilt
+from a clean folder and its 260 tests in 28 suites passed, the 14 smoke tests included (so the eleven smoke tests that
+start simulations, passed again). For the then-installed build cg31
+and for cg33, the Debye check passed, the six models were identical to stock (the reduced check, 18 of 18 rows each),
+the validation suite passed 15 of 15 and the Metal diamond check 72 of 72; the validation suite on the Metal engine
+passed 15 of 15, and both boards ran end to end through the toolkit with the stop steps of the other machines (34\,300 and
+50\,320). At 13:38 that day cg33 was installed as the author's working build (version string v0.37.0-61-g13350ca; the
+library's sha-256 begins b81e39a0); the same checks were run again from the install and all passed. In the
+measurements below every CPU run gave probes identical to its reference run, and the Metal rows differ from theirs by at
+most $2.2\times10^{-7}$ relative (the CPU reference keeps subnormal numbers, the GPU flushes them).
+
+\paragraph{How it was measured.} In one slot of a quiet block on the machine, 2026-11-15 from 06:49 to 08:23 (94
+minutes), with no other measured job beside it: \code{scripts/studio/studioset.zsh} ran stages C (the speed table), S
+(stock at eight thread counts), A (bandwidth, kernels and the thread sweep), E (the two boards end to end), B (the tiled
+sweep) and D (the valley and the switches), in that order, and every stage exited 0. The rates are medians of interleaved
+rounds of \code{bench/abtest.py} (4 rounds for the speed table, 3 for stock and for the thread sweep). Before each run the gate
+(\code{scripts/studio/common.zsh}) waits up to 20\,s for the other processes to use at most 300\,\% CPU, 3 of the 18 cores,
+and a run made above that is run once more; the record lists, for every row, the other processes' median CPU and GPU use during
+its runs. The other processes used 0.9 to 1.6 cores during the speed table and during the patch tutorial's stock rows,
+and 0.2 to 0.5 cores in the other stages. The end-to-end runs went through \code{emskit fdtd e2e}, one run each, beside 0.2
+to 0.3 cores.
+
+\subsection*{Speed: stock, the CPU engine and the Metal engine}
+Table~\ref{tab:studiospeed} sets cg33 against stock on the six models, on the CPU at 18 threads and with the automatic
+count, and on the Metal diamond engine. Stock's column is its best rate over the eight thread counts of
+Table~\ref{tab:studiostock}, with the count that gave it. On this chip the CPU engine runs 3.08 to 16.3$\times$ as fast as
+stock at stock's best thread count (paired, stock and cg33 at 18 threads in the same rounds), and the Metal engine runs
+1.20 to 2.14$\times$ the CPU engine at 18 threads. Of the three counts of this table (6, 12 and 18 threads) 18 is the fastest on five models: the
+patch tutorial runs best at 6 threads, 2\,972\,\MC\ (1.164$\times$ its rate at 18 threads, 10.7$\times$ stock's best), and
+the Metal engine is 1.05$\times$ that. cg31 at 18 threads equals cg33 at 18 threads within 1.5\,\% on all six models (no
+engine change affects these models at a fixed thread count).
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & stock v0.37.0, & \multicolumn{3}{c}{cg33} & CPU / & Metal / \\
+\cmidrule(lr){3-5}
+model & best (threads) & CPU, 18 thr & CPU, auto & Metal & stock & CPU \\
+\midrule
+GCPW line, 0.24\,M & 304 (4) & 4\,942 & 4\,743 & 6\,571 & 16.3$\times$ & 1.33$\times$ \\
+SMA launch, 1.07\,M & 492 (6) & 5\,340 & 5\,115 & 6\,386 & 10.9$\times$ & 1.20$\times$ \\
+notch tutorial, 0.27\,M & 353 (4) & 5\,054 & 4\,760 & 7\,845 & 14.2$\times$ & 1.54$\times$ \\
+notch x3, 5.25\,M & 1\,264 (12) & 6\,225 & 6\,088 & 11\,567 & 4.98$\times$ & 1.86$\times$ \\
+patch tutorial, 0.10\,M & 278 (2) & 2\,553 & 2\,641 & 3\,113 & 9.2$\times$ & 1.22$\times$ \\
+patch x5, 7.86\,M & 1\,583 (8) & 4\,743 & 4\,646 & 10\,156 & 3.08$\times$ & 2.14$\times$ \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Max: stock v0.37.0's best rate over 1, 2, 3, 4, 6, 8, 12 and 18 threads (the count in brackets;
+Table~\ref{tab:studiostock}), and cg33's CPU engine at 18 threads and with the automatic count and its Metal diamond
+engine, in \MC, medians of 4 interleaved rounds (the SMA launch on the 1.07\,M-cell mesh of the record). CPU / stock: the
+paired ratio of cg33 at 18 threads to stock's best count, from the rounds of Table~\ref{tab:studiostock}, which is not the
+quotient of the columns shown (those are from different rounds and step counts); Metal / CPU: the Metal engine over cg33
+at 18 threads, both from the speed rounds. The other processes used 0.9 to 1.6 cores. Every CPU row's probes are identical
+to stock's; the Metal rows differ by at most $2.2\times10^{-7}$ relative.
+\code{results/studio\_speed\_set\_2026-11-15.txt}, section 1.}\label{tab:studiospeed}
+\end{table}
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrrrrr@{}}
+\toprule
+ & \multicolumn{8}{c}{stock v0.37.0, threads} & stock & cg33, & cg33 / stock \\
+\cmidrule(lr){2-9}
+model & 1 & 2 & 3 & 4 & 6 & 8 & 12 & 18 & best (thr) & 18 thr & best, paired \\
+\midrule
+GCPW line & 162 & 250 & 292 & 304 & 259 & 163 & 113 & 71 & 304 (4) & 4\,970 & 16.3$\times$ \\
+SMA launch & 160 & 276 & 370 & 445 & 492 & 397 & 331 & 234 & 492 (6) & 5\,379 & 10.9$\times$ \\
+notch tutorial & 143 & 239 & 308 & 353 & 346 & 214 & 154 & 97 & 353 (4) & 5\,017 & 14.2$\times$ \\
+notch x3 & 308 & 550 & 792 & 956 & 1\,198 & 1\,220 & 1\,264 & 1\,107 & 1\,264 (12) & 6\,296 & 4.98$\times$ \\
+patch tutorial & 262 & 278 & 260 & 215 & 145 & 83 & 48 & 31 & 278 (2) & 2\,567 & 9.2$\times$ \\
+patch x5 & 421 & 770 & 1\,046 & 1\,302 & 1\,470 & 1\,583 & 1\,535 & 1\,294 & 1\,583 (8) & 4\,848 & 3.08$\times$ \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Max: stock v0.37.0 at 1, 2, 3, 4, 6, 8, 12 and 18 threads on the six models, in \MC, medians of 3 interleaved
+rounds with half the steps of the speed table; cg33 at 18 threads ran in the same rounds. Last column: the paired ratio of
+cg33 at 18 threads to stock's best count (the column of Table~\ref{tab:studiospeed}). The other processes used a median of
+0.22 to 0.33 cores per model, except the patch tutorial (1.51 cores, at most 1.63). All probes are identical to stock's on
+one thread. \code{results/studio\_speed\_set\_2026-11-15.txt}, sections 1 and 2.}\label{tab:studiostock}
+\end{table}
+
+Stock peaks at 2 to 12 threads and slows down beyond: at 18 threads it runs the patch tutorial at 31\,\MC\ against 278 at 2,
+the GCPW line at 71 against 304 at 4, and even the two large models only reach their best at 8 and 12 threads and fall at
+18 (patch x5 1\,583 at 8 and 1\,294 at 18; notch x3 1\,264 at 12 and 1\,107 at 18).
+
+\subsection*{Threads}
+Table~\ref{tab:studiothreads} has the cg33 CPU engine at every count from 1 to 18 threads and with the automatic count on
+three models, in two row blocks. The GCPW line and notch x3 gain with every thread, 8.2$\times$ and 8.7$\times$ their rate
+on one thread at 18, so the CPU engine scales to all 18 cores on the boards' kind of model and on a grid of 5\,M cells. Patch x5
+peaks at 10 threads, 5\,082\,\MC, dips to 4\,351 at 12 and recovers to 4\,868 at 18 (5.7$\times$ its one-thread rate); why it dips
+was not investigated.
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrrr@{}}
+\toprule
+threads & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 & 9 \\
+\midrule
+GCPW line, 0.24\,M & 600 & 1\,144 & 1\,716 & 2\,261 & 2\,799 & 3\,159 & 3\,165 & 3\,281 & 3\,316 \\
+notch x3, 5.25\,M & 731 & 1\,383 & 2\,050 & 2\,651 & 3\,130 & 3\,429 & 3\,838 & 4\,143 & 4\,467 \\
+patch x5, 7.86\,M & 852 & 1\,605 & 2\,284 & 2\,742 & 3\,049 & 3\,464 & 3\,853 & 4\,317 & 4\,733 \\
+\midrule
+threads & 10 & 11 & 12 & 13 & 14 & 15 & 16 & 17 & 18 \\
+\midrule
+GCPW line, 0.24\,M & 3\,464 & 3\,657 & 3\,865 & 4\,030 & 4\,285 & 4\,522 & 4\,683 & 4\,798 & 4\,931 \\
+notch x3, 5.25\,M & 4\,762 & 5\,101 & 5\,236 & 5\,411 & 5\,506 & 5\,758 & 5\,933 & 6\,126 & 6\,351 \\
+patch x5, 7.86\,M & 5\,082 & 4\,934 & 4\,351 & 4\,422 & 4\,488 & 4\,622 & 4\,685 & 4\,776 & 4\,868 \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Max: cg33's CPU engine at 1 to 18 threads, in \MC, medians of 3 interleaved rounds (15\,000, 2\,000 and 1\,200
+steps); the automatic count is in the text. The other processes used a median of 0.16 to 0.24 cores per model. Probes identical
+to the reference's in every run. \code{results/studio\_speed\_set\_2026-11-15.txt}, section 3.}\label{tab:studiothreads}
+\end{table}
+
+\paragraph{The thread search.} The automatic count of cg33 picked 18 threads in every round on all three models, which
+gives 4\,756\,\MC\ (GCPW line), 6\,170 (notch x3) and 4\,801 (patch x5). Paired with 18 fixed threads in the speed rounds
+(Table~\ref{tab:studiospeed}), the search of cg33 runs at 0.94 to 0.98$\times$ the fixed rate on five models and 1.04$\times$
+on the patch tutorial, where 18 threads is not the best count; the rule of cg31 (start at the 6 Super cores and climb) ran at
+0.70 to 0.86$\times$ on those five and 1.14$\times$ on the patch tutorial, and cg33 with \code{OPENEMS\_TUNE\_START=p}, which
+restores that rule, 0.76$\times$ on notch x3 (4\,798 against 6\,302\,\MC). The new start therefore takes back most of the cost of the
+search on this chip, as on the M5 Pro (Table~\ref{tab:cg33tune}). On patch x5 the search settles on 18 threads, the top of the
+recovery after the dip, and misses the peak at 10 threads: its 4\,801\,\MC\ is 0.94$\times$ the peak of 5\,082 (the fixed count
+of 18 threads is 4\,868, 4\,\% below it).
+
+\subsection*{Memory bandwidth and the standalone kernels}
+STREAM~\cite{stream} (version 5.10, 100\,M elements per array, OpenMP) gives a Triad rate of 132\,GB/s on one thread and 324,
+286 and 321\,GB/s at 6, 12 and 18 (Table~\ref{tab:studioband}): the six Super cores alone reach the rate of all 18
+threads, and the Triad rate at 12 threads is lower than at 6. The standalone fused kernel (\code{scripts/kernel/kb\_idx.cpp}
+with \code{KB\_FUSED=1}, on a grid of the patch x5 size) runs 2\,879--3\,072\,\MC\ at 6 threads, 3\,180--3\,300 at 12 and 2\,020--2\,199 at
+18; that drop at 18 threads was not investigated, and the engine's own fused sweep does not show it (Table~\ref{tab:studiothreads}).
+With one independent sub-grid per thread (\code{kb\_tile.cpp}) the kernel runs at 3\,444, 5\,186 and 5\,391\,\MC\ at 6, 12 and 18
+threads, 264\,GB/s at 18 threads at the 49\,B per cell of the traffic model (a computed figure, 82\,\% of the Triad rate at 18
+threads). The same program's shared tile, in which all threads work on one tile for several steps, is 1.21$\times$ its fused sweep at 6
+threads, 0.99$\times$ at 12 and 1.15$\times$ at 18.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{STREAM, GB/s} & \code{kb\_idx.cpp} & \multicolumn{3}{c@{}}{\code{kb\_tile.cpp}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-4}\cmidrule(l){5-7}
+threads & Copy & Triad & fused, one grid & fused, a sub-grid per thread & one shared tile & ratio \\
+\midrule
+1 & 144 & 132 & & & & \\
+6 & 350 & 324 & 2\,879--3\,072 & 3\,444 (169\,GB/s) & 4\,153 & 1.21$\times$ \\
+12 & 304 & 286 & 3\,180--3\,300 & 5\,186 (254\,GB/s) & 5\,135 & 0.99$\times$ \\
+18 & 339 & 321 & 2\,020--2\,199 & 5\,391 (264\,GB/s) & 6\,173 & 1.15$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max: STREAM 5.10 (best rate of the passes, 100\,M elements per array, OpenMP) and the two standalone kernels,
+in \MC: \code{kb\_idx.cpp} with \code{KB\_FUSED=1} on one $209\times209\times180$ grid (7.86\,M cells, the patch x5 size, 8
+steps; the range of three runs), and \code{kb\_tile.cpp} on the same grid size, 56 steps: its fused sweep with one sub-grid
+per thread (GB/s at 49\,B per cell) and the shared tile with $k=7$ and tiles of 15 x-lines. That setting is the best of
+the eight tiles tried at every thread count; at 18 threads
+$k=7$ with 30 x-lines falls to 3\,094 (0.57$\times$). Every kernel configuration is bit-identical to its reference. All
+processes together used 1.1 to 1.8 cores during these runs. \code{results/studio\_speed\_set\_2026-11-15.txt}, section 5 and
+the raw lines beneath it.}\label{tab:studioband}
+\end{table}
+
+\subsection*{The two boards end to end}
+Table~\ref{tab:studioe2e} has the two boards end to end, as in Table~\ref{tab:e2e} and Table~\ref{tab:m5proe2e}, on this machine with
+the toolkit's defaults (the engine picks the threads, the probe end at $-60$\,dB with a hold of 0.5, on the SMA launch the 0.05\,mm
+mesh floor; \code{emskit fdtd e2e}, one run each, the other processes on 0.2 to 0.3 cores). Stock has no probe-end
+criterion, so its runs go to \code{max\_time}, and the toolkit gave it its fallback thread counts, 4 for the GCPW line and 8 for the
+SMA launch (the GCPW count is stock's best of Table~\ref{tab:studiostock}; the SMA launch's best of the counts measured there is 6).
+The factors of 30 to 47 therefore have three parts: the probe end stops these runs after 2.7$\times$ (GCPW line) and 2.4$\times$ (SMA
+launch) fewer steps (the mesh is the same in the stock run and the fork's, on the SMA launch the one with the 0.05\,mm floor); the faster
+engine supplies the rest (the cell rate printed by the toolkit is 15.9$\times$ stock's on the GCPW line and 13.3$\times$ on the
+SMA launch, 4\,798 and 5\,256 against 301 and 395\,\MC); and the opt-in Metal engine gives the largest factors, 47 and 37. The factors are therefore not a measure of the engine alone. The runs of cg31 and cg33 differ by 0.5\,s on each board
+(2.4 against 1.9\,s, 9.2 against 8.7\,s): the two builds differ in the thread search described above, and no other cause was looked for.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+board & stock v0.37.0 & cg33, CPU engine & cg31, CPU engine & cg33, Metal engine \\
+\midrule
+GCPW line & 94\,217 steps (\code{max\_time}) & 34\,300 steps (probe end) & 34\,300 steps & 34\,300 steps \\
+ & 76.0\,s & 1.9\,s, 40$\times$ & 2.4\,s & 1.6\,s, 47$\times$ \\
+\addlinespace
+SMA launch & 118\,475 steps (\code{max\_time}) & 50\,320 steps (probe end) & 50\,320 steps & 50\,320 steps \\
+ & 262.0\,s & 8.7\,s, 30$\times$ & 9.2\,s & 7.0\,s, 37$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max: the two boards end to end through the toolkit with its defaults, wall time of \code{FDTD.Run}, one run
+each; factor: stock's time over the build's. Stock ran at the toolkit's fallback thread counts (4 and 8). The other
+processes used 0.2 to 0.3 cores. \code{results/studio\_speed\_set\_2026-11-15.txt}, section 6.}\label{tab:studioe2e}
+\end{table}
+
+\subsection*{The valley and the scheduling switches}
+The allocation-placement valley of Section~\ref{sec:valley} is there on this chip under macOS~27.0, and the allocator's stagger
+removes it: on the GCPW line (0.24\,M cells) cg33 runs 606\,\MC\ on one thread and 201 with \code{OPENEMS\_NO\_STAGGER=1}
+(0.33$\times$), and 3\,167 and 1\,099 at 6 threads (0.35$\times$); stock runs 162 on one thread. Only the rates were measured. Of the
+scheduling switches on notch x3 at 18 threads, the engine runs 0.88$\times$ as fast without the neighbour flags of cg29
+(Section~\ref{sec:cg29}; \code{OPENEMS\_FLAGS=0}, 5\,534 against 6\,302\,\MC), and the default QoS class in place of
+user-initiated (\code{OPENEMS\_QOS=0}) changes nothing measurable (1.005$\times$)
+(\code{results/studio\_speed\_set\_2026-11-15.txt}, section 8).
+
+\subsection*{The tiled sweep}
+Table~\ref{tab:studiotiled} repeats the timing of Table~\ref{tab:tiled} on this machine, for cg33's fused sweep and the
+tiled sweep with \code{OPENEMS\_TBLOCK=auto} at 6, 12 and 18 threads. The result is the one of the other two machines: the
+tiled sweep pays on the largest, memory-bound grid with little extension work, the 16.8\,M-cell PEC box (1.33$\times$, 5\,307
+against 4\,000\,\MC\ at 18 threads), and loses elsewhere (0.36 to 0.93$\times$). It stays opt-in. The rows of the fused sweep gain from
+6 to 18 threads on all six models, 1.15 to 1.98$\times$, and the tiled rows do not on four of them.
+
+\begin{table}[H]\centering\small
+\resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & & \multicolumn{3}{c}{fused sweep (cg33)} & \multicolumn{3}{c}{tiled sweep, \code{auto}} & best tiled / \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+model & cells & 6 thr & 12 thr & 18 thr & 6 thr & 12 thr & 18 thr & best fused \\
+\midrule
+patch x5 (Mur) & 7.86\,M & 3\,377 & 4\,291 & 4\,786 & 3\,770 & 4\,438 & 4\,000 & 0.93$\times$ \\
+notch x3 (PML at the x ends) & 5.25\,M & 3\,426 & 5\,193 & 6\,283 & 2\,980 & 2\,756 & 2\,153 & 0.47$\times$ \\
+cube with 10-cell PML & 8.0\,M & 1\,712 & 2\,504 & 2\,848 & 1\,783 & 1\,647 & 876 & 0.63$\times$ \\
+PEC box & 16.8\,M & 3\,472 & 3\,579 & 4\,000 & 3\,832 & 5\,213 & 5\,307 & 1.33$\times$ \\
+SMA launch & 1.07\,M & 2\,747 & 3\,931 & 5\,422 & 1\,973 & 1\,838 & 1\,557 & 0.36$\times$ \\
+PEC box & 2.95\,M & 4\,003 & 6\,064 & 7\,179 & 4\,262 & 4\,274 & 3\,763 & 0.60$\times$ \\
+\bottomrule
+\end{tabular}}
+\caption{M5 Max: the fused sweep and the tiled sweep (\code{OPENEMS\_TBLOCK=auto}) of cg33's multithreaded engine, in \MC,
+medians of interleaved rounds. Best tiled: the fastest of the three \code{auto} rows of a model; best fused: 18 threads
+on every model. The other processes used a median of 0.20 to 0.27 cores per model (at most 0.39). All runs gave probes
+identical to the fused sweep's at 6 threads. The models are those of Table~\ref{tab:tiled}.
+\code{results/studio\_speed\_set\_2026-11-15.txt}, section 7.}\label{tab:studiotiled}
+\end{table}
+
+\subsection*{What this set shows}
+On this chip the CPU engine of cg33 is faster at 18 threads than at 6 or 12 on five of six models (the patch tutorial's best is 6
+threads; the sweep of Table~\ref{tab:studiothreads} puts patch x5's best at 10) and
+runs 3.08 to 16.3$\times$ stock's best, while stock peaks at 2 to 12 threads and slows down beyond; the Metal engine is 1.20 to
+2.14$\times$ the CPU engine at 18 threads and leads most on the two large grids (1.86$\times$ and 2.14$\times$); the thread search
+of patch 0041 costs 2 to 6\,\% of a short run on five models where cg31's rule cost 14 to 30\,\%; patch x5 peaks at 10 threads and the search
+settles on 18, at 0.94 of that peak, for a cause not investigated; the allocation-placement valley exists under macOS~27.0 and the stagger removes
+it; the neighbour flags still pay; and the tiled sweep pays only on a memory-bound grid with little extension work. Bit identity
+held for every CPU run, as on the other two machines.

@@ -9,6 +9,87 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-15: the fork on a third machine, an M5 Max Mac Studio; cg33 installed
+
+The project moved on 2026-11-14 to a third machine: a Mac Studio (Mac17,14) with an Apple M5 Max (6 "Super" cores,
+`hw.perflevel0`, sharing one L2 of 16 MiB, and 12 "Performance" cores, `hw.perflevel1`, with L2 of 8 MiB; a 32-core GPU;
+36 GB; macOS 27.0, 26A425). The Mac mini M5 Pro is no longer available, so its set stays as it was and is closed. The library
+files are the same, byte for byte, as on the other two machines: stock v0.37.0, cg31 (ff2538a, patches 0001 to 0039) and
+cg33 (13350ca, patches 0001 to 0043). No patch changed. The numbers below are a set of their own: they are compared only
+with each other, never with a number measured on the M5 MacBook Air or on the M5 Pro, and no existing table changed.
+
+- Correctness on the M5 Max, 2026-11-14 (the machine loaded by other programs, so only the verdicts count). The command
+  line was rebuilt from clean and its 260 tests in 28 suites passed, the 14 smoke tests among them: the eleven smoke
+  tests that start simulations, which the entry of 2026-11-13 says were not repeated, passed here. For the then-installed
+  build cg31 and for cg33: the Debye check passed, `check --lite` gave 18 of 18 rows identical to stock on the six models,
+  the validation suite 15 of 15 (and 15 of 15 on `metal-diamond`), `diamond-check` 72 of 72, and both boards ran end to end
+  with the stop steps of the other machines (GCPW line 34300, SMA launch 50320).
+- Install, 2026-11-14 13:38: cg33, the fork's head 13350ca (patches 0001 to 0043), was installed as the author's working
+  build; before it the installed build was cg31. The installed library has sha256 b81e39a0..., UUID ABEE95D4-... and
+  reports v0.37.0-61-g13350ca. The same checks passed again from the install: identity 18 of 18, the Debye check,
+  `diamond-check` 72 of 72, the validation suite 15 of 15 on both engines, both boards, the 260 tests and the 14
+  smoke tests. cg33 was not installed when it was measured on the M5 Pro (entry of 2026-11-13). In the tests,
+  `LibraryTests` (installedRows) and `SmokeTests` (Smoke.installs) have the row of that file; the count stays 260 tests in 28 suites.
+- The speed set, 2026-11-15 06:49 to 08:23 (94 minutes), one slot of a quiet block with no other measured job beside it:
+  `scripts/studio/studioset.zsh` runs the stages C, S, A, E, B and D, every stage exited 0. `bench/abtest.py`, interleaved
+  rounds (4 for the speed table, 3 for the others), medians in MC/s, the port probes of every run compared with the
+  reference run; the gate waits up to 20 s for the other processes to use at most 3 of the 18 cores and repeats a run once
+  above that. The other processes used 0.9 to 1.6 cores during the speed table and the patch tutorial's rows of the stock
+  baseline, 0.2 to 0.5 elsewhere; the record gives every row's load. Every CPU row is identical to stock; the Metal rows
+  differ by at most 2.2e-7 relative. The record is `results/studio_speed_set_2026-11-15.txt`.
+- Speed table, MC/s: stock's best over 1, 2, 3, 4, 6, 8, 12 and 18 threads (thread count), cg33's CPU engine at 18
+  threads, with the automatic count, and the Metal diamond engine; the gain is the paired ratio of cg33 at 18 threads to
+  stock's best in the stock stage (3 rounds), Metal/CPU the ratio to the CPU engine at 18 threads:
+
+  | model (M cells) | stock best (threads) | cg33 18 threads | cg33 auto | cg33 Metal | CPU / stock | Metal / CPU |
+  |---|---|---|---|---|---|---|
+  | GCPW line (0.24) | 304 (4) | 4942 | 4743 | 6571 | x16.3 | x1.33 |
+  | SMA launch (1.07) | 492 (6) | 5340 | 5115 | 6386 | x10.9 | x1.20 |
+  | notch tutorial (0.27) | 353 (4) | 5054 | 4760 | 7845 | x14.2 | x1.54 |
+  | notch x3 (5.25) | 1264 (12) | 6225 | 6088 | 11567 | x4.98 | x1.86 |
+  | patch tutorial (0.10) | 278 (2) | 2553 | 2641 | 3113 | x9.2 | x1.22 |
+  | patch x5 (7.86) | 1583 (8) | 4743 | 4646 | 10156 | x3.08 | x2.14 |
+
+  So the CPU engine is 3.1 to 16.3 times stock at stock's best thread count, and the Metal engine 1.20 to 2.14 times the
+  CPU engine at 18 threads. The patch tutorial runs fastest on the CPU at 6 threads (2972 MC/s, x1.164 of 18 threads:
+  x10.7 over stock's 278, and Metal x1.05 over that). cg31 at 18 threads equals cg33 at 18 threads within 1.5 % on all six
+  models (no engine change on them).
+- Stock at 1, 2, 3, 4, 6, 8, 12 and 18 threads (the table is section 2 of the record): stock gets slower past 2 to 12
+  threads on every model, for example the GCPW line 304 MC/s at 4 threads and 71 at 18, the patch tutorial 278 at 2 and 31
+  at 18.
+- Thread sweep of cg33, 1 to 18 threads and the automatic count (3 rounds, GCPW line, notch x3, patch x5): the CPU engine
+  scales to all 18 cores on the GCPW line (600 MC/s at 1 thread, 4931 at 18) and on notch x3 (731, 6351). Patch x5 peaks at
+  10 threads (5082), dips to 4351 at 12 and recovers to 4868 at 18. The search of patch 0041 (start at all cores, step down
+  while faster) picked 18 threads in all three rounds on all three models; on patch x5 that is 4801 MC/s against the
+  10-thread peak (x0.94). The cause is not investigated (ROADMAP, Phase 4).
+- Thread search against 18 fixed threads (stage C, paired): cg33 x0.94 to x0.98 (patch tutorial x1.04); cg31's search
+  (the old rule: start at the 6 Super cores and climb) x0.70 to x0.86 (patch tutorial x1.14); cg33 with
+  `OPENEMS_TUNE_START=p` x0.76 on notch x3.
+- Memory bandwidth: STREAM Triad 132 / 324 / 286 / 321 GB/s at 1 / 6 / 12 / 18 threads. The standalone fused kernel
+  (`scripts/kernel/kb_idx.cpp`, 7.86 M cells) ran 2879 to 3072 / 3180 to 3300 / 2020 to 2199 MC/s at 6 / 12 / 18 threads on its
+  static split of the fork's loops; one independent sub-grid per thread (`scripts/kernel/kb_tile.cpp`'s baseline) 3444 /
+  5186 / 5391 MC/s (169 / 254 / 264 GB/s at 49 bytes a cell). The drop of the static split at 18 threads is not investigated.
+- End to end through the toolkit at its defaults (wall time of `FDTD.Run`, one run each): GCPW line stock 76.0 s (94217
+  steps, to max_time), cg33's CPU engine 1.9 s (34300 steps, probe end), cg31's 2.4 s, the Metal engine 1.6 s; SMA launch
+  stock 262.0 s (118475 steps), cg33 CPU 8.7 s (50320 steps), cg31 9.2 s, Metal 7.0 s. That is 40 and 30 times sooner on
+  the CPU engine and 47 and 37 times on Metal. As on the M5 Pro the factor has three parts: the probe-end criterion (stock has
+  none, so its run goes to the full time: 2.7 and 2.4 times the steps), the faster engine, and for the largest factors the
+  opt-in Metal engine. The mesh is the same in every run (the SMA launch's with the 0.05 mm floor of the toolkit's defaults),
+  and stock ran at the toolkit's fallback thread counts (4 for the GCPW line, 8 for the SMA launch).
+- Tiled sweep (opt-in, `OPENEMS_TBLOCK=auto`, patch 0040) against the fused sweep, cg33 at 6, 12 and 18 threads, best
+  tiled over best fused: 16.8 M PEC box x1.33 (5307 against 4000 MC/s), patch x5 x0.93, PML cube 8 M x0.63, 2.95 M box
+  x0.60, notch x3 x0.47, SMA launch x0.36. As on the other machines it gains only on the largest grid with little extension
+  work, and it stays opt-in.
+- Allocation-placement valley: present on the M5 Max under macOS 27.0 (GCPW line at 1 thread 606 MC/s, 201 without the
+  allocator stagger; at 6 threads 3167 against 1099). Switches on notch x3 at 18 threads: `OPENEMS_FLAGS=0` x0.88,
+  `OPENEMS_QOS=0` x1.005 (no effect).
+- New files: `results/studio_speed_set_2026-11-15.txt`; `scripts/studio/` (`common.zsh`, `wait_quiet.zsh`, `stageA.zsh` to
+  `stageE.zsh`, `stageS.zsh`, `studioset.zsh`, `summarize.py`; `scripts/README.md` lists them). The README has a section on the
+  M5 Max and the paper a section of its own on the third machine (`paper/sec_studio.tex`, six tables).
+- Not done: a base-M5 column measured again on the Air with cg33; an Ultra chip; the engine's own share of the bus;
+  the cause of the 10-thread peak of patch x5 and of the kernel's drop at 18 threads. Nothing of this entry is pushed and no
+  release was made.
+
 ## 2026-11-13: three CPU patches (0041 to 0043), the stock baseline and the benchmark sources corrected, master's CPU engine measured
 
 Patches 0041 to 0043 are added; the fork's head is now 13350ca and the knob registry has 43 names. All three are

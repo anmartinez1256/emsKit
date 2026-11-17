@@ -257,10 +257,10 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   engine, one patch per snapshot cg19--cg28; 0017--0027 are the CPU items of cg29 (Section~\ref{sec:cg29}), so
   0001--0027 give cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are the first twelve
   commits of 2026-11-11 (72a6492 to ff2538a, Section~\ref{sec:cg31}), so 0001--0039 give cg31, the build installed there
-  since (tree dc4a352); 0040 (0ef186b, snapshot cg32d) adds the opt-in tiled sweep of
+  from 2026-11-11 to 2026-11-14 (tree dc4a352); 0040 (0ef186b, snapshot cg32d) adds the opt-in tiled sweep of
   Section~\ref{sec:tiled}; 0041 (8bcec90, snapshot cg33a), 0042 (c6ef5c5, cg33c) and 0043 (13350ca, the fork's head,
-  cg33d) are the thread-search start, the packed dispersive hooks and their guard of Section~\ref{sec:cg33}; 0040 to 0043 are
-  not installed. The result files carry these snapshot names. All 43 patch files were made again on 2026-11-13, when 0041
+  cg33d) are the thread-search start, the packed dispersive hooks and their guard of Section~\ref{sec:cg33}; 0001--0043 give
+  cg33, the build installed on the author's Mac Studio on 2026-11-14 (Section~\ref{sec:studio}). The result files carry these snapshot names. All 43 patch files were made again on 2026-11-13, when 0041
   to 0043 were added (before that, 40 on 2026-11-11, when 0040 was added); in 0001--0040 only the numbering in the subject
   line changed.
   The fork's commits up to cg29 were rewritten for publication on 2026-11-07, with the author's public identity,
@@ -336,7 +336,9 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   of patches 0041 to 0043: its identity checks, the thread search, the packed dispersive hooks, master's \code{cpu} engine
   against the fork with a source on the mesh, the tiled sweep at 8\,M cells, and stock at 1 to 15 threads, which corrects the
   speed table of 2026-11-12 (\code{cpu\_items\_cg33\_2026-11-13.txt}, Section~\ref{sec:cg33}); the earlier records carry
-  dated notes where this paper's later sections correct them.
+  dated notes where this paper's later sections correct them. From 2026-11-15, the third machine, an M5 Max Mac Studio
+  (Section~\ref{sec:studio}): the speed table, stock at eight thread counts, bandwidth, thread sweep, the two boards end to end,
+  the tiled sweep, the valley and the switches, all of cg33 (\code{studio\_speed\_set\_2026-11-15.txt}).
 \item \code{scripts/} (one line per script in \code{scripts/README.md}): the standalone kernels (\code{kb\_idx.cpp},
   \code{kb\_tb.cpp} and, for the shared tile of Section~\ref{sec:tiled}, \code{kb\_tile.cpp}) with the
   GCC-against-clang comparison (\code{gcc\_vs\_clang.sh}) and the instruction count per
@@ -357,7 +359,9 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   \code{stageA.zsh} to \code{stageE.zsh}, \code{wait\_quiet.zsh}, \code{summarize.py}); from 2026-11-13 the check of the
   dispersive hooks (\code{scripts/ade\_check/ade\_check2.py}), the night queues of the thread search, the packed hooks, stock
   at 1 to 15 threads and master's \code{cpu} engine (\code{slotF.zsh}, \code{tune33.zsh}, \code{master33.zsh}) and the scripts
-  that built master and ran it beside the fork (\code{scripts/m5pro/master/}).
+  that built master and ran it beside the fork (\code{scripts/m5pro/master/}); from 2026-11-15 the stages of the M5 Max set
+  (\code{scripts/studio/}: \code{studioset.zsh}, \code{common.zsh} with the gate, \code{stageA.zsh} to \code{stageE.zsh},
+  \code{stageS.zsh}, \code{wait\_quiet.zsh}, \code{summarize.py}).
 \item \code{swift\_engine/}: the Metal kernel, with its diamond mode (\code{--diamond K}), its model builder and field
   compare.
 \item \code{Package.swift}, \code{Sources/} and \code{Tests/}: fdtdKit's command line \code{emskit fdtd} (version
@@ -372,7 +376,8 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   the 14 smoke runs against the real tools). Since 2026-11-11 its list of the fork's switches had 41 names (the
   eight of cg31 and the three of the tiled sweep were added) and the suite one test more: 245 unit tests, 259 tests
   in 28 suites with the smoke runs; since 2026-11-13 it has 43 names (\code{OPENEMS\_TUNE\_START} and
-  \code{OPENEMS\_ADE\_PACKED} were added), and the suite then had 260 tests (the 246 unit tests and the three smoke runs that start no simulation passed that day). The full smoke runs passed last on 2026-11-10, before that day's later
+  \code{OPENEMS\_ADE\_PACKED} were added), and the suite then had 260 tests (the 246 unit tests and the three smoke runs that start no simulation passed that day). On 2026-11-14 all 260 tests in 28 suites, the 14 smoke runs included, passed on the Mac Studio
+  (Section~\ref{sec:studio}); the count is unchanged. The full smoke runs had passed on 2026-11-10, before that day's later
   corrections, as did the runs on cg29: \code{check --lite} gave results identical to stock on the six models,
   \code{diamond-check} 72 of 72, and the GCPW end-to-end run finished (34\,300 steps). The checks of the installed cg29
   (Section~\ref{sec:method}) were run with it.
@@ -398,7 +403,7 @@ repository are under GPL-3.0-or-later (\code{LICENSE}); the text and figures of 
 
 \section{Disclosure}\label{sec:disclosure}
 The code changes, the benchmark harness, the command line, the measurements and most of this text were produced by AI
-assistants (Claude, Anthropic, operated through Claude Code) over seventeen days (2026-10-28 to 2026-11-13), directed by
+assistants (Claude, Anthropic, operated through Claude Code) over nineteen days (2026-10-28 to 2026-11-15), directed by
 the author through a chat interface; the models are those recorded in the sessions' transcripts. In the main session:
 Claude Opus 5.5 on 2026-10-28 until the evening (the benchmark harness, the stock baseline and the engine work of
 patch 0001, snapshots A to cg8); Claude Fable 5.1 from then to the early morning of 2026-11-03 (it made the commits
@@ -464,6 +469,10 @@ cases (Section~\ref{sec:common}) was found on 2026-11-13, when that script's gua
 S size; the corrections to the stock baseline of the M5 Pro speed table (Section~\ref{sec:m5pro}) and the other corrections of
 the same day came from a review of 2026-11-12 and from the new thread table. The documentation pass of 2026-11-13, this
 report included, was done by Claude Sonnet subagents directed and checked by Claude Fable 5.2.
+On 2026-11-14 and 2026-11-15 an AI assistant session, Claude Fable 5.2, under the author's direction, ran the checks on the
+Mac Studio (Section~\ref{sec:studio}), installed cg33 there and ran the speed set of that section, one slot of a quiet block; the
+documentation pass of 2026-11-16 that wrote Section~\ref{sec:studio} and brought this report up to date with it was done by
+Claude Sonnet subagents, directed and checked by that session.
 A separate Claude Opus 5.5 session in the
 repository's folder wrote the paragraph on concurrent work and measured two of the engines it lists (below); another
 Claude Opus 5.5 session wrote the work plan of 2026-11-04 (a working note that is not part of the published
@@ -520,8 +529,8 @@ Where the numbers come from: the benchmark tables (with the full checks of cg18,
 sweeps, the kernel comparisons, the correctness checks of cg18, the validation runs, and the measurements of
 2026-11-04 and 2026-11-05 (the Metal diamond engine, the $K=1$ sweep, the other engines, the CPU items of cg29, the
 GPU-against-CPU size sweep of Figure~\ref{fig:crossover} and the table of cg29 against stock, Table~\ref{tab:current})
-and the records of 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 that Sections~\ref{sec:common}, \ref{sec:cg31},
-\ref{sec:m5pro} and~\ref{sec:cg33} name are files in \code{results/}. So are the smaller checks made for this report during the final review, which are marked
+and the records of 2026-11-10, 2026-11-11, 2026-11-12, 2026-11-13 and 2026-11-15 that Sections~\ref{sec:common}, \ref{sec:cg31},
+\ref{sec:m5pro}, \ref{sec:cg33} and~\ref{sec:studio} name are files in \code{results/}. So are the smaller checks made for this report during the final review, which are marked
 where they appear: the memory figures of Section~\ref{sec:cluster}, the time-step bound of Section~\ref{sec:future}
 and the placement test of Section~\ref{sec:valley} (all three on cg18), and the flush-to-zero check of
 Section~\ref{sec:policy} (snapshot cg17); only the rerun of the Debye check with 2 threads

@@ -113,16 +113,16 @@ to stock on all six models, \code{results/*\_pub29.txt}), \code{debye\_check.sh}
 72, the six models on the Metal engine, the validation suite 15 of 15 with the multithreaded engine at 4 threads and
 with the fastest engine, and the cylindrical multigrid (\code{results/fresh\_build\_pub29\_2026-11-07.txt}); other
 programs used up to 8.9 cores during \code{check.sh}, so here too only the verdicts count.
-The installed build, cg31 (patches 0001--0039, installed in cg29's place on 2026-11-11), passed the reduced check
+The build installed from 2026-11-11 to 2026-11-14, cg31 (patches 0001--0039, installed in cg29's place), passed the reduced check
 (identical to stock on all six models, 18 of 18 rows), \code{debye\_check.sh}, \code{diamond\_check.sh} (72 of 72 on
 each of its snapshots and on the installed library), the validation suite on the Metal engine (15 of 15, on snapshot
 cg30l, patches 0001--0038) and both boards end to end with the toolkit's defaults, which stopped at the steps of cg29
 (34\,300 and 50\,320; Section~\ref{sec:cg31}, \code{results/metal\_engine\_cg31\_2026-11-11.txt}).
-Patch 0040, the opt-in tiled sweep (snapshot cg32d, not installed), was checked both ways: with
+Patch 0040, the opt-in tiled sweep (snapshot cg32d; part of cg33, installed on 2026-11-14), was checked both ways: with
 its switch unset the reduced check is identical to stock on all six models (18 of 18 rows), and with it set the
 probes of six models and the raw fields of a closed cylinder and of a steady-state run equal those of the fused
 sweep (Section~\ref{sec:tiled}, \code{results/tiled\_sweep\_cg32\_2026-11-11.txt}).
-Patches 0041 to 0043, the fork's head (snapshots cg33a to cg33d and cg33, not installed), were checked on the M5 Pro on
+Patches 0041 to 0043, the fork's head (snapshots cg33a to cg33d and cg33; cg33 was installed on 2026-11-14), were checked on the M5 Pro on
 2026-11-13: the reduced check, the Debye check, the diamond check, the validation suite, six models in eight configurations
 and the cylindrical multigrid example are identical to stock as before, and a new script, \code{scripts/ade\_check/ade\_check2.py},
 compares the dispersive cases (the packed hooks of patch 0042 against stock, cg31, the unpacked paths and the other engines,

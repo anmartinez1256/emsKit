@@ -215,12 +215,13 @@ import Testing
     ]
 
     /// The installed rows: the installed libopenEMS by sha256 prefix, with its version, UUID prefix and build. It was
-    /// cg18's build until 2026-11-06, cg29's until 2026-11-11 and is cg31's since, each in other bytes than the
-    /// snapshot's file.
+    /// cg18's build until 2026-11-06, cg29's until 2026-11-11, cg31's until 2026-11-14 and is cg33's since, each in
+    /// other bytes than the snapshot's file.
     static let installedRows: [(sha: String, version: String, uuid: String, build: String)] = [
         ("819179a2", "v0.37.0-24-g087ce9e", "24C8A7F2", "cg18"),
         ("0d81372e", "v0.37.0-44-g074a687", "40BC8CFF", "cg29"),
         ("23630ed6", "v0.37.0-57-gff2538a", "499C07FD", "cg31"),
+        ("b81e39a0", "v0.37.0-61-g13350ca", "ABEE95D4", "cg33"),
     ]
 
     @Test(.enabled(if: realSnapsExist)) func spec42RowsWhileTheHashesHold() throws {

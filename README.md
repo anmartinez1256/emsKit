@@ -23,8 +23,8 @@ without `--exact-endcriteria` checks it with the progress report every 4 s of wa
 the probe files are the same.
 
 In the speed table below (snapshot cg29 = patches 0001 to 0027, measured on the M5 on 2026-11-05 with all
-configurations paired in the same rounds, the other processes at a median of 0.5 to 0.8 cores; a second machine, an
-M5 Pro, has its own set further down), the CPU engine reaches 1.95x (patch x5) to
+configurations paired in the same rounds, the other processes at a median of 0.5 to 0.8 cores; two more machines, an
+M5 Pro and an M5 Max, have sets of their own further down), the CPU engine reaches 1.95x (patch x5) to
 6.89x (patch tutorial) the cell rate of stock over the six models, each at its best thread count in the run, and 4.73x
 (SMA launch, on the 1.071 M-cell mesh of the toolkit's former 0.02 mm floor) and 6.33x (GCPW line) on the author's two
 real boards. The Metal diamond engine of the same build reaches 2.87x (patch x5) to 7.40x (GCPW line) stock's rate
@@ -88,8 +88,8 @@ at step 34300 as on cg18 and cg29 before (`Docs/fdtdKit/PLAN.md`, section 16). O
 published then (0001 to 0027) were built from a fresh clone of upstream's superproject as `BUILD.md` describes, and
 that build passed `check.sh` (every run identical to stock on the six models), the Debye check, `diamond_check.sh`
 72 of 72, the six models on `metal-diamond`, the validation suite 15 of 15 twice and the cylindrical multigrid, on a
-loaded Mac (`results/fresh_build_pub29_2026-11-07.txt`). Since 2026-11-11 the build installed on the author's Mac is cg31
-(patches 0001 to 0039). Its checks of that day are not the full check of `BUILD.md` section 9: each of its steps
+loaded Mac (`results/fresh_build_pub29_2026-11-07.txt`). From 2026-11-11 to 2026-11-14 the build installed on the author's Mac was cg31
+(patches 0001 to 0039); since 2026-11-14 it is cg33 (patches 0001 to 0043, see below). Its checks of that day are not the full check of `BUILD.md` section 9: each of its steps
 (snapshots cg30a to cg30l and cg31a) passed `diamond_check.sh`, 72 of 72; the snapshot of patches 0001 to 0038 passed
 `check --lite` (all identical to stock on the six models, 18 of 18 rows), the Debye check, the validation suite on
 the Metal diamond engine (15 of 15) and the GCPW line's end-to-end run on that engine; for patch 0039, a closed
@@ -98,10 +98,10 @@ threads, and the cylindrical multigrid tutorial 18 datasets equal to cg29's; and
 `check --lite` (18 of 18 rows), the Debye check, `diamond_check.sh` 72 of 72 and both boards' end-to-end runs at the
 toolkit's defaults, which stopped at the same steps as with cg29, 34300 (GCPW line) and 50320 (SMA launch)
 (`results/metal_engine_cg31_2026-11-11.txt`). Patch 0040 (0ef186b, the fork's head from the evening of 2026-11-11 until the commits of 2026-11-13)
-is not installed. It adds an opt-in tiled sweep to the multithreaded engine (item 22 below). Its snapshot cg32d gave
+was never installed on its own; it is in cg33. It adds an opt-in tiled sweep to the multithreaded engine (item 22 below). Its snapshot cg32d gave
 the fused sweep's results in every test of `scripts/tiled_sweep/check.zsh`, and with the switch unset `check --lite`
 was all identical to stock on the six models, 18 of 18 rows (`results/tiled_sweep_cg32_2026-11-11.txt`).
-Patches 0041 to 0043, the fork's head since 2026-11-13 (13350ca), are not installed either. 0041 changes where the
+Patches 0041 to 0043, the fork's head since 2026-11-13 (13350ca), were not installed when they were measured on the M5 Pro; cg33 (patches 0001 to 0043, sha256 b81e39a0..., UUID ABEE95D4-...) has been the installed build since 2026-11-14, on the Mac Studio below. 0041 changes where the
 automatic thread count starts its search, 0042 packs the Debye, Lorentz and Drude line hooks and 0043 hardens that code (items
 23 and 24 below). Their snapshots cg33a to cg33d gave stock's results in every check of 2026-11-13, on the M5 Pro under
 macOS 27.2.1 and with the Mac loaded by other programs, so only the verdicts count: `scripts/ade_check/ade_check2.py`, which
@@ -212,7 +212,7 @@ runs notch x3 9 to 13 % slower. The tiled sweep of patch 0040 led the fused swee
 `results/m5pro_tiled_sweep_2026-11-12.txt` and in the paper's section on the M5 Pro; the scripts are in
 `scripts/m5pro/`.
 
-**A later CPU build (patches 0041 to 0043, the fork's head 13350ca; not installed), on the M5 Pro, 2026-11-12 and
+**A later CPU build (patches 0041 to 0043, the fork's head 13350ca; not installed then, installed on the Mac Studio since 2026-11-14), on the M5 Pro, 2026-11-12 and
 2026-11-13** (`results/cpu_items_cg33_2026-11-13.txt`; a set of its own; every run of the fork's builds in these comparisons gave its reference run's probes; the other
 processes at 20 to 37 % of one core in the first night, in the second at 17 to 29 % in the GCPW runs; the figures are medians
 of paired interleaved rounds). The automatic thread count (patch 0041, 4 rounds) gave 0.97 to 1.00 of 15 fixed threads on the
@@ -264,6 +264,51 @@ and 2460 / 1338 with), so the rates stand; the identity of the fork's engine on 
 the 101-line runs of `scripts/ade_check/ade_check2.py`. The table above and the runs of 2026-11-13 use 101 and 201 lines. The
 finding has not been reported upstream yet.
 
+**A third machine: an M5 Max Mac Studio (a set of its own).** On 2026-11-15 the fork was measured on a Mac Studio with an
+Apple M5 Max (6 "Super" cores sharing one L2 of 16 MiB, 12 "Performance" cores with L2 of 8 MiB, a 32-core GPU, 36 GB, macOS
+27.0): stock v0.37.0, cg31 and cg33 (patches 0001 to 0043, the fork's head 13350ca, installed on this machine since
+2026-11-14), the same library files as on the other machines, in one 94-minute slot of a quiet block with no other
+measured job beside it. The numbers are compared only with each other, never with the M5's or the M5 Pro's. Four paired
+interleaved rounds per model (`bench/abtest.py`; the other processes at 0.9 to 1.6 cores beside the speed table, 0.2 to 0.5
+elsewhere), medians; stock's best is from its own stage of three rounds at 1, 2, 3, 4, 6, 8, 12 and 18 threads, and the gain
+is cg33's rate at 18 threads over stock's best in the same rounds:
+
+| model (cells) | stock v0.37.0, MC/s (threads) | fdtdKit CPU, MC/s (18 threads) | gain | fdtdKit CPU, MC/s (automatic count) | fdtdKit GPU, MC/s | GPU / CPU |
+|---|---|---|---|---|---|---|
+| GCPW line (0.24 M) | 304 (4) | 4942 | 16.3x | 4743 | 6571 | 1.33x |
+| vertical SMA launch (1.07 M) | 492 (6) | 5340 | 10.9x | 5115 | 6386 | 1.20x |
+| notch filter tutorial (0.27 M) | 353 (4) | 5054 | 14.2x | 4760 | 7845 | 1.54x |
+| notch filter x3 (5.25 M) | 1264 (12) | 6225 | 4.98x | 6088 | 11567 | 1.86x |
+| patch antenna tutorial (0.10 M) | 278 (2) | 2553 | 9.2x | 2641 | 3113 | 1.22x |
+| patch antenna x5 (7.86 M) | 1583 (8) | 4743 | 3.08x | 4646 | 10156 | 2.14x |
+
+(The SMA launch row is the 1.07 M-cell mesh; GPU / CPU is the Metal diamond engine over the CPU
+engine at 18 threads. Every CPU run is identical to stock bit for bit; the GPU runs differ by at most 2.2e-7 relative.) The
+patch tutorial runs fastest on the CPU at 6 threads (2972 MC/s, 1.164 times its rate at 18). Stock slows down with threads
+on every model, past 2 to 12; the GCPW line runs 304 MC/s on stock at 4 threads and 71 at 18.
+
+End to end through the author's toolkit at its defaults (wall time of `FDTD.Run`, one run each; stock at the toolkit's
+fallback thread counts, 4 for the GCPW line and 8 for the SMA launch):
+
+| board | stock v0.37.0 | fdtdKit CPU (cg33) | fdtdKit GPU (cg33) |
+|---|---|---|---|
+| GCPW line | 76.0 s (94217 steps, to max_time) | 1.9 s (34300 steps, probe end), 40x | 1.6 s (34300 steps), 47x |
+| vertical SMA launch | 262.0 s (118475 steps, to max_time) | 8.7 s (50320 steps, probe end), 30x | 7.0 s (50320 steps), 37x |
+
+On the M5 Max the two boards therefore finish end to end 30 to 47 times sooner than on stock v0.37.0 at the toolkit's
+defaults, and the factor has three parts: stock has no probe-end criterion and runs to the full time (2.7 and 2.4 times the
+steps), the faster engine supplies the rest of the CPU factor, and the largest factors are the opt-in Metal engine's (the mesh
+is the same in every run, the SMA launch's with the toolkit's 0.05 mm floor). In the thread sweep the CPU engine scales to all 18
+cores on the GCPW line and on notch x3 (the GCPW line 600 MC/s at 1 thread,
+4931 at 18; notch x3 731 and 6351), whereas patch x5 peaks at 10 threads (5082), dips to 4351 at 12 and reaches 4868 at 18; the
+engine's own thread search (patch 0041) settled on 18 threads in all three rounds on these three models, which on patch x5
+is 4801 MC/s, 0.94 of the 10-thread peak (the cause is not investigated). The automatic count ran 0.94 to 0.98 of 18
+fixed threads (1.04 on the patch tutorial); cg31's search, which started at the six Super cores, 0.70 to 0.86. STREAM
+Triad gives 132, 324, 286 and 321 GB/s at 1, 6, 12 and 18 threads. The tiled sweep of patch 0040 led the fused sweep only
+on a PEC box of 16.8 M cells (1.33x) and stays opt-in; the allocation-placement valley is there under macOS 27.0 (the GCPW
+line at one thread 606 MC/s, 201 without the stagger). All of it is in `results/studio_speed_set_2026-11-15.txt` and in
+the paper's section on the third machine; the scripts are in `scripts/studio/`.
+
 **Scaling out (planned, not measured).** On large grids the memory bus of one machine bounds the cell
 rate (on the M5 Pro only the largest grid measured, a PEC box of 16.8 M cells, was held back by it: the fused sweep scales
 to 15 threads on every other model and reaches 5602 MC/s at 15 threads on a box of 2.95 M cells), and the way to scale
@@ -281,17 +326,17 @@ domain-decomposed engine that openEMS does not have today (see `ROADMAP.md`).
 | `patches/csxcad/` | one patch on CSXCAD v0.7.0 (material lookups during operator setup), under LGPL-3.0-or-later like CSXCAD (`COPYING.LESSER`) |
 | `bench/` | the harness: `bench.py` (in-process runs with a fixed step count, S-parameter comparison; the GPU engines and `OPENEMS_FTZ` runs are compared but marked tolerant), `check.sh` (six models, five thread settings, bit-identity against stock), `abtest.py` (paired interleaved rounds, with waits for a quiet Mac), `usage.py` (the other processes' CPU and GPU use during each run), the models (`models.py`: the six benchmark models and two that only the harness runs, not `emskit fdtd`: `cube`, the free-space cube of the common benchmarks, in the records of 2026-11-10 and 2026-11-11, and `lbox`, the benchmark model of luikore's engine, in the records of 2026-11-11) |
 | `bench/validation/` | a validation suite against closed-form references (dispersive slabs, a rectangular and a cylindrical cavity, a WR-90 guide, a microstrip line), with same-build engine comparisons on the dispersive slabs; its runs (`results/validation_*`): cg18, cg29 and the fresh build of 2026-11-07 of the patches published then, 0001 to 0027 (`validation_pub29_*`), 15 of 15 each on the Mac, each with the multithreaded engine at 4 threads and with the default engine and thread count (`validation_cg29pre_*` is an earlier build of cg29's topics); the Metal diamond engine 15 of 15 on cg23 and on cg27 (its slabs equal to the basic engine; the cylindrical cavity runs on the cylindrical CPU engine); snapshot cg17 (patches 0001 to 0005) 15 of 15 with its defaults and at 8 threads (two runs made outside the project's log); stock v0.37.0 15 of 15 on the Mac and 12 of 12 on a Linux x86_64 VM (the suite's earlier version, without the engine comparisons); and two negative controls that fail their Debye checks as they should, a stock build with the Debye hooks disabled on the VM (2 of 3 checks pass) and a build of patches 0001 to 0004 (the Debye bug) on the Mac (4 of 6 pass). See `bench/validation/README.md` |
-| `results/` | the benchmark tables of the project (`MODEL_sSCALE_nSTEPS_SNAPSHOT.txt`; `*_cg18.txt`, `*_cg29.txt` and `*_pub29.txt` = the full checks of cg18, cg29 and a fresh build of the patches published on 2026-11-07, 0001 to 0027 (`fresh_build_pub29_2026-11-07.txt`), `*_cg2Ngpu.txt` and `*_pub29gpu.txt` = the Metal diamond engine of cg20 to cg29 and of that build against the multithreaded engine with `OPENEMS_FTZ=1` (cg20 to cg22 with the base's GPU engine as well), `*_base.txt` = the fork's base against stock), the speed table above (`speed_cg29_2026-11-05.txt`), the CPU items of cg29 with their paired runs and the comparison with cg18 (`cpu_items_cg29_2026-11-05.txt`), the Metal diamond engine's snapshots and checks (`diamond_engine_*`, `diamond_check_*`, `diamond_sweep_cg21_2026-11-04.txt`), the Swift prototype's diamond mode (`diamond_swift_2026-11-04.txt`), the fused unblocked Metal sweep (`fused_sweep_k1_2026-11-04.txt`), the GPU against the CPU by grid size (`gpu_crossover_cg29_2026-11-05.txt`), other openEMS builds run beside fdtdKit (`others_2026-11-04/`), four common benchmarks on cg29 (upstream's `benchmark/bench.py`, STREAM, a free-space cube, the Mie sphere; `common_benchmarks_2026-11-10.txt`), the Metal diamond engine's items of cg31 with the final table against cg29, the closed-cylinder check and the install checks (`metal_engine_cg31_2026-11-11.txt`), luikore's Metal engine, upstream master and cg31 on luikore's benchmark model (`engines_on_luikore_model_2026-11-11.txt`; with cg29 the night before, `luikore_compare_cg29_2026-11-11.txt`), the test of a shorter excitation pulse on the two boards (`pulse_test_2026-11-11.txt`), the opt-in tiled sweep of the multithreaded engine (patch 0040) against the fused sweep, with its checks and its timing on the M5 (`tiled_sweep_cg32_2026-11-11.txt`), the fork on a second machine, an M5 Pro Mac mini, a set of its own (bandwidth, the kernels, the thread sweep, the speed table, the valley, the switches and the two boards end to end, `m5pro_speed_set_2026-11-12.txt`; the tiled sweep there, `m5pro_tiled_sweep_2026-11-12.txt`), the CPU items of patches 0041 to 0043 on the M5 Pro with their identity checks, the corrected stock baseline and master's `cpu` engine beside the fork (`cpu_items_cg33_2026-11-13.txt`), `summary.json` (the best speed per model and snapshot, from every `MODEL_sSCALE_nSTEPS_SNAPSHOT.txt` table in `results/` itself up to pub29; the tables in `others_2026-11-04/` are not in it), the end-to-end runs (`rfsim_e2e_2026-11-03.txt` of cg18 and stock, `rfsim_e2e_gpu_2026-11-04.txt` of cg23 on the GPU, `rfsim_e2e_cg29_2026-11-05.txt`), the mesh sweep, the valley sweeps and the allocator placement test (`cache_valley_*`), the GCC/clang kernel comparison and the loop counts (`kernel_*`), the correctness checks of cg18, the memory and time-step checks, the initial optimisation review, the validation runs. The `*_cg17.txt`, `*_cg19.txt`, `*_cg21.txt`, `*_cg22.txt`, `*_cg2Ngpu.txt` and `*_pub29*.txt` tables were bit-identity checks, many of them on a loaded machine, and the speeds in the `*_cg29.txt` tables are the faster of two unpaired runs of a bit-identity check; none is a speed comparison (`*_cg29pre.*` = the checks of an earlier build of cg29's topics). In `summary.json` the entry of a `*_cg2Ngpu.txt` or `*_pub29gpu.txt` table is its multithreaded row with `OPENEMS_FTZ=1`. The files that the records place in the scratchpad were the assistant session's working files and are not published |
-| `scripts/` | the check and experiment scripts: standalone kernel benchmarks (with the GCC/clang comparison and the loop counts), the valley box, sweep and allocator placement test, cylindrical-multigrid check, Debye-material regression check, the Metal diamond engine's bit-identity check (`checks/diamond_check.sh` with its box and compare scripts), setup/nf2ff phase timing, probe-end check, z-padding check, SMA mesh sweep, end-to-end runs (`e2e/run_one.py` runs another engine with `E2E_ENGINE`, for example `metal-diamond`), the GPU-against-CPU size sweep (`gpu_crossover/`), the runs of other openEMS builds beside fdtdKit (`others/run_others.sh`), the common benchmarks (`common_bench/`), the runs on luikore's benchmark model (`luikore_compare/`), the closed-cylinder check (`cylinder_closed/`), the pulse test (`pulse/`), the tiled sweep's check and timing scripts (`tiled_sweep/`), the stages of the M5 Pro set and the slots of 2026-11-12 and 2026-11-13 (`m5pro/`, with `m5pro/master/`: the build of upstream master and the wrappers that let `bench.py` run it beside the fork), the identity check of the packed dispersive hooks (`ade_check/`), memory and time-step checks, HDF5 compare; `scripts/README.md` lists them |
+| `results/` | the benchmark tables of the project (`MODEL_sSCALE_nSTEPS_SNAPSHOT.txt`; `*_cg18.txt`, `*_cg29.txt` and `*_pub29.txt` = the full checks of cg18, cg29 and a fresh build of the patches published on 2026-11-07, 0001 to 0027 (`fresh_build_pub29_2026-11-07.txt`), `*_cg2Ngpu.txt` and `*_pub29gpu.txt` = the Metal diamond engine of cg20 to cg29 and of that build against the multithreaded engine with `OPENEMS_FTZ=1` (cg20 to cg22 with the base's GPU engine as well), `*_base.txt` = the fork's base against stock), the speed table above (`speed_cg29_2026-11-05.txt`), the CPU items of cg29 with their paired runs and the comparison with cg18 (`cpu_items_cg29_2026-11-05.txt`), the Metal diamond engine's snapshots and checks (`diamond_engine_*`, `diamond_check_*`, `diamond_sweep_cg21_2026-11-04.txt`), the Swift prototype's diamond mode (`diamond_swift_2026-11-04.txt`), the fused unblocked Metal sweep (`fused_sweep_k1_2026-11-04.txt`), the GPU against the CPU by grid size (`gpu_crossover_cg29_2026-11-05.txt`), other openEMS builds run beside fdtdKit (`others_2026-11-04/`), four common benchmarks on cg29 (upstream's `benchmark/bench.py`, STREAM, a free-space cube, the Mie sphere; `common_benchmarks_2026-11-10.txt`), the Metal diamond engine's items of cg31 with the final table against cg29, the closed-cylinder check and the install checks (`metal_engine_cg31_2026-11-11.txt`), luikore's Metal engine, upstream master and cg31 on luikore's benchmark model (`engines_on_luikore_model_2026-11-11.txt`; with cg29 the night before, `luikore_compare_cg29_2026-11-11.txt`), the test of a shorter excitation pulse on the two boards (`pulse_test_2026-11-11.txt`), the opt-in tiled sweep of the multithreaded engine (patch 0040) against the fused sweep, with its checks and its timing on the M5 (`tiled_sweep_cg32_2026-11-11.txt`), the fork on a second machine, an M5 Pro Mac mini, a set of its own (bandwidth, the kernels, the thread sweep, the speed table, the valley, the switches and the two boards end to end, `m5pro_speed_set_2026-11-12.txt`; the tiled sweep there, `m5pro_tiled_sweep_2026-11-12.txt`), the CPU items of patches 0041 to 0043 on the M5 Pro with their identity checks, the corrected stock baseline and master's `cpu` engine beside the fork (`cpu_items_cg33_2026-11-13.txt`), the fork on a third machine, an M5 Max Mac Studio, a set of its own (the speed table, the stock baseline at eight thread counts, bandwidth, the thread sweep, the boards end to end, the tiled sweep, the valley and the switches, `studio_speed_set_2026-11-15.txt`), `summary.json` (the best speed per model and snapshot, from every `MODEL_sSCALE_nSTEPS_SNAPSHOT.txt` table in `results/` itself up to pub29; the tables in `others_2026-11-04/` are not in it), the end-to-end runs (`rfsim_e2e_2026-11-03.txt` of cg18 and stock, `rfsim_e2e_gpu_2026-11-04.txt` of cg23 on the GPU, `rfsim_e2e_cg29_2026-11-05.txt`), the mesh sweep, the valley sweeps and the allocator placement test (`cache_valley_*`), the GCC/clang kernel comparison and the loop counts (`kernel_*`), the correctness checks of cg18, the memory and time-step checks, the initial optimisation review, the validation runs. The `*_cg17.txt`, `*_cg19.txt`, `*_cg21.txt`, `*_cg22.txt`, `*_cg2Ngpu.txt` and `*_pub29*.txt` tables were bit-identity checks, many of them on a loaded machine, and the speeds in the `*_cg29.txt` tables are the faster of two unpaired runs of a bit-identity check; none is a speed comparison (`*_cg29pre.*` = the checks of an earlier build of cg29's topics). In `summary.json` the entry of a `*_cg2Ngpu.txt` or `*_pub29gpu.txt` table is its multithreaded row with `OPENEMS_FTZ=1`. The files that the records place in the scratchpad were the assistant session's working files and are not published |
+| `scripts/` | the check and experiment scripts: standalone kernel benchmarks (with the GCC/clang comparison and the loop counts), the valley box, sweep and allocator placement test, cylindrical-multigrid check, Debye-material regression check, the Metal diamond engine's bit-identity check (`checks/diamond_check.sh` with its box and compare scripts), setup/nf2ff phase timing, probe-end check, z-padding check, SMA mesh sweep, end-to-end runs (`e2e/run_one.py` runs another engine with `E2E_ENGINE`, for example `metal-diamond`), the GPU-against-CPU size sweep (`gpu_crossover/`), the runs of other openEMS builds beside fdtdKit (`others/run_others.sh`), the common benchmarks (`common_bench/`), the runs on luikore's benchmark model (`luikore_compare/`), the closed-cylinder check (`cylinder_closed/`), the pulse test (`pulse/`), the tiled sweep's check and timing scripts (`tiled_sweep/`), the stages of the M5 Max set (`studio/`), the stages of the M5 Pro set and the slots of 2026-11-12 and 2026-11-13 (`m5pro/`, with `m5pro/master/`: the build of upstream master and the wrappers that let `bench.py` run it beside the fork), the identity check of the packed dispersive hooks (`ade_check/`), memory and time-step checks, HDF5 compare; `scripts/README.md` lists them |
 | `swift_engine/` | a Swift + Metal FDTD kernel that runs an exported openEMS operator; bit-identical to the CPU engines on a 41^3 box, and on a 121^3 box to the SSE-based engines (sse, sse-compressed, multithreaded) with `OPENEMS_FTZ=1`, which the basic engine ignores (project log). Its diamond-blocked mode (`--diamond K`, 2026-11-04, the prototype of the Metal diamond engine) gives the same bits as cg18's multithreaded engine (with `OPENEMS_FTZ=1` on the two larger boxes) on 41^3, 121^3 and 201^3 boxes at every K tried (`results/diamond_swift_2026-11-04.txt`) |
 | `Package.swift`, `Sources/`, `Tests/` | the EMSKit Swift package: `Sources/fdtdKit` and `Sources/emskit-cli` make fdtdKit's command line `emskit fdtd` (section "Command line" below; with the Python launcher `Sources/fdtdKit/Python/fdtdkit_run.py`), `Tests/fdtdKitTests` holds its tests; the other kits add their own targets to the same package. Written on 2026-11-05 (the core modules, the first commands and the Python launcher) and 2026-11-06 (the remaining commands and the tests); built, tested and acceptance-run on 2026-11-06 (`Docs/fdtdKit/PLAN.md`, section 16) |
 | `BUILD.md` | how to build, install, verify and revert; the knobs; what differs from upstream |
-| `ROADMAP.md` | planned work: validation, upstreaming, workflow and solver features, the cluster outline, the engines' open items, version 2 of the command line; what was done since its first version, the command line 0.1.0, the build of 2026-11-11 (cg31), the tiled sweep of patch 0040 and the set measured on an M5 Pro among it |
+| `ROADMAP.md` | planned work: validation, upstreaming, workflow and solver features, the cluster outline, the engines' open items, version 2 of the command line; what was done since its first version, the command line 0.1.0, the build of 2026-11-11 (cg31), the tiled sweep of patch 0040 and the sets measured on an M5 Pro and an M5 Max among it |
 | `Docs/fdtdKit/PLAN.md` | the plan of the command line: its phases and acceptance runs, the facts it rests on, the commands, library identity, the child environment and the knobs, the JSON output and exit codes, load recording, stopping, distribution over several Macs, tests, and its log |
 
 The fork is also kept as two git branches with the same changes as commits: the openEMS fork's branch
 [`speed-m5-gpu`](https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu) holds the 43 commits of
-`patches/openems/` on 7bb294f (head 13350ca; the installed build cg31 is its commit ff2538a, the 39th, four before the head),
+`patches/openems/` on 7bb294f (head 13350ca, the installed build cg33; the build installed until 2026-11-14, cg31, is its commit ff2538a, the 39th, four before the head),
 and the CSXCAD fork's branch
 [`speed-m5`](https://github.com/anmartinez1256/CSXCAD/tree/speed-m5) the one commit of `patches/csxcad/` on v0.7.0.
 
@@ -314,7 +359,10 @@ evening, under macOS 27.2.1 (245 run, the 14 smoke tests skipped); the smoke and
 2026-11-13 the registry grew to 43 names (`OPENEMS_TUNE_START`, `OPENEMS_ADE_PACKED`; patches 0041 and 0042), with one more
 unit test and the library row of snapshot cg33: 260 tests in 28 suites with the smoke runs. That day the 246 unit tests
 passed, and so did the three smoke tests that start no simulation (version, the library identities of `info`, refusals
-and plans); the other eleven smoke tests and the acceptance runs were not repeated.
+and plans); the other eleven smoke tests and the acceptance runs were not repeated that day. On 2026-11-14, on the Mac Studio (an Apple M5 Max,
+macOS 27.0, the machine loaded by other programs), the command line was rebuilt from clean and all 260 tests in 28 suites passed,
+the 14 smoke tests among them, so the eleven that start simulations passed there; cg33 was installed the same day, and the
+installed library is the one the smoke tests' install row names (sha256 b81e39a0..., UUID ABEE95D4-...).
 A cloud code review of 18 of the package's 31 source files found one bug and five minor issues on 2026-11-08; all
 six are fixed (`CHANGELOG.md`, 2026-11-09). A
 second review of all 31 files on 2026-11-09 raised 28 findings; its confirmed ones are fixed or listed
@@ -407,8 +455,8 @@ interrupted.
 
 Items 1 to 11 are in patches 0001 to 0006 (cg18), item 12 in patches 0007 to 0016 (cg19 to cg28), items 13 to 18 in
 patches 0017 to 0027 (cg29), items 19 to 21 in patches 0028 to 0039 (cg31, the build installed on the author's Mac
-since 2026-11-11, which has these twenty-one), item 22 in patch 0040 and items 23 and 24 in patches 0041 to 0043 (the
-fork's head 13350ca; not installed).
+from 2026-11-11 to 2026-11-14, which has these twenty-one), item 22 in patch 0040 and items 23 and 24 in patches 0041 to 0043 (the
+fork's head 13350ca, snapshot cg33, installed on the author's Mac since 2026-11-14).
 
 1. Spin barriers and a per-extension hook plan: stock passes 2 + 6N condition-variable barriers per timestep for N extensions, whether or not an extension uses the hook; the fork passes a handful.
 2. A rewritten inner loop: 94 to 41 instructions per loop iteration of the voltage update (95 to 42 for the currents), which updates the three field components of four cells (counted in the disassembly of the stock and the cg18 library, `results/kernel_loop_instructions_2026-11-03.txt`); in a standalone copy of the loops, on one thread, GCC 16 runs the stock loop 1.16 to 1.39x faster than Apple clang and the rewrite at about the same speed (`results/kernel_gcc_vs_clang_2026-11-03.txt`).
@@ -449,7 +497,8 @@ materials' pass and the kernel constants have none). The operator setup uses eve
 
 ## Status and licence
 
-The fork is used daily by the author (as cg31, patches 0001 to 0039, since 2026-11-11, as cg29, patches 0001 to 0027,
+The fork is used daily by the author (as cg33, patches 0001 to 0043, since 2026-11-14, as cg31, patches 0001 to 0039,
+from 2026-11-11 to 2026-11-14, as cg29, patches 0001 to 0027,
 from 2026-11-06 to 2026-11-11, and as cg18, patches 0001 to 0006, from 2026-11-04 to 2026-11-06; the author's toolkit
 runs it with no change on its side, on the CPU engine with the automatic thread count, and does not select the Metal
 diamond engine, which is in the installed build but opt-in); it has not been submitted upstream. The patches apply

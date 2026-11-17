@@ -111,7 +111,7 @@ v0.37.0 binding (`openEMS.pyx` beside the module in the user site-packages) and 
 | F17 | Formats: bench rows and summaries bench.py:338-382 (`same` at :369, tolerance at :327); abtest lines abtest.py:49-114 (`# summary` at :95, medians over all runs at :99-100, the record appended only at the end, :104-106); check.sh's final lines :40, :55, :59, :61; debye_check.sh:58-66; diamond_check.sh:32-61 | the parsers use exactly these formats (section 4.4) |
 | F18 | openEMS's signal handling. SetupFDTD installs a force-exit SIGINT handler (openems.cpp:1369; tools/signal.cpp:113-121, `std::_Exit(128 + signal)`). RunFDTD installs a graceful one (:1696): the first SIGINT stops the time loop at its next check (CheckAbortCond, :1630-1647), and the handler then switches to force exit; the original handler comes back at :1945. The binding runs setup and run without the GIL (openEMS.pyx:694, :700), so a Python signal handler waits until `FDTD.Run` returns. `SetAbort(True)` (pyx:703; openems.h:105) sets m_Abort, which only the constructor resets (openems.cpp:101) and CheckAbortCond tests first; a file named ABORT in the simulation folder does the same. After an abort `FDTD.Run` returns normally and the script goes on (run_one.py:44-56 would post-process the truncated run) | stop requests use SetAbort through the launcher, never SIGINT (section 9) |
 | F19 | The installed binding has the package version 0.37.0. Its `openEMS.pyx` has `opt = ""` at :595-606, and at :679-685 it takes the absolute path of sim_path and changes into it, never back. The fork's binding (`python/openEMS/openEMS.pyx`) skips False options instead. Boost parses options case-insensitively (tools/global.cpp:130-135), and a key given in two spellings raises `option '--numThreads' cannot be specified more than once` | the shim normalises keys, records simPath before the call, and evaluates `optionsLost` only for the legacy binding |
-| F20 | LC_UUID survives `cmake --install`; sha256 does not. The installed libopenEMS (UUID 24C8A7F2-...) was snap/cg18's build until 2026-11-06; from then to 2026-11-11 it was snap/cg29's (UUID 40BC8CFF-...), copied with the prefix's install name and rpath and re-signed, which kept the UUID and changed the sha256 (section 16); since 2026-11-11 it is snap/cg31's (UUID 499C07FD-...), again in other bytes than the snapshot's file (sha256 23630ed6... against 644198c2..., section 5.1). On 2026-11-06 the installed libCSXCAD and libnf2ff had the UUIDs of cg18, cg28 and cg29, and the bytes of cg29's copies (info named more snapshots for both that day, section 5.1); patches 0028 to 0040 change no source file of either. build-split = cg29 (40BC8CFF-...); build-gpu (9A6EDCEE-...) matches no snapshot. No two complete snapshots share a libopenEMS UUID. Stock: libopenEMS 7eaaee52 (UUID B1A89DA1-...), libCSXCAD 9f4f419f with 561,096 B (the fork copies have 561,320 B and the same string v0.7.0), libnf2ff 28aae278 with 318,936 B (fork 322,016 or 322,024 B) | identity is per file, by sha256 and UUID; stock is judged on all three files |
+| F20 | LC_UUID survives `cmake --install`; sha256 does not. The installed libopenEMS (UUID 24C8A7F2-...) was snap/cg18's build until 2026-11-06; from then to 2026-11-11 it was snap/cg29's (UUID 40BC8CFF-...), copied with the prefix's install name and rpath and re-signed, which kept the UUID and changed the sha256 (section 16); from 2026-11-11 to 2026-11-14 it was snap/cg31's (UUID 499C07FD-...), again in other bytes than the snapshot's file (sha256 23630ed6... against 644198c2..., section 5.1); since 2026-11-14 it is snap/cg33's (UUID ABEE95D4-..., sha256 b81e39a0... against the snapshot's 3e7095fd..., section 5.1), installed on the Mac Studio. On 2026-11-06 the installed libCSXCAD and libnf2ff had the UUIDs of cg18, cg28 and cg29, and the bytes of cg29's copies (info named more snapshots for both that day, section 5.1); patches 0028 to 0040 change no source file of either. build-split = cg29 (40BC8CFF-...); build-gpu (9A6EDCEE-...) matches no snapshot. No two complete snapshots share a libopenEMS UUID. Stock: libopenEMS 7eaaee52 (UUID B1A89DA1-...), libCSXCAD 9f4f419f with 561,096 B (the fork copies have 561,320 B and the same string v0.7.0), libnf2ff 28aae278 with 318,936 B (fork 322,016 or 322,024 B) | identity is per file, by sha256 and UUID; stock is judged on all three files |
 | F21 | The validation suite writes the bare token NaN for a crashed case (run_validation.py:79, and :102 dumps with NaN allowed). common.py:56-67 points fd 1 at a per-run log around `fdtd.Run`. The report prints `Case times (s)` (:96) | tool JSON is read as JSON5; the launcher's markers go to a saved fd |
 | F22 | diamond_check.sh always tests the tiling tuner (:53-55). `timesteps of tuning` and `OPENEMS_DIAMOND_TUNE` occur only in cg28 and cg29 (and in the builds of 2026-11-11, up to cg31 and in cg32d, whose tuner has seven tilings since patch 0038), although cg19 to cg27 contain metal-diamond, `OPENEMS_EXPORT_FIELDS` and `OPENEMS_FTZ`. The engine reads TILE with `sscanf("%u%*[,:]%u")` and checks only M >= 2K-1 (engine_metal_diamond.mm:1270), so V may be 0; the script's odd case is `OPENEMS_DIAMOND_TILE=7,0` (:48) | the diamond gate requires the tuner; the TILE rules are in section 6.2 |
 | F23 | The eight `=1` switches act on any value other than empty or 0 since patch 0006; up to patch 0005 any value, 0 included, switched them on (BUILD.md section 7). `bench.is_tolerant` treats '0' as off (bench.py:91) | those switches accept only `1` |
@@ -125,7 +125,7 @@ holds (its UUID matches no snapshot, F20), so what `cmake --install build-gpu` w
 python3.14 keeps DYLD and sees the user-site modules (the probe decides at run time); the exception type of an
 unknown openEMS option; whether the installed (cg18) `bin/openEMS` runs on cg29 libraries through DYLD (XML runs are
 deferred). From 2026-11-06 to 2026-11-11 the installed libopenEMS was cg29's, while `bin/openEMS` stayed the one
-installed with cg18 (section 16); since 2026-11-11 the installed libopenEMS is cg31's (F20).
+installed with cg18 (section 16); from 2026-11-11 to 2026-11-14 the installed libopenEMS was cg31's, and since 2026-11-14 it is cg33's, installed on the Mac Studio (F20).
 
 ## 4. Commands
 
@@ -513,17 +513,18 @@ run 2 checks the stock and cg29 rows of the author's snapshots without that guar
 | installed until 2026-11-06 | -24-g087ce9e | 15 + 1 | | 819179a2... | 24C8A7F2-... (sameBuild cg18) |
 | installed 2026-11-06 to 2026-11-11 | -44-g074a687 | 29 + 1 | | 0d81372e... | 40BC8CFF-... (sameBuild cg29) |
 | cg31 | -57-gff2538a | 37 + 1 | | 644198c2... | 499C07FD-... |
-| installed since 2026-11-11 | -57-gff2538a | 37 + 1 | | 23630ed6... | 499C07FD-... (sameBuild cg31) |
+| installed 2026-11-11 to 2026-11-14 | -57-gff2538a | 37 + 1 | | 23630ed6... | 499C07FD-... (sameBuild cg31) |
 | cg32d | -57-gff2538a (cg31's string) | 40 + 1 | | 72e6d7ef... | 530052B0-... |
 | cg33 | -61-g13350ca | 42 + 1 | | 3e7095fd... | ABEE95D4-... |
+| installed since 2026-11-14 | -61-g13350ca | 42 + 1 | | b81e39a0... | ABEE95D4-... (sameBuild cg33) |
 | build-split | | | | | 40BC8CFF-... (sameBuild cg29) |
 | build-gpu | -26-gcd80d8c | | | | 9A6EDCEE-... (none) |
 
 The knob column counts the registry names in libopenEMS, plus `OPENEMS_NF2FF_LEGACY` in libnf2ff; the record's
 `knobs[]` holds both, so it lists 16 names for cg18 (and the installed library until 2026-11-06), 21 for cg19, 30
-for cg29 (and the installed library from 2026-11-06 to 2026-11-11), 38 for cg31 (and the installed library since
-2026-11-11): the eight more are the `OPENEMS_DIAMOND_*` switches of patches 0029 to 0038 (section 6.2); and 41 for
-cg32d: the three more are the `OPENEMS_TBLOCK` names of patch 0040, the tiled sweep; and 42 for cg33: the two more are
+for cg29 (and the installed library from 2026-11-06 to 2026-11-11), 38 for cg31 (and the installed library from
+2026-11-11 to 2026-11-14): the eight more are the `OPENEMS_DIAMOND_*` switches of patches 0029 to 0038 (section 6.2); and 41 for
+cg32d: the three more are the `OPENEMS_TBLOCK` names of patch 0040, the tiled sweep; and 42 for cg33 (and the installed library since 2026-11-14): the two more are
 `OPENEMS_TUNE_START` (patch 0041) and `OPENEMS_ADE_PACKED` (patch 0042), so that BUILD.md's table has 43 names with the
 one in libnf2ff. The
 installed libCSXCAD has sameBuild cg9 to cg29 and cg29pre, and sameBytes cg20 to cg29 and cg29pre; the
@@ -531,14 +532,14 @@ installed libnf2ff has sameBuild cg18 to cg29 and cg29pre, and sameBytes cg20 to
 what `.build/release/emskit fdtd info` printed on 2026-11-06 (section 16), before the install of cg29, which left
 libCSXCAD and libnf2ff as they were; F20 names only some of these snapshots. The row "installed 2026-11-06 to
 2026-11-11" is what `info` printed after that install (section 16): snap/cg29's build with the prefix's install name
-and rpath, re-signed, so other bytes than snap/cg29's file. The rows "cg31" and "installed since 2026-11-11" are the
+and rpath, re-signed, so other bytes than snap/cg29's file. The rows "cg31" and "installed 2026-11-11 to 2026-11-14" are the
 build of patches 0001 to 0039 (commit ff2538a), installed on 2026-11-11: one build (UUID 499C07FD-...), the
 installed file again in other bytes than snap/cg31's. The row "cg32d" is the build of patches 0001 to 0040 (0ef186b, the
-opt-in tiled sweep), which is not installed. It was built in the folder configured for
+opt-in tiled sweep), which was never installed on its own. It was built in the folder configured for
 cg31, so it reports cg31's version string, not v0.37.0-58-g0ef186b: its sha256, its UUID and its three knob names
 more tell the two apart, the version string does not (F7). The row "cg33" is the build of patches 0001 to 0043 (the fork's
-head 13350ca), not installed; it reports its own commit, and its sha256, UUID and two knob names more tell it from cg32d. The tests check the installed row whose sha256 the installed
-libopenEMS has (819179a2... until 2026-11-06, 0d81372e... until 2026-11-11, 23630ed6... since) and skip any other
+head 13350ca); it reports its own commit, and its sha256, UUID and two knob names more tell it from cg32d. It was installed on the Mac Studio on 2026-11-14: the row "installed since 2026-11-14" is that file: snap/cg33's build (same UUID) in other bytes than the snapshot's file, as with the earlier installs. The tests check the installed row whose sha256 the installed
+libopenEMS has (819179a2... until 2026-11-06, 0d81372e... until 2026-11-11, 23630ed6... until 2026-11-14, b81e39a0... since) and skip any other
 install: LibraryScanTests checks the row, smoke run 2 its sameBuild (section 12).
 
 ### 5.2 The stock identity of `check`
@@ -1953,6 +1954,20 @@ was made, so these hashes name commits of that history (section 13).
   - The counts of section 12 are 260 tests in 28 suites with the smoke runs (run on 2026-11-13: the 246 unit tests and the three smoke tests that start no simulation, all passing; the other eleven smoke tests were not repeated). The checks of snapshot cg33d (`scripts/ade_check/ade_check2.py`, `check cg33d --lite` against
     stock, all identical, 18 of 18 rows, the Debye check, `diamond-check` 72 of 72 and the validation suite) are in
     `results/cpu_items_cg33_2026-11-13.txt`.
+
+- **2026-11-14: cg33 installed on the Mac Studio; the smoke tests that start simulations passed.** The project moved to a
+  Mac Studio (Mac17,14, Apple M5 Max, 6 Super + 12 Performance cores, 36 GB, macOS 27.0). The command line was rebuilt
+  from clean there and its 260 tests in 28 suites passed, the 14 smoke tests among them: the eleven smoke tests that
+  start simulations, which the entry of 2026-11-13 lists as not repeated, passed that day (the machine was loaded by
+  other programs, so only the verdicts count). For the then-installed build cg31 and for cg33 the Debye check passed,
+  `check --lite` was all identical to stock (18 of 18 rows each), the validation suite passed 15 of 15 (also on
+  `metal-diamond`), `diamond-check` gave 72 of 72, and both boards ran end to end with the stop steps of the other
+  machines (34300 and 50320). cg33 was then installed as the author's working build (the library file: sha256 prefix
+  b81e39a0, UUID prefix ABEE95D4, version v0.37.0-61-g13350ca) and the same checks passed from the install. In
+  `Tests/`, `LibraryTests.swift` (installedRows) and `SmokeTests.swift` (Smoke.installs) have the row of that file; the
+  counts stay 260 tests in 28 suites. The speed set of the machine is in `results/studio_speed_set_2026-11-15.txt`
+  (`scripts/studio/`; `CHANGELOG.md`, 2026-11-15). This plan: F20, the sentence after the open facts of section 3, the table of
+  section 5.1 with the text after it, and this entry.
 
 ## 17. Open questions (the author decides)
 

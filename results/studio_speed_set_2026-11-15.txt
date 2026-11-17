@@ -1,0 +1,355 @@
+The fork on a third machine: Apple M5 Max (Mac Studio), 2026-11-15
+====================================================================================================
+Speed table, the stock baseline at eight thread counts, bandwidth, thread sweep, the two boards end to end, the tiled
+sweep, the allocation-placement valley and the scheduling switches.
+MACHINE: Mac Studio (Mac17,14), Apple M5 Max, 6 "Super" cores (hw.perflevel0, L2 of 16 MiB) + 12 "Performance" cores
+(hw.perflevel1, L2 of 8 MiB), 32-core GPU, 36 GB, macOS 27.0 (26A425). The M5 tables of this repository were measured on an
+Apple M5 MacBook Air (4 + 6 cores, 16 GB) and one set on an M5 Pro Mac mini (5 + 10 cores, 24 GB;
+results/m5pro_speed_set_2026-11-12.txt); the numbers below are a third set and are compared only with each other.
+When: 2026-11-15 06:49:04 to 08:23:01 (94 minutes), one slot of a quiet block on the machine (no other measured job beside
+it), scripts/studio/studioset.zsh = the stages C, S, A, E, B, D in that order; every stage exited 0.
+Libraries: stock = openEMS v0.37.0; cg31 = the fork's commit ff2538a (patches 0001-0039); cg33 = the fork's commit 13350ca
+(patches 0001-0043; CPU engine "multithreaded", GPU engine "metal-diamond"), as snapshots for bench/bench.py; the same
+library files as on the other two machines. "installed" in section 6 = cg33's build (installed on this machine 2026-11-14).
+Method: bench/abtest.py, interleaved rounds, medians in MC/s; every run's port probes are compared with the reference run
+(c0). Gate: wait up to 20 s for the other processes to use at most 300 % CPU (3 of 18 cores), redo a run once above that
+(scripts/studio/common.zsh). Every row lists the other processes' median CPU / GPU use during its runs.
+Background: 0.9 to 1.6 cores of other work during stage C (the speed table) and during the patch tutorial's rows of stage S
+(1.2 to 1.6); 0.2 to 0.5 cores in the other stages. All processes together, the set included, 10 s samples: median 141 %
+of one core over the block.
+Verdicts: every CPU row is identical to the stock reference (probes, bit for bit); the Metal rows differ by at most 2.2e-7
+relative (the CPU reference keeps subnormals, the GPU flushes them).
+Correctness on this chip before the timing (2026-11-14, loaded machine, verdicts only), for the installed build cg31 and for
+cg33: the Debye check, the six models identical to stock (18 of 18 rows each), validation 15 of 15, the Metal diamond check
+72 of 72; Metal validation 15 of 15 and both boards end to end with the stop steps of the other machines (34300 and 50320);
+the command line's 260 tests in 28 suites and its 14 smoke tests. The same again from the install after cg33 was installed.
+
+1. Speed table (stage C, 4 paired rounds, median MC/s; stock best from stage S, 3 rounds, linked through cg33 at 18 threads)
+   model (M cells)        stock best (thr) | cg33 18 thr | cg33 auto | cg33 Metal | CPU/stock | Metal/CPU18
+   GCPW board (0.24)        304 (4)        |   4942      |  4743     |   6571     |  x16.3    |  x1.33
+   SMA launch (1.07)        492 (6)        |   5340      |  5115     |   6386     |  x10.9    |  x1.20
+   notch tutorial (0.27)    353 (4)        |   5054      |  4760     |   7845     |  x14.2    |  x1.54
+   notch x3 (5.25)         1264 (12)       |   6225      |  6088     |  11567     |  x4.98    |  x1.86
+   patch tutorial (0.10)    278 (2)        |   2553      |  2641     |   3113     |  x9.2     |  x1.22
+   patch x5 (7.86)         1583 (8)        |   4743      |  4646     |  10156     |  x3.08    |  x2.14
+   CPU/stock = paired ratio cg33@18 / stock best inside stage S (30.59/1.871 etc.). The patch tutorial runs best at 6 threads
+   (2972 MC/s, x1.164 of 18 threads: x10.7 over stock, Metal x1.05 over that); patch x5 peaks at 10 threads in the sweep (5082).
+   cg31 at 18 threads = cg33 at 18 threads within 1.5 % on all six (no engine change on these models).
+
+2. Stock v0.37.0 at 1/2/3/4/6/8/12/18 threads, MC/s (stage S)
+   GCPW     162 250 292 304 259 163 113  71     SMA       160 276 370 445 492 397 331 234
+   notch t. 143 239 308 353 346 214 154  97     notch x3  308 550 792 956 1198 1220 1264 1107
+   patch t. 262 278 260 215 145  83  48  31     patch x5  421 770 1046 1302 1470 1583 1535 1294
+
+3. Thread sweep of cg33, 1..18 threads, MC/s (stage A, 3 rounds)
+   GCPW      600 1144 1716 2261 2799 3159 3165 3281 3316 3464 3657 3865 4030 4285 4522 4683 4798 4931 | auto 4756 (picks 18)
+   notch x3  731 1383 2050 2651 3130 3429 3838 4143 4467 4762 5101 5236 5411 5506 5758 5933 6126 6351 | auto 6170 (picks 18)
+   patch x5  852 1605 2284 2742 3049 3464 3853 4317 4733 5082 4934 4351 4422 4488 4622 4685 4776 4868 | auto 4801 (picks 18)
+   The CPU engine scales to all 18 cores on the boards and on notch x3; patch x5 has its peak at 10 threads (5082), dips at
+   12 and recovers to 4868 at 18: the search of patch 0041 (start at all cores, step down while faster) stops at 18 there and
+   leaves 4 % on the table.
+
+4. Thread search (auto), paired with 18 fixed threads (stage C): cg33 x0.94-0.98 (patch tutorial x1.04); cg31 (old rule: start
+   at the 6 Super cores and climb) x0.70-0.86 (patch tutorial x1.14); cg33 with OPENEMS_TUNE_START=p x0.76 on notch x3.
+   On this chip the new rule is worth 1.14-1.37x on short runs of five models (0.91x on the patch tutorial); it is the installed build's behaviour since 2026-11-14.
+
+5. Memory bandwidth: STREAM Triad 132 / 324 / 286 / 321 GB/s at 1 / 6 / 12 / 18 threads. Standalone kernels (7.86 M cells):
+   fused sweep 2879-3072 / 3180-3300 / 2020-2199 MC/s at 6 / 12 / 18 threads (static split); one sub-grid per thread 3444 /
+   5186 / 5391 MC/s (169 / 254 / 264 GB/s at 49 B a cell); shared-tile lines in bandwidth_raw.txt.
+
+6. End to end through the toolkit, its defaults (FDTD.Run wall time; stage E, others 0.2-0.3 core)
+   GCPW line: stock 76.0 s (94217 steps, no probe end) | cg33 CPU 1.9 s (34300 steps) | cg31 CPU 2.4 s | Metal 1.6 s
+   SMA launch: stock 262.0 s (118475 steps)            | cg33 CPU 8.7 s (50320 steps) | cg31 CPU 9.2 s | Metal 7.0 s
+   = x40 / x30 for the CPU engine and x47 / x37 for the Metal engine; three parts as on the M5 Pro: the probe end
+   criterion (stock has none: 2.7 / 2.4 times the steps), the engine (15.9 / 13.3 times the cell rate), and for the largest
+   factors the opt-in Metal engine. The mesh is the same in every run (SMA launch: the toolkit's 0.05 mm floor, 0.871 M cells);
+   stock runs at the toolkit's fallback thread counts (4 and 8).
+
+7. Tiled sweep (opt-in, OPENEMS_TBLOCK=auto) against the fused sweep, cg33, best tiled over best fused (stage B):
+   16.8 M PEC box x1.33 (5307 vs 4000) | patch x5 x0.93 | PML cube 8 M x0.63 | 2.95 M box x0.60 | notch x3 x0.47 | SMA x0.36
+   As on the other two machines: a gain only on the largest grid with little extension work. Stays opt-in.
+
+8. Placement valley and knobs (stage D): GCPW 1 thread 606 MC/s, 201 without the allocation stagger (x0.33); 6 threads
+   3167 vs 1099: the valley exists on the M5 Max with macOS 27.0 too. Neighbour flags off: x0.88 at 18 threads on notch x3;
+   QoS off: no change (x1.005).
+
+9. Thread count the search of cg33 settled on in the sweep runs of section 3 (three rounds per model)
+auto pick ab_notch_s3_n2000: 18 threads 18 threads 18 threads 
+auto pick ab_patch_s5_n1200: 18 threads 18 threads 18 threads 
+auto pick ab_kgcpw_s1_n15000: 18 threads 18 threads 18 threads 
+
+10. The end-to-end lines as printed (section 6)
+e2e gcpw cpu: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.6 ms, run 1.9 s, post 12.5 ms (others cpu 18% gpu 3% over the whole run); FDTD.Run 4797.9 MC/s, probe end after 34300 TS (others cpu 18% gpu 3%)
+e2e gcpw cpu31: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.7 ms, run 2.4 s, post 12.0 ms (others cpu 21% gpu 3% over the whole run); FDTD.Run 3807.5 MC/s, probe end after 34300 TS (others cpu 23% gpu 3%)
+e2e gcpw gpu: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.6 ms, run 1.6 s, post 12.0 ms (others cpu 22% gpu 1% over the whole run); FDTD.Run 6148.5 MC/s, probe end after 34300 TS (others cpu 24% gpu 1%)
+e2e gcpw stock: exit 0 | emskit fdtd: e2e gcpw: ok: build 3.7 ms, run 76.0 s, post 18.3 ms (others cpu 23% gpu 3% over the whole run); FDTD.Run 301.1 MC/s, max timesteps after 94217 TS (others cpu 23% gpu 3%)
+e2e sma cpu: exit 0 | emskit fdtd: e2e sma: ok: build 3.9 ms, run 8.7 s, post 12.8 ms (others cpu 19% gpu 3% over the whole run); FDTD.Run 5256.4 MC/s, probe end after 50320 TS (others cpu 19% gpu 3%)
+e2e sma cpu31: exit 0 | emskit fdtd: e2e sma: ok: build 3.8 ms, run 9.2 s, post 12.5 ms (others cpu 22% gpu 3% over the whole run); FDTD.Run 4936.8 MC/s, probe end after 50320 TS (others cpu 22% gpu 3%)
+e2e sma gpu: exit 0 | emskit fdtd: e2e sma: ok: build 3.8 ms, run 7.0 s, post 11.8 ms (others cpu 27% gpu 1% over the whole run); FDTD.Run 6592.3 MC/s, probe end after 50320 TS (others cpu 27% gpu 1%)
+e2e sma stock: exit 0 | emskit fdtd: e2e sma: ok: build 3.8 ms, run 262.0 s, post 20.8 ms (others cpu 27% gpu 3% over the whole run); FDTD.Run 395.3 MC/s, max timesteps after 118475 TS (others cpu 27% gpu 3%)
+
+====================================================================================================
+Every record of the set (scripts/studio/summarize.py speed stock threads tiled valley knobs): config, median MC/s
+[min-max], paired ratio to the first config, others' CPU % / GPU % (median), verdict
+====================================================================================================
+== speed_kgcpw_s1   others cpu max 149 %, median 130 %
+   cg33:18                                           4942 [ 4919- 4957]  x1.000  others 108%/0%  identical,reference
+   cg33:12                                           3887 [ 3870- 3904]  x0.786  others 130%/0%  identical
+   cg33:6                                            3165 [ 3151- 3183]  x0.642  others 149%/0%  identical
+   cg33:0                                            4743 [ 4736- 4762]  x0.960  others 125%/0%  identical
+   cg31:18                                           5022 [ 5002- 5028]  x1.015  others  94%/0%  identical
+   cg31:0                                            3463 [ 3439- 3470]  x0.701  others 133%/0%  identical
+   cg33@metal-diamond                                6571 [ 5744- 6677]  x1.333  others 144%/0%  probes
+== speed_ksma_s1   others cpu max 141 %, median 134 %
+   cg33:18                                           5340 [ 5306- 5356]  x1.000  others 110%/0%  identical,reference
+   cg33:12                                           3976 [ 3969- 3995]  x0.746  others 141%/0%  identical
+   cg33:6                                            2768 [ 2747- 2777]  x0.518  others 134%/0%  identical
+   cg33:0                                            5115 [ 5086- 5130]  x0.958  others 108%/0%  identical
+   cg31:18                                           5366 [ 5314- 5418]  x1.006  others 111%/0%  identical
+   cg31:0                                            3773 [ 3759- 3775]  x0.707  others 137%/0%  identical
+   cg33@metal-diamond                                6386 [ 5687- 6402]  x1.197  others 138%/0%  probes
+== speed_notch_s1   others cpu max 152 %, median 118 %
+   cg33:18                                           5054 [ 5011- 5102]  x1.000  others  99%/0%  identical,reference
+   cg33:12                                           4026 [ 4005- 4047]  x0.796  others 129%/0%  identical
+   cg33:6                                            3249 [ 3209- 3255]  x0.641  others  98%/0%  identical
+   cg33:0                                            4760 [ 4743- 4775]  x0.943  others 118%/0%  identical
+   cg31:18                                           5032 [ 5003- 5053]  x0.995  others 100%/0%  identical
+   cg31:0                                            3699 [ 3660- 3710]  x0.731  others 138%/0%  identical
+   cg33@metal-diamond                                7845 [ 6674- 7856]  x1.542  others 152%/0%  probes
+== speed_notch_s3   others cpu max 121 %, median 105 %
+   cg33:18                                           6225 [ 6212- 6233]  x1.000  others 116%/0%  identical,reference
+   cg33:12                                           5213 [ 5187- 5234]  x0.838  others 119%/0%  identical
+   cg33:6                                            3432 [ 3423- 3443]  x0.551  others 121%/0%  identical
+   cg33:0                                            6088 [ 6050- 6103]  x0.977  others  96%/0%  identical
+   cg31:18                                           6247 [ 6221- 6308]  x1.004  others 100%/0%  identical
+   cg31:0                                            4813 [ 4781- 4824]  x0.773  others 105%/0%  identical
+   cg33@metal-diamond                               11567 [10435-11572]  x1.858  others 101%/0%  probes
+== speed_patch_s1   others cpu max 157 %, median 135 %
+   cg33:18                                           2553 [ 2535- 2556]  x1.000  others 128%/0%  identical,reference
+   cg33:12                                           2764 [ 2757- 2787]  x1.085  others 142%/0%  identical
+   cg33:6                                            2972 [ 2866- 2993]  x1.164  others 157%/0%  identical
+   cg33:0                                            2641 [ 2635- 2689]  x1.038  others 132%/0%  identical
+   cg31:18                                           2557 [ 2554- 2564]  x1.002  others 135%/0%  identical
+   cg31:0                                            2910 [ 2892- 2940]  x1.144  others 133%/0%  identical
+   cg33@metal-diamond                                3113 [ 2465- 3120]  x1.218  others 144%/0%  probes
+== speed_patch_s5   others cpu max 149 %, median 134 %
+   cg33:18                                           4743 [ 4732- 4749]  x1.000  others 128%/0%  identical,reference
+   cg33:12                                           4352 [ 4340- 4358]  x0.919  others 149%/0%  identical
+   cg33:6                                            3366 [ 3319- 3428]  x0.710  others 128%/0%  identical
+   cg33:0                                            4646 [ 4638- 4668]  x0.981  others 126%/0%  identical
+   cg31:18                                           4720 [ 4696- 4736]  x0.996  others 134%/0%  identical
+   cg31:0                                            4068 [ 3992- 4169]  x0.859  others 136%/0%  identical
+   cg33@metal-diamond                               10156 [ 9373-10187]  x2.143  others 139%/0%  probes
+== stock_kgcpw_s1   others cpu max 45 %, median 26 %
+   stock:1                                            162 [  161-  162]  x1.000  others  25%/0%  identical,reference
+   stock:2                                            250 [  248-  251]  x1.539  others  26%/0%  identical
+   stock:3                                            292 [  291-  293]  x1.802  others  35%/0%  identical
+   stock:4                                            304 [  300-  309]  x1.871  others  29%/0%  identical
+   stock:6                                            259 [  250-  268]  x1.593  others  29%/0%  identical
+   stock:8                                            163 [  162-  166]  x1.007  others  25%/0%  identical
+   stock:12                                           113 [  111-  115]  x0.698  others  45%/0%  identical
+   stock:18                                            71 [   70-   72]  x0.440  others  19%/0%  identical
+   cg33:18                                           4970 [ 4924- 5012]  x30.590  others  26%/0%  identical
+== stock_ksma_s1   others cpu max 82 %, median 33 %
+   stock:1                                            160 [  157-  161]  x1.000  others  29%/1%  identical,reference
+   stock:2                                            276 [  274-  277]  x1.727  others  37%/0%  identical
+   stock:3                                            370 [  368-  374]  x2.338  others  30%/1%  identical
+   stock:4                                            445 [  426-  449]  x2.768  others  82%/3%  identical
+   stock:6                                            492 [  491-  531]  x3.120  others  51%/4%  identical
+   stock:8                                            397 [  394-  398]  x2.473  others  25%/1%  identical
+   stock:12                                           331 [  318-  334]  x2.075  others  42%/1%  identical
+   stock:18                                           234 [  231-  235]  x1.461  others  32%/2%  identical
+   cg33:18                                           5379 [ 5355- 5505]  x34.013  others  33%/2%  identical
+== stock_notch_s1   others cpu max 27 %, median 22 %
+   stock:1                                            143 [  142-  143]  x1.000  others  25%/0%  identical,reference
+   stock:2                                            239 [  239-  240]  x1.676  others  22%/0%  identical
+   stock:3                                            308 [  308-  310]  x2.164  others  26%/0%  identical
+   stock:4                                            353 [  349-  354]  x2.471  others  24%/0%  identical
+   stock:6                                            346 [  332-  349]  x2.429  others  21%/0%  identical
+   stock:8                                            214 [  212-  215]  x1.503  others  27%/0%  identical
+   stock:12                                           154 [  146-  156]  x1.077  others  21%/0%  identical
+   stock:18                                            97 [   92-   99]  x0.678  others  19%/0%  identical
+   cg33:18                                           5017 [ 4997- 5033]  x35.146  others   7%/0%  identical
+== stock_notch_s3   others cpu max 34 %, median 27 %
+   stock:1                                            308 [  307-  309]  x1.000  others  32%/0%  identical,reference
+   stock:2                                            550 [  547-  555]  x1.784  others  34%/0%  identical
+   stock:3                                            792 [  790-  791]  x2.566  others  28%/0%  identical
+   stock:4                                            956 [  954-  956]  x3.098  others  26%/0%  identical
+   stock:6                                           1198 [  523- 1215]  x3.872  others  33%/0%  identical
+   stock:8                                           1220 [ 1217- 1226]  x3.963  others  25%/0%  identical
+   stock:12                                          1264 [ 1255- 1267]  x4.093  others  27%/0%  identical
+   stock:18                                          1107 [ 1102- 1112]  x3.593  others  20%/0%  identical
+   cg33:18                                           6296 [ 6287- 6311]  x20.396  others  21%/0%  identical
+== stock_patch_s1   others cpu max 163 %, median 151 %
+   stock:1                                            262 [  254-  264]  x1.000  others 163%/0%  identical,reference
+   stock:2                                            278 [  278-  279]  x1.063  others 160%/0%  identical
+   stock:3                                            260 [  258-  263]  x0.995  others 157%/0%  identical
+   stock:4                                            215 [  211-  225]  x0.820  others 161%/0%  identical
+   stock:6                                            145 [  134-  145]  x0.550  others 151%/0%  identical
+   stock:8                                             83 [   83-   87]  x0.325  others 146%/0%  identical
+   stock:12                                            48 [   48-   52]  x0.190  others 130%/0%  identical
+   stock:18                                            31 [   29-   31]  x0.118  others 123%/0%  identical
+   cg33:18                                           2567 [ 2543- 2573]  x9.754  others 120%/0%  identical
+== stock_patch_s5   others cpu max 46 %, median 28 %
+   stock:1                                            421 [  417-  423]  x1.000  others  24%/0%  identical,reference
+   stock:2                                            770 [  765-  770]  x1.827  others  28%/0%  identical
+   stock:3                                           1046 [ 1041- 1051]  x2.486  others  33%/0%  identical
+   stock:4                                           1302 [ 1301- 1306]  x3.089  others  46%/0%  identical
+   stock:6                                           1470 [ 1467- 1485]  x3.515  others  38%/0%  identical
+   stock:8                                           1583 [ 1580- 1594]  x3.772  others  28%/0%  identical
+   stock:12                                          1535 [ 1521- 1542]  x3.644  others  24%/0%  identical
+   stock:18                                          1294 [ 1290- 1296]  x3.076  others  23%/0%  identical
+   cg33:18                                           4848 [ 4784- 4922]  x11.614  others  16%/0%  identical
+== threads_kgcpw   others cpu max 43 %, median 24 %
+   1:600  2:1144  3:1716  4:2261  5:2799  6:3159  7:3165  8:3281  9:3316  10:3464  11:3657  12:3865  13:4030  14:4285  15:4522  16:4683  17:4798  18:4931  0:4756
+   best: cg33:18 at 4931 MC/s; auto (:0) 4756
+== threads_notch_s3   others cpu max 74 %, median 17 %
+   1:731  2:1383  3:2050  4:2651  5:3130  6:3429  7:3838  8:4143  9:4467  10:4762  11:5101  12:5236  13:5411  14:5506  15:5758  16:5933  17:6126  18:6351  0:6170
+   best: cg33:18 at 6351 MC/s; auto (:0) 6170
+== threads_patch_s5   others cpu max 22 %, median 16 %
+   1:852  2:1605  3:2284  4:2742  5:3049  6:3464  7:3853  8:4317  9:4733  10:5082  11:4934  12:4351  13:4422  14:4488  15:4622  16:4685  17:4776  18:4868  0:4801
+   best: cg33:10 at 5082 MC/s; auto (:0) 4801
+== tiled_cube_s2   others cpu max 35 %, median 25 %
+   cg33:6                                            1712 [ 1706- 1713]  x1.000  others  30%/3%  identical,reference
+   cg33:12                                           2504 [ 2499- 2519]  x1.465  others  35%/3%  identical
+   cg33:18                                           2848 [ 2834- 2869]  x1.663  others  25%/3%  identical
+   cg33:6#TBLOCK=auto                                1783 [ 1779- 1786]  x1.043  others  24%/3%  identical
+   cg33:12#TBLOCK=auto                               1647 [ 1644- 1662]  x0.962  others  24%/3%  identical
+   cg33:18#TBLOCK=auto                                876 [  867-  892]  x0.514  others  18%/3%  identical
+   best fused cg33:18 2848 | best tiled cg33:6#TBLOCK=auto 1783 | tiled/fused x0.63
+== tiled_ksma_s1   others cpu max 39 %, median 20 %
+   cg33:6                                            2747 [ 2701- 2749]  x1.000  others  39%/3%  identical,reference
+   cg33:12                                           3931 [ 3912- 3936]  x1.433  others  25%/3%  identical
+   cg33:18                                           5422 [ 5400- 5430]  x1.977  others  20%/3%  identical
+   cg33:6#TBLOCK=auto                                1973 [ 1966- 1975]  x0.719  others  20%/3%  identical
+   cg33:12#TBLOCK=auto                               1838 [ 1838- 1855]  x0.669  others  19%/3%  identical
+   cg33:18#TBLOCK=auto                               1557 [ 1550- 1558]  x0.567  others  17%/3%  identical
+   best fused cg33:18 5422 | best tiled cg33:6#TBLOCK=auto 1973 | tiled/fused x0.36
+== tiled_lbox_s1   others cpu max 32 %, median 27 %
+   cg33:6                                            4003 [ 3980- 4021]  x1.000  others  28%/3%  identical,reference
+   cg33:12                                           6064 [ 6063- 6101]  x1.517  others  27%/3%  identical
+   cg33:18                                           7179 [ 7156- 7188]  x1.788  others  27%/3%  identical
+   cg33:6#TBLOCK=auto                                4262 [ 4255- 4287]  x1.071  others  32%/3%  identical
+   cg33:12#TBLOCK=auto                               4274 [ 4263- 4277]  x1.068  others  23%/3%  identical
+   cg33:18#TBLOCK=auto                               3763 [ 3714- 3776]  x0.936  others  15%/3%  identical
+   best fused cg33:18 7179 | best tiled cg33:12#TBLOCK=auto 4274 | tiled/fused x0.60
+== tiled_lbox_s2   others cpu max 27 %, median 24 %
+   cg33:6                                            3472 [ 3470- 3482]  x1.000  others  23%/3%  identical,reference
+   cg33:12                                           3579 [ 3575- 3586]  x1.030  others  24%/3%  identical
+   cg33:18                                           4000 [ 3987- 4012]  x1.149  others  27%/3%  identical
+   cg33:6#TBLOCK=auto                                3832 [ 3826- 3841]  x1.103  others  25%/3%  identical
+   cg33:12#TBLOCK=auto                               5213 [ 5201- 5216]  x1.499  others  18%/3%  identical
+   cg33:18#TBLOCK=auto                               5307 [ 5303- 5352]  x1.529  others  22%/3%  identical
+   best fused cg33:18 4000 | best tiled cg33:18#TBLOCK=auto 5307 | tiled/fused x1.33
+== tiled_notch_s3   others cpu max 24 %, median 22 %
+   cg33:6                                            3426 [ 3419- 3428]  x1.000  others  22%/3%  identical,reference
+   cg33:12                                           5193 [ 5190- 5216]  x1.519  others  24%/3%  identical
+   cg33:18                                           6283 [ 6239- 6355]  x1.838  others  20%/3%  identical
+   cg33:6#TBLOCK=auto                                2980 [ 2962- 2984]  x0.870  others  22%/3%  identical
+   cg33:12#TBLOCK=auto                               2756 [ 2751- 2779]  x0.806  others  21%/3%  identical
+   cg33:18#TBLOCK=auto                               2153 [ 2074- 2225]  x0.628  others  22%/3%  identical
+   best fused cg33:18 6283 | best tiled cg33:6#TBLOCK=auto 2980 | tiled/fused x0.47
+== tiled_patch_s5   others cpu max 38 %, median 27 %
+   cg33:6                                            3377 [ 3354- 3390]  x1.000  others  27%/3%  identical,reference
+   cg33:12                                           4291 [ 4284- 4306]  x1.270  others  29%/3%  identical
+   cg33:18                                           4786 [ 4779- 4810]  x1.424  others  38%/3%  identical
+   cg33:6#TBLOCK=auto                                3770 [ 3757- 3785]  x1.121  others  22%/3%  identical
+   cg33:12#TBLOCK=auto                               4438 [ 4421- 4443]  x1.311  others  24%/3%  identical
+   cg33:18#TBLOCK=auto                               4000 [ 3912- 4167]  x1.180  others  25%/3%  identical
+   best fused cg33:18 4786 | best tiled cg33:12#TBLOCK=auto 4438 | tiled/fused x0.93
+== valley_kgcpw   others cpu max 25 %, median 24 %
+   cg33:1                                             606 [  605-  606]  x1.000  others  22%/3%  identical,reference
+   cg33:1#NO_STAGGER=1                                201 [  201-  201]  x0.332  others  22%/3%  identical
+   cg33:6                                            3167 [ 3161- 3176]  x5.234  others  24%/3%  identical
+   cg33:6#NO_STAGGER=1                               1099 [ 1094- 1101]  x1.813  others  25%/3%  identical
+   stock:1                                            162 [  162-  163]  x0.268  others  24%/3%  identical
+== knobs_notch_s3   others cpu max 31 %, median 25 %
+   cg33:18                                           6302 [ 6299- 6316]  x1.000  others  25%/3%  identical,reference
+   cg33:18#FLAGS=0                                   5534 [ 5428- 5546]  x0.876  others  22%/3%  identical
+   cg33:18#QOS=0                                     6332 [ 6311- 6373]  x1.005  others  23%/3%  identical
+   cg33:0#TUNE_START=p                               4798 [ 4780- 4808]  x0.761  others  31%/3%  identical
+
+====================================================================================================
+Bandwidth, raw (STREAM 5.10, 100 M elements; scripts/kernel/kb_idx.cpp with KB_FUSED=1; scripts/kernel/kb_tile.cpp)
+====================================================================================================
+== STREAM threads 1  07:38:34  all processes cpu% 144
+Copy:          144143.4     0.011185     0.011100     0.011468
+Scale:         130230.1     0.012815     0.012286     0.021190
+Add:           132078.1     0.018935     0.018171     0.030974
+Triad:         132180.4     0.018386     0.018157     0.019532
+== STREAM threads 6  07:38:36  all processes cpu% 177
+Copy:          349962.8     0.004652     0.004572     0.004823
+Scale:         338625.8     0.004980     0.004725     0.005308
+Add:           323489.0     0.007644     0.007419     0.007965
+Triad:         323624.2     0.007747     0.007416     0.007952
+== STREAM threads 12  07:38:37  all processes cpu% 131
+Copy:          304183.0     0.005862     0.005260     0.006010
+Scale:         292936.7     0.005784     0.005462     0.005930
+Add:           292617.4     0.009189     0.008202     0.009613
+Triad:         286463.6     0.009192     0.008378     0.009448
+== STREAM threads 18  07:38:37  all processes cpu% 130
+Copy:          338694.2     0.004927     0.004724     0.005134
+Scale:         343496.3     0.004953     0.004658     0.005147
+Add:           322359.8     0.007930     0.007445     0.008130
+Triad:         321064.3     0.007875     0.007475     0.008142
+
+== kb_idx fused, run 1 07:38:38 all processes cpu% 108
+grid 209x209x180 (7.863 Mcells, numVectors=45), 4000 operators, 8 steps, 0 extra barriers/TS, hw threads 18
+volt 0x7bf0404000 curr 0x7bf6008000 diff 94224 KB
+stock, 1 thread                         502 MC/s   reference
+clean, 6 thr dynamic+spin              2341 MC/s   bit-identical
+fused, 6 thr static+spin               2886 MC/s   bit-identical
+clean, 12 thr dynamic+spin             3597 MC/s   bit-identical
+fused, 12 thr static+spin              3193 MC/s   bit-identical
+clean, 18 thr dynamic+spin             2088 MC/s   bit-identical
+fused, 18 thr static+spin              2199 MC/s   bit-identical
+== kb_idx fused, run 2 07:38:38 all processes cpu% 117
+grid 209x209x180 (7.863 Mcells, numVectors=45), 4000 operators, 8 steps, 0 extra barriers/TS, hw threads 18
+volt 0x7d14404000 curr 0x7d1a008000 diff 94224 KB
+stock, 1 thread                         502 MC/s   reference
+clean, 6 thr dynamic+spin              2346 MC/s   bit-identical
+fused, 6 thr static+spin               2879 MC/s   bit-identical
+clean, 12 thr dynamic+spin             3317 MC/s   bit-identical
+fused, 12 thr static+spin              3180 MC/s   bit-identical
+clean, 18 thr dynamic+spin             3824 MC/s   bit-identical
+fused, 18 thr static+spin              2043 MC/s   bit-identical
+== kb_idx fused, run 3 07:38:39 all processes cpu% 117
+grid 209x209x180 (7.863 Mcells, numVectors=45), 4000 operators, 8 steps, 0 extra barriers/TS, hw threads 18
+volt 0x798a404000 curr 0x7990008000 diff 94224 KB
+stock, 1 thread                         502 MC/s   reference
+clean, 6 thr dynamic+spin              2337 MC/s   bit-identical
+fused, 6 thr static+spin               3072 MC/s   bit-identical
+clean, 12 thr dynamic+spin             3372 MC/s   bit-identical
+fused, 12 thr static+spin              3300 MC/s   bit-identical
+clean, 18 thr dynamic+spin             1209 MC/s   bit-identical
+fused, 18 thr static+spin              2020 MC/s   bit-identical
+
+== kb_tile 07:38:39 all processes cpu% 147
+grid 209x209x180 = 7.86 M cells, 0.86 MB of fields per x-line, 56 steps
+ 6 threads: fused k=1 on 6 sub-grids   3444 MC/s (169 GB/s at 49 B)
+   one tile for all, k=1 W= 4 ( 3.4 MB, 155 barriers per step):   2569 MC/s  x0.75 of fused  bit-identical
+   one tile for all, k=2 W= 5 ( 4.3 MB, 145 barriers per step):   2878 MC/s  x0.84 of fused  bit-identical
+   one tile for all, k=2 W=15 (12.9 MB, 47 barriers per step):   3135 MC/s  x0.91 of fused  bit-identical
+   one tile for all, k=4 W= 9 ( 7.7 MB, 84 barriers per step):   3972 MC/s  x1.15 of fused  bit-identical
+   one tile for all, k=4 W=15 (12.9 MB, 50 barriers per step):   3955 MC/s  x1.15 of fused  bit-identical
+   one tile for all, k=7 W=15 (12.9 MB, 52 barriers per step):   4153 MC/s  x1.21 of fused  bit-identical
+   one tile for all, k=8 W=17 (14.6 MB, 44 barriers per step):   3970 MC/s  x1.15 of fused  bit-identical
+   one tile for all, k=7 W=30 (25.8 MB, 25 barriers per step):   3991 MC/s  x1.16 of fused  bit-identical
+12 threads: fused k=1 on 12 sub-grids   5186 MC/s (254 GB/s at 49 B)
+   one tile for all, k=1 W= 4 ( 3.4 MB, 155 barriers per step):   3452 MC/s  x0.67 of fused  bit-identical
+   one tile for all, k=2 W= 5 ( 4.3 MB, 145 barriers per step):   3918 MC/s  x0.76 of fused  bit-identical
+   one tile for all, k=2 W=15 (12.9 MB, 47 barriers per step):   4463 MC/s  x0.86 of fused  bit-identical
+   one tile for all, k=4 W= 9 ( 7.7 MB, 84 barriers per step):   4656 MC/s  x0.90 of fused  bit-identical
+   one tile for all, k=4 W=15 (12.9 MB, 50 barriers per step):   4760 MC/s  x0.92 of fused  bit-identical
+   one tile for all, k=7 W=15 (12.9 MB, 52 barriers per step):   5135 MC/s  x0.99 of fused  bit-identical
+   one tile for all, k=8 W=17 (14.6 MB, 44 barriers per step):   5115 MC/s  x0.99 of fused  bit-identical
+   one tile for all, k=7 W=30 (25.8 MB, 25 barriers per step):   4751 MC/s  x0.92 of fused  bit-identical
+18 threads: fused k=1 on 18 sub-grids   5391 MC/s (264 GB/s at 49 B)
+   one tile for all, k=1 W= 4 ( 3.4 MB, 155 barriers per step):   3106 MC/s  x0.58 of fused  bit-identical
+   one tile for all, k=2 W= 5 ( 4.3 MB, 145 barriers per step):   3099 MC/s  x0.57 of fused  bit-identical
+   one tile for all, k=2 W=15 (12.9 MB, 47 barriers per step):   4884 MC/s  x0.91 of fused  bit-identical
+   one tile for all, k=4 W= 9 ( 7.7 MB, 84 barriers per step):   5039 MC/s  x0.93 of fused  bit-identical
+   one tile for all, k=4 W=15 (12.9 MB, 50 barriers per step):   5758 MC/s  x1.07 of fused  bit-identical
+   one tile for all, k=7 W=15 (12.9 MB, 52 barriers per step):   6173 MC/s  x1.15 of fused  bit-identical
+   one tile for all, k=8 W=17 (14.6 MB, 44 barriers per step):   5872 MC/s  x1.09 of fused  bit-identical
+   one tile for all, k=7 W=30 (25.8 MB, 25 barriers per step):   3094 MC/s  x0.57 of fused  bit-identical
