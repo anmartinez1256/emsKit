@@ -125,7 +125,7 @@ holds (its UUID matches no snapshot, F20), so what `cmake --install build-gpu` w
 python3.14 keeps DYLD and sees the user-site modules (the probe decides at run time); the exception type of an
 unknown openEMS option; whether the installed (cg18) `bin/openEMS` runs on cg29 libraries through DYLD (XML runs are
 deferred). From 2026-11-06 to 2026-11-11 the installed libopenEMS was cg29's, while `bin/openEMS` stayed the one
-installed with cg18 (section 16); from 2026-11-11 to 2026-11-14 the installed libopenEMS was cg31's, and since 2026-11-14 it is cg33's, installed on the Mac Studio (F20).
+installed with cg18 (section 16); from 2026-11-11 to 2026-11-14 the installed libopenEMS was cg31's, from 2026-11-14 to 2026-11-24 it was cg33's, installed on the Mac Studio (F20), and since 2026-11-24 it is cg35's.
 
 ## 4. Commands
 
@@ -516,7 +516,8 @@ run 2 checks the stock and cg29 rows of the author's snapshots without that guar
 | installed 2026-11-11 to 2026-11-14 | -57-gff2538a | 37 + 1 | | 23630ed6... | 499C07FD-... (sameBuild cg31) |
 | cg32d | -57-gff2538a (cg31's string) | 40 + 1 | | 72e6d7ef... | 530052B0-... |
 | cg33 | -61-g13350ca | 42 + 1 | | 3e7095fd... | ABEE95D4-... |
-| installed since 2026-11-14 | -61-g13350ca | 42 + 1 | | b81e39a0... | ABEE95D4-... (sameBuild cg33) |
+| installed 2026-11-14 to 2026-11-24 | -61-g13350ca | 42 + 1 | | b81e39a0... | ABEE95D4-... (sameBuild cg33) |
+| installed since 2026-11-24 | -67-g8af6c4c | 49 + 1 | | 09fd6d11... | 0A4FEF8E-... (sameBuild cg35) |
 | build-split | | | | | 40BC8CFF-... (sameBuild cg29) |
 | build-gpu | -26-gcd80d8c | | | | 9A6EDCEE-... (none) |
 
@@ -524,9 +525,9 @@ The knob column counts the registry names in libopenEMS, plus `OPENEMS_NF2FF_LEG
 `knobs[]` holds both, so it lists 16 names for cg18 (and the installed library until 2026-11-06), 21 for cg19, 30
 for cg29 (and the installed library from 2026-11-06 to 2026-11-11), 38 for cg31 (and the installed library from
 2026-11-11 to 2026-11-14): the eight more are the `OPENEMS_DIAMOND_*` switches of patches 0029 to 0038 (section 6.2); and 41 for
-cg32d: the three more are the `OPENEMS_TBLOCK` names of patch 0040, the tiled sweep; and 42 for cg33 (and the installed library since 2026-11-14): the two more are
+cg32d: the three more are the `OPENEMS_TBLOCK` names of patch 0040, the tiled sweep; and 42 for cg33 (and the installed library from 2026-11-14 to 2026-11-24): the two more are
 `OPENEMS_TUNE_START` (patch 0041) and `OPENEMS_ADE_PACKED` (patch 0042), so that BUILD.md's table had 43 names with the
-one in libnf2ff; and 49 for cg35 (the fork's head, not installed): the seven more are `OPENEMS_TBLOCK_BOX` (patch 0044), `OPENEMS_YBAND` and
+one in libnf2ff; and 49 for cg35 (the fork's head, and the installed library since 2026-11-24): the seven more are `OPENEMS_TBLOCK_BOX` (patch 0044), `OPENEMS_YBAND` and
 `OPENEMS_YBAND_CACHE` (0045), `OPENEMS_ADE_VEC` and `OPENEMS_ADE_COEF` (0047), `OPENEMS_ADE_SCRATCH` (0048) and `OPENEMS_SETUP_THREADS` (0049); with the one in libnf2ff BUILD.md's table has 50 names. The
 installed libCSXCAD has sameBuild cg9 to cg29 and cg29pre, and sameBytes cg20 to cg29 and cg29pre; the
 installed libnf2ff has sameBuild cg18 to cg29 and cg29pre, and sameBytes cg20 to cg29 and cg29pre. These lists are
@@ -539,8 +540,8 @@ installed file again in other bytes than snap/cg31's. The row "cg32d" is the bui
 opt-in tiled sweep), which was never installed on its own. It was built in the folder configured for
 cg31, so it reports cg31's version string, not v0.37.0-58-g0ef186b: its sha256, its UUID and its three knob names
 more tell the two apart, the version string does not (F7). The row "cg33" is the build of patches 0001 to 0043 (commit
-13350ca, the fork's head until 2026-11-22); it reports its own commit, and its sha256, UUID and two knob names more tell it from cg32d. It was installed on the Mac Studio on 2026-11-14: the row "installed since 2026-11-14" is that file: snap/cg33's build (same UUID) in other bytes than the snapshot's file, as with the earlier installs. The tests check the installed row whose sha256 the installed
-libopenEMS has (819179a2... until 2026-11-06, 0d81372e... until 2026-11-11, 23630ed6... until 2026-11-14, b81e39a0... since) and skip any other
+13350ca, the fork's head until 2026-11-22); it reports its own commit, and its sha256, UUID and two knob names more tell it from cg32d. It was installed on the Mac Studio on 2026-11-14: the row "installed since 2026-11-14" is that file: snap/cg33's build (same UUID) in other bytes than the snapshot's file, as with the earlier installs. The row "installed since 2026-11-24" is the install of the head (cg35, 8af6c4c, on 2026-11-24): the snapshot's build in other bytes (sha256 09fd6d11... against the snapshot row's 7c95796c...), the same UUID. The tests check the installed row whose sha256 the installed
+libopenEMS has (819179a2... until 2026-11-06, 0d81372e... until 2026-11-11, 23630ed6... until 2026-11-14, b81e39a0... until 2026-11-24, 09fd6d11... since) and skip any other
 install: LibraryScanTests checks the row, smoke run 2 its sameBuild (section 12).
 
 ### 5.2 The stock identity of `check`
@@ -1990,6 +1991,16 @@ was made, so these hashes name commits of that history (section 13).
   - The counts of section 12 are 261 tests in 28 suites with the smoke runs. What was run on the tree of the commit is in the
     README's status section. The checks of the new patches are in `results/large_grid_cg34_2026-11-22.txt` and
     `results/dispersive_cg35_2026-11-23.txt`.
+
+- **2026-11-24 (later): cg35 installed, and its row in the tests.** The fork's head 8af6c4c (patches 0001 to 0049, snapshot cg35,
+  `v0.37.0-67-g8af6c4c`) was installed on the Mac Studio on 2026-11-24; the entry above says "not installed" as of its writing.
+  Only libopenEMS changed (sha256 09fd6d11..., UUID 0A4FEF8E-...); no installed header or Python module differs between 13350ca
+  and 8af6c4c. In `Tests/`: the installed rows of `LibraryTests.swift` and the install list of `SmokeTests.swift` gained the
+  row of cg35 (sameBuild cg35); the counts stay 261 tests in 28 suites. Run from the install on the same day, on the machine
+  loaded by other programs (verdicts only): the Debye check, `check --lite` (18 of 18 rows), the validation suite (15 of 15 on the
+  fastest engine and on `metal-diamond`), `diamond-check` (72 of 72), both boards end to end (stop steps 34300 and 50320) and the
+  smoke suite (14 of 14), so the 247 unit tests and the 14 smoke tests passed on this tree. Not the full check of section 14.
+  This plan: the identity table of section 5.1 and the paragraph after it, and this entry.
 
 ## 17. Open questions (the author decides)
 

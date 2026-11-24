@@ -32,9 +32,10 @@ sweep of section 7, and with its switch unset the engine runs the fused sweep as
 cg33 rebuilt from the commit, `v0.37.0-61-g13350ca`) change the engine's defaults (the start of the thread search,
 the packed Debye, Lorentz and Drude line hooks), with results identical to stock in every check
 (`results/cpu_items_cg33_2026-11-13.txt`). They were not installed when they were measured on the M5 Pro; cg33, patches
-0001 to 0043, is the build installed on the author's Mac Studio (an Apple M5 Max) since 2026-11-14 (sha256 b81e39a0...,
+0001 to 0043, was the build installed on the author's Mac Studio (an Apple M5 Max) from 2026-11-14 to 2026-11-24 (sha256 b81e39a0...,
 UUID ABEE95D4-...), with every check of section 9 that was run on it passing, and with patch 0040 in it as the opt-in
-switch (`results/studio_speed_set_2026-11-15.txt`). Other platforms are
+switch (`results/studio_speed_set_2026-11-15.txt`). The fork's head, cg35 (patches 0001 to 0049, 8af6c4c, sha256 09fd6d11...,
+UUID 0A4FEF8E-...), is installed there since 2026-11-24. Other platforms are
 untested. The fork is meant to build wherever openEMS v0.37.0 builds (for GCC see section 8); its platform-dependent
 parts are guarded: thread QoS (`#ifdef __APPLE__`), the starting point of the automatic thread count (the P-core count
 from `sysctl` on macOS, half the available hardware threads elsewhere), the default spin of the neighbour-flag waits
@@ -58,9 +59,9 @@ What the fork is built on:
   engine, sections 7 and 9; snapshot cg32d: commit 0ef186b, `git describe --tags` v0.37.0-58-g0ef186b, not installed on its own)
   and 0041 to 0043 (written on 2026-11-12 and 2026-11-13, committed on 2026-11-13: 0041 starts the thread search at every non-efficiency core, 0042 packs the
   Debye, Lorentz and Drude line hooks, 0043 puts that code under the compiler guard and adds the refusal line; snapshots
-  cg33a to cg33d; commit 13350ca, the fork's head until 2026-11-22, `git describe --tags` v0.37.0-61-g13350ca, installed on the author's Mac Studio since 2026-11-14; sections 7 and 9).
-  0044 to 0046 (2026-11-21 and 2026-11-22: box hooks, the y-banded fused sweep for large grids, box hooks for Mur, the dispersive extensions and the closed cylinder; snapshots cg34a to cg34c, cg34 = commit 8d513ba) and 0047 to 0049 (2026-11-23 and 2026-11-24: the dispersive pass, vector groups, Debye transients in per-thread scratch, setup on the setup threads; snapshots cg35a to cg35c, cg35 = the fork's head 8af6c4c, `git describe --tags` v0.37.0-67-g8af6c4c, not installed; sections 7 and 9).
-  The 39 patches up to 0039 made the build installed until 2026-11-14, the 43 up to 0043 the build installed since (cg33), all 49 are the fork's head. Upstream has since
+  cg33a to cg33d; commit 13350ca, the fork's head until 2026-11-22, `git describe --tags` v0.37.0-61-g13350ca, installed on the author's Mac Studio from 2026-11-14 to 2026-11-24; sections 7 and 9).
+  0044 to 0046 (2026-11-21 and 2026-11-22: box hooks, the y-banded fused sweep for large grids, box hooks for Mur, the dispersive extensions and the closed cylinder; snapshots cg34a to cg34c, cg34 = commit 8d513ba) and 0047 to 0049 (2026-11-23 and 2026-11-24: the dispersive pass, vector groups, Debye transients in per-thread scratch, setup on the setup threads; snapshots cg35a to cg35c, cg35 = the fork's head 8af6c4c, `git describe --tags` v0.37.0-67-g8af6c4c, installed on the author's Mac Studio since 2026-11-24; sections 7 and 9).
+  The 39 patches up to 0039 made the build installed until 2026-11-14, the 43 up to 0043 the build installed from 2026-11-14 to 2026-11-24 (cg33), all 49 are the fork's head and the build installed since 2026-11-24 (cg35). Upstream has since
   merged a reworked GPU engine into master (c3a956b) and deleted the branch, so section 4 fetches the base commit by its
   hash. The patches apply to this base only; master has restructured the engines since (c0816a2).
 - **CSXCAD:** v0.7.0 plus one patch. The openEMS patches call the `FindPropertyByCoordPriority` it adds, so they do not
@@ -151,7 +152,7 @@ git -C openEMS am "$EMSKIT"/patches/openems/0*.patch
 ```
 `git am` needs a git identity (`git config user.name` and `user.email`). With the 49 openEMS patches
 `git -C openEMS rev-parse 'HEAD^{tree}'` prints 08098d913ef47d24e5c2c18d5cf63e3f24b69251, the tree of the fork's head
-(8af6c4c, snapshot cg35). How many patches to apply: all 49 for the fork's head, 0001 to 0043 for the build installed on the author's Mac since 2026-11-14 (cg33; tree 211a3de8300454a37bda032ecf7514db1514579b, that of 13350ca), 0001 to 0040 for the tiled sweep alone
+(8af6c4c, snapshot cg35). How many patches to apply: all 49 for the fork's head (installed on the author's Mac since 2026-11-24), 0001 to 0043 for the build installed there from 2026-11-14 to 2026-11-24 (cg33; tree 211a3de8300454a37bda032ecf7514db1514579b, that of 13350ca), 0001 to 0040 for the tiled sweep alone
 (tree d7b66f1066672597c3a37e79bac0950469a93830, that of 0ef186b, snapshot cg32d), or 0001 to 0039 for the build
 installed on the author's Mac from 2026-11-11 to 2026-11-14 (cg31). The three builds differ only by the opt-in tiled sweep of the multithreaded
 engine (patch 0040; section 7; with its switch unset the engine runs the fused sweep as before) and by patches 0041 to
@@ -204,7 +205,7 @@ libraries report an older string, and the `results/` tables print it: cg19 v0.37
 v0.37.0-25-g315acee, cg21 to cg28 (and the preliminary `*_cg29pre.txt` build) v0.37.0-26-gcd80d8c, cg29
 v0.37.0-44-g074a687 (an earlier form of patch 0026; the code is that of 78fe656; the installed library reported it
 too from 2026-11-06 to 2026-11-11). cg31, the installed build from 2026-11-11 to 2026-11-14, reports its own commit,
-v0.37.0-57-gff2538a; cg33, installed since, reports v0.37.0-61-g13350ca. Snapshot cg32d (patch 0040, 0ef186b) was built in the folder configured for
+v0.37.0-57-gff2538a; cg33, installed from 2026-11-14 to 2026-11-24, reports v0.37.0-61-g13350ca; cg35, installed since, reports v0.37.0-67-g8af6c4c. Snapshot cg32d (patch 0040, 0ef186b) was built in the folder configured for
 cg31, so it reports cg31's string too; a build configured at 0ef186b reports v0.37.0-58-g0ef186b, which is also the string
 of snapshots cg33a to cg33d (patches 0041 to 0043, built in that folder before the three commits were made). Snapshot cg33,
 the build of 13350ca after `cmake .` in that folder, reports v0.37.0-61-g13350ca, its own commit; snapshot cg35, the build of the fork's head 8af6c4c, reports v0.37.0-67-g8af6c4c (the builds in between, cg34a to cg35c, were made in folders configured earlier and report older strings). The
@@ -346,7 +347,7 @@ default hold was 1 until 2026-11-04 and is 0.5 since toolkit commit 4a7e20e of t
 launch's mesh floor from 0.02 to 0.05 mm (0.871 M cells instead of 1.071 M); `RFSIM_PROBE_END_HOLD=1` and
 `RFSIM_MIN_CELL=0.02` give the old values.
 
-**The tiled sweep.** Patch 0040 (not in cg31; in cg33, the build installed since 2026-11-14) gives the multithreaded engine a
+**The tiled sweep.** Patch 0040 (not in cg31; in cg33 and cg35, the builds installed from 2026-11-14 to 2026-11-24 and since) gives the multithreaded engine a
 second sweep, opt-in through `OPENEMS_TBLOCK`. The fused sweep passes over the whole grid once per timestep. The
 tiled sweep runs k timesteps on one tile of x-lines before it moves on, and all threads work in that tile, each on
 its share of the y lines, with one spin barrier per task, so a tile is read from memory once per k timesteps. A task
@@ -403,7 +404,7 @@ with the same fields. Most of their changes have a switch among the rows above; 
 three components of a cell at a time (0036) and the offsets and counts of the extension data as constants of the
 kernel (0037) have none (`results/metal_engine_cg31_2026-11-11.txt`; the paper's section "After publication"). The
 engine is opt-in: the default engine stays the multithreaded CPU engine. The build
-installed on the author's Mac has it since 2026-11-06 (cg29, from 2026-11-11 cg31, since 2026-11-14 cg33; cg18, installed there from
+installed on the author's Mac has it since 2026-11-06 (cg29, from 2026-11-11 cg31, from 2026-11-14 cg33, since 2026-11-24 cg35; cg18, installed there from
 2026-11-04 to 2026-11-06, did not), and the author's toolkit does not select it. It needs a build with `ENABLE_METAL`
 on macOS (section 5);
 without it the name is unknown and the run uses the default engine without a message (section 8). It was run only on
@@ -642,7 +643,7 @@ with 0 differences (`results/cpu_items_cg33_2026-11-13.txt`, section 1). On 2026
 installed build cg31 and then cg33 each passed `check --lite` (18 of 18 rows identical to stock on the six models), the Debye check,
 `diamond-check` (72 of 72), the validation suite (15 of 15, also on `metal-diamond`) and both boards end to end with the stop steps
 of the other machines (34300 and 50320), and the same again from the install of cg33 (`results/studio_speed_set_2026-11-15.txt`,
-header). On 2026-11-21 to 2026-11-24, on the Mac Studio (the machine loaded by other programs, so only the verdicts count), the snapshots of patches 0044 to 0049 (cg34a to cg35c) were checked before every timed slot. For patches 0044 to 0046: `check --lite`, 18 of 18 rows identical to stock on the six models, the Debye check, the validation suite (15 of 15), raw fields and probes on 17 kinds of model with band heights from 1 to NY-1 and 1 to 6 threads (1388 of 1388 identical), the closed cylinder (116 of 116), the steady-state stop step with Mur and with PML, and `bench.py`'s six cases at XS with bands of 5, 2 and 1 lines (`results/large_grid_cg34_2026-11-22.txt`). For patches 0047 to 0049: 630, 501 and 470 box configurations (0047, 0048, 0049), the dispersive check (`ade_check`) against stock at 50 k and 1 M cells, the closed cylinder, the six harness models, the Debye check and the validation suite (15 of 15); a setup check that the operator arrays are equal by hash at different pool sizes (`results/dispersive_cg35_2026-11-23.txt`). In the final benchmark of patches 0044 to 0046 the probes were identical to cg33's on 54 of 54 rows. On the head's rebuild from its commit (snapshot cg35, v0.37.0-67-g8af6c4c) the Debye check, the six-model check (`--lite`, 18 of 18 rows identical to stock) and the validation suite (15 of 15) passed on 2026-11-24; the full check of this section was not run on it. The
+header). On 2026-11-21 to 2026-11-24, on the Mac Studio (the machine loaded by other programs, so only the verdicts count), the snapshots of patches 0044 to 0049 (cg34a to cg35c) were checked before every timed slot. For patches 0044 to 0046: `check --lite`, 18 of 18 rows identical to stock on the six models, the Debye check, the validation suite (15 of 15), raw fields and probes on 17 kinds of model with band heights from 1 to NY-1 and 1 to 6 threads (1388 of 1388 identical), the closed cylinder (116 of 116), the steady-state stop step with Mur and with PML, and `bench.py`'s six cases at XS with bands of 5, 2 and 1 lines (`results/large_grid_cg34_2026-11-22.txt`). For patches 0047 to 0049: 630, 501 and 470 box configurations (0047, 0048, 0049), the dispersive check (`ade_check`) against stock at 50 k and 1 M cells, the closed cylinder, the six harness models, the Debye check and the validation suite (15 of 15); a setup check that the operator arrays are equal by hash at different pool sizes (`results/dispersive_cg35_2026-11-23.txt`). In the final benchmark of patches 0044 to 0046 the probes were identical to cg33's on 54 of 54 rows. On the head's rebuild from its commit (snapshot cg35, v0.37.0-67-g8af6c4c) the Debye check, the six-model check (`--lite`, 18 of 18 rows identical to stock) and the validation suite (15 of 15) passed on 2026-11-24; the full check of this section was not run on it. The same day the head was installed (cg35, sha256 09fd6d11..., UUID 0A4FEF8E-...), and from the install the Debye check, `check --lite` (18 of 18 rows), the validation suite (15 of 15 on the fastest engine and on `metal-diamond`), `diamond-check` (72 of 72), both boards end to end (stop steps 34300 and 50320) and the smoke suite (14 of 14; 261 tests in 28 suites in all) passed, on the machine loaded by other programs (verdicts only). The
 build from a fresh clone was not repeated with the 39, the 40, the 43 or the 49 patches. `scripts/README.md` lists the scripts.
 
 Harness knobs: `OPENEMS_BENCH_RUNS=dir` puts the run directories (probe files, dumps, logs) somewhere other than

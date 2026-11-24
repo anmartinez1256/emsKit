@@ -90,7 +90,7 @@ published then (0001 to 0027) were built from a fresh clone of upstream's superp
 that build passed `check.sh` (every run identical to stock on the six models), the Debye check, `diamond_check.sh`
 72 of 72, the six models on `metal-diamond`, the validation suite 15 of 15 twice and the cylindrical multigrid, on a
 loaded Mac (`results/fresh_build_pub29_2026-11-07.txt`). From 2026-11-11 to 2026-11-14 the build installed on the author's Mac was cg31
-(patches 0001 to 0039); since 2026-11-14 it is cg33 (patches 0001 to 0043, see below). Its checks of that day are not the full check of `BUILD.md` section 9: each of its steps
+(patches 0001 to 0039); from 2026-11-14 to 2026-11-24 it was cg33 (patches 0001 to 0043, see below), and since 2026-11-24 it is cg35 (patches 0001 to 0049, 8af6c4c). The checks of 2026-11-14 are not the full check of `BUILD.md` section 9: each of its steps
 (snapshots cg30a to cg30l and cg31a) passed `diamond_check.sh`, 72 of 72; the snapshot of patches 0001 to 0038 passed
 `check --lite` (all identical to stock on the six models, 18 of 18 rows), the Debye check, the validation suite on
 the Metal diamond engine (15 of 15) and the GCPW line's end-to-end run on that engine; for patch 0039, a closed
@@ -102,7 +102,7 @@ toolkit's defaults, which stopped at the same steps as with cg29, 34300 (GCPW li
 was never installed on its own; it is in cg33. It adds an opt-in tiled sweep to the multithreaded engine (item 22 below). Its snapshot cg32d gave
 the fused sweep's results in every test of `scripts/tiled_sweep/check.zsh`, and with the switch unset `check --lite`
 was all identical to stock on the six models, 18 of 18 rows (`results/tiled_sweep_cg32_2026-11-11.txt`).
-Patches 0041 to 0043, the fork's head from 2026-11-13 to 2026-11-22 (13350ca), were not installed when they were measured on the M5 Pro; cg33 (patches 0001 to 0043, sha256 b81e39a0..., UUID ABEE95D4-...) has been the installed build since 2026-11-14, on the Mac Studio below. 0041 changes where the
+Patches 0041 to 0043, the fork's head from 2026-11-13 to 2026-11-22 (13350ca), were not installed when they were measured on the M5 Pro; cg33 (patches 0001 to 0043, sha256 b81e39a0..., UUID ABEE95D4-...) was the installed build from 2026-11-14 to 2026-11-24, on the Mac Studio below. 0041 changes where the
 automatic thread count starts its search, 0042 packs the Debye, Lorentz and Drude line hooks and 0043 hardens that code (items
 23 and 24 below). Their snapshots cg33a to cg33d gave stock's results in every check of 2026-11-13, on the M5 Pro under
 macOS 27.2.1 and with the Mac loaded by other programs, so only the verdicts count: `scripts/ade_check/ade_check2.py`, which
@@ -213,7 +213,7 @@ runs notch x3 9 to 13 % slower. The tiled sweep of patch 0040 led the fused swee
 `results/m5pro_tiled_sweep_2026-11-12.txt` and in the paper's section on the M5 Pro; the scripts are in
 `scripts/m5pro/`.
 
-**A later CPU build (patches 0041 to 0043, the fork's head then, 13350ca; not installed then, installed on the Mac Studio since 2026-11-14), on the M5 Pro, 2026-11-12 and
+**A later CPU build (patches 0041 to 0043, the fork's head then, 13350ca; not installed then, installed on the Mac Studio from 2026-11-14 to 2026-11-24), on the M5 Pro, 2026-11-12 and
 2026-11-13** (`results/cpu_items_cg33_2026-11-13.txt`; a set of its own; every run of the fork's builds in these comparisons gave its reference run's probes; the other
 processes at 20 to 37 % of one core in the first night, in the second at 17 to 29 % in the GCPW runs; the figures are medians
 of paired interleaved rounds). The automatic thread count (patch 0041, 4 rounds) gave 0.97 to 1.00 of 15 fixed threads on the
@@ -352,7 +352,7 @@ dispersive at 30 M is 0.97 of upstream's head; at 6 threads master 1d710c2 leads
 dispersive 0.90 to 0.96 after the pass); upstream sets the dispersive case up in 2.1 to 2.3 s against the fork's 4.9 s, and its head
 needs 2680 MiB against 3737; the two boards are below the band rule's threshold, so they gain nothing; and the fork's Metal engine has
 no column in `bench.py`'s tables, since it has no GPU version of the steady-state detection that every sinusoidal case adds. These
-numbers are of the M5 Max set and are compared only with each other. The patches are not installed (the installed build is cg33).
+numbers are of the M5 Max set and are compared only with each other. The patches were not installed when measured (the installed build was cg33; the head, cg35, has been installed since 2026-11-24).
 
 **A base-M5 column with the current builds (a set of its own).** On 2026-11-16 the MacBook Air ran stock v0.37.0, cg31 and cg33 on
 the six models (macOS 27.2.1, one job on the machine; `results/air_m5_column_2026-11-16.txt`): cg33's CPU engine reached 1.95 times
@@ -372,7 +372,7 @@ domain-decomposed engine that openEMS does not have today (see `ROADMAP.md`).
 |---|---|
 | `paper/` | the technical report (LaTeX source, figures with their scripts, PDF) and `paper/code_notes.md`, notes on each code change of patches 0001 to 0006 and of patches 0040 to 0043 written from the diffs (patches 0007 to 0039 are described in `CHANGELOG.md`, the paper and their commit messages); `paper/figures/tables.py` writes the paper's two tables of cg29 and the speed table of this README from `results/` |
 | `patches/README.md` | what each patch folder applies to, in which order, and its licence |
-| `patches/openems/` | the fork as 49 `git am` patches on commit 7bb294f of upstream's former `gpu-engine` branch (`BASE_origin_gpu-engine.txt`), plus one cumulative diff: 0001 to 0006 = snapshot cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007 to 0016 = the Metal diamond engine (snapshots cg19 to cg28); 0017 to 0027 = the CPU items of snapshot cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028 to 0039 = the first twelve commits of 2026-11-11 (0028 the energy schedule of a run without an end criterion, 0029 to 0038 the Metal diamond engine, 0039 line hooks for the cylinder extension), which make cg31, the build installed there since 2026-11-11; 0040 = the opt-in tiled sweep of the multithreaded engine, committed that evening (snapshot cg32d; not installed); 0041 to 0043 = the thread search from every non-efficiency core and the packed dispersive line hooks with their hardening, written on 2026-11-12 and 2026-11-13 and committed on 2026-11-13 (snapshots cg33a to cg33d, commit 13350ca = cg33, the build installed since 2026-11-14); 0044 to 0046 = the CPU engine on large grids (box hooks, the y-banded fused sweep, box hooks for Mur, the dispersive extensions and the closed cylinder; snapshots cg34a to cg34c, cg34 = 8d513ba; written on 2026-11-21 and 2026-11-22); 0047 to 0049 = the dispersive pass (vector groups, Debye transients in per-thread scratch, setup on the setup threads; snapshots cg35a to cg35c, the fork's head 8af6c4c = cg35, written on 2026-11-23 and 2026-11-24; 0044 to 0049 are not installed). They need the CSXCAD patch below (they do not build against a stock CSXCAD 0.7.0), and they apply to that base only: upstream has since merged a reworked GPU engine into master, deleted the branch and restructured the engines |
+| `patches/openems/` | the fork as 49 `git am` patches on commit 7bb294f of upstream's former `gpu-engine` branch (`BASE_origin_gpu-engine.txt`), plus one cumulative diff: 0001 to 0006 = snapshot cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007 to 0016 = the Metal diamond engine (snapshots cg19 to cg28); 0017 to 0027 = the CPU items of snapshot cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028 to 0039 = the first twelve commits of 2026-11-11 (0028 the energy schedule of a run without an end criterion, 0029 to 0038 the Metal diamond engine, 0039 line hooks for the cylinder extension), which make cg31, the build installed there since 2026-11-11; 0040 = the opt-in tiled sweep of the multithreaded engine, committed that evening (snapshot cg32d, not installed on its own); 0041 to 0043 = the thread search from every non-efficiency core and the packed dispersive line hooks with their hardening, written on 2026-11-12 and 2026-11-13 and committed on 2026-11-13 (snapshots cg33a to cg33d, commit 13350ca = cg33, the build installed from 2026-11-14 to 2026-11-24); 0044 to 0046 = the CPU engine on large grids (box hooks, the y-banded fused sweep, box hooks for Mur, the dispersive extensions and the closed cylinder; snapshots cg34a to cg34c, cg34 = 8d513ba; written on 2026-11-21 and 2026-11-22); 0047 to 0049 = the dispersive pass (vector groups, Debye transients in per-thread scratch, setup on the setup threads; snapshots cg35a to cg35c, the fork's head 8af6c4c = cg35, written on 2026-11-23 and 2026-11-24; the head is installed since 2026-11-24). They need the CSXCAD patch below (they do not build against a stock CSXCAD 0.7.0), and they apply to that base only: upstream has since merged a reworked GPU engine into master, deleted the branch and restructured the engines |
 | `patches/csxcad/` | one patch on CSXCAD v0.7.0 (material lookups during operator setup), under LGPL-3.0-or-later like CSXCAD (`COPYING.LESSER`) |
 | `bench/` | the harness: `bench.py` (in-process runs with a fixed step count, S-parameter comparison; the GPU engines and `OPENEMS_FTZ` runs are compared but marked tolerant), `check.sh` (six models, five thread settings, bit-identity against stock), `abtest.py` (paired interleaved rounds, with waits for a quiet Mac), `usage.py` (the other processes' CPU and GPU use during each run), the models (`models.py`: the six benchmark models and two that only the harness runs, not `emskit fdtd`: `cube`, the free-space cube of the common benchmarks, in the records of 2026-11-10 and 2026-11-11, and `lbox`, the benchmark model of luikore's engine, in the records of 2026-11-11) |
 | `bench/validation/` | a validation suite against closed-form references (dispersive slabs, a rectangular and a cylindrical cavity, a WR-90 guide, a microstrip line), with same-build engine comparisons on the dispersive slabs; its runs (`results/validation_*`): cg18, cg29 and the fresh build of 2026-11-07 of the patches published then, 0001 to 0027 (`validation_pub29_*`), 15 of 15 each on the Mac, each with the multithreaded engine at 4 threads and with the default engine and thread count (`validation_cg29pre_*` is an earlier build of cg29's topics); the Metal diamond engine 15 of 15 on cg23 and on cg27 (its slabs equal to the basic engine; the cylindrical cavity runs on the cylindrical CPU engine); snapshot cg17 (patches 0001 to 0005) 15 of 15 with its defaults and at 8 threads (two runs made outside the project's log); stock v0.37.0 15 of 15 on the Mac and 12 of 12 on a Linux x86_64 VM (the suite's earlier version, without the engine comparisons); and two negative controls that fail their Debye checks as they should, a stock build with the Debye hooks disabled on the VM (2 of 3 checks pass) and a build of patches 0001 to 0004 (the Debye bug) on the Mac (4 of 6 pass). See `bench/validation/README.md` |
@@ -386,7 +386,7 @@ domain-decomposed engine that openEMS does not have today (see `ROADMAP.md`).
 
 The fork is also kept as two git branches with the same changes as commits: the openEMS fork's branch
 [`speed-m5-gpu`](https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu) holds the 49 commits of
-`patches/openems/` on 7bb294f (head 8af6c4c; the installed build cg33 is its commit 13350ca, the 43rd, six before the head; the build installed until 2026-11-14, cg31, is its commit ff2538a, the 39th),
+`patches/openems/` on 7bb294f (head 8af6c4c, the installed build cg35 since 2026-11-24; cg33, installed from 2026-11-14 to 2026-11-24, is its commit 13350ca, the 43rd, six before the head; the build installed until 2026-11-14, cg31, is its commit ff2538a, the 39th),
 and the CSXCAD fork's branch
 [`speed-m5`](https://github.com/anmartinez1256/CSXCAD/tree/speed-m5) the one commit of `patches/csxcad/` on v0.7.0.
 
@@ -415,7 +415,7 @@ the 14 smoke tests among them, so the eleven that start simulations passed there
 installed library is the one the smoke tests' install row names (sha256 b81e39a0..., UUID ABEE95D4-...). On 2026-11-24 the registry grew to
 50 names (`OPENEMS_TBLOCK_BOX`, `OPENEMS_YBAND`, `OPENEMS_YBAND_CACHE`, `OPENEMS_ADE_VEC`, `OPENEMS_ADE_COEF`, `OPENEMS_ADE_SCRATCH` and
 `OPENEMS_SETUP_THREADS`; patches 0044, 0045, 0047, 0048 and 0049) with one more unit test and the library row of snapshot cg35: 261 tests in
-28 suites with the smoke runs; the 247 unit tests ran and passed on that tree on the Mac Studio, the 14 smoke tests were not repeated that day.
+28 suites with the smoke runs; the 247 unit tests ran and passed on that tree on the Mac Studio. The head was installed there later the same day (cg35, sha256 09fd6d11..., UUID 0A4FEF8E-...; the installed row of the tests names it), and from the install the 14 smoke tests passed, so all 261 tests in 28 suites passed on this tree, with the Debye check, `check --lite` (18 of 18 rows), the validation suite (15 of 15 on the fastest engine and on `metal-diamond`), `diamond-check` (72 of 72) and both boards end to end (stop steps 34300 and 50320); the machine was loaded by other programs, so these are verdicts only, and they are not the full check of `BUILD.md` section 9.
 A cloud code review of 18 of the package's 31 source files found one bug and five minor issues on 2026-11-08; all
 six are fixed (`CHANGELOG.md`, 2026-11-09). A
 second review of all 31 files on 2026-11-09 raised 28 findings; its confirmed ones are fixed or listed
@@ -509,8 +509,8 @@ interrupted.
 Items 1 to 11 are in patches 0001 to 0006 (cg18), item 12 in patches 0007 to 0016 (cg19 to cg28), items 13 to 18 in
 patches 0017 to 0027 (cg29), items 19 to 21 in patches 0028 to 0039 (cg31, the build installed on the author's Mac
 from 2026-11-11 to 2026-11-14, which has these twenty-one), item 22 in patch 0040 and items 23 and 24 in patches 0041 to 0043 (13350ca,
-snapshot cg33, installed on the author's Mac since 2026-11-14), items 25 to 30 in patches 0044 to 0049 (the fork's head 8af6c4c, snapshot cg35,
-not installed).
+snapshot cg33, installed on the author's Mac from 2026-11-14 to 2026-11-24), items 25 to 30 in patches 0044 to 0049 (the fork's head 8af6c4c, snapshot cg35,
+installed since 2026-11-24).
 
 1. Spin barriers and a per-extension hook plan: stock passes 2 + 6N condition-variable barriers per timestep for N extensions, whether or not an extension uses the hook; the fork passes a handful.
 2. A rewritten inner loop: 94 to 41 instructions per loop iteration of the voltage update (95 to 42 for the currents), which updates the three field components of four cells (counted in the disassembly of the stock and the cg18 library, `results/kernel_loop_instructions_2026-11-03.txt`); in a standalone copy of the loops, on one thread, GCC 16 runs the stock loop 1.16 to 1.39x faster than Apple clang and the rewrite at about the same speed (`results/kernel_gcc_vs_clang_2026-11-03.txt`).
@@ -558,7 +558,7 @@ materials' pass and the kernel constants have none). The operator setup uses eve
 
 ## Status and licence
 
-The fork is used daily by the author (as cg33, patches 0001 to 0043, commit 13350ca, since 2026-11-14; the head, patches 0001 to 0049, is not installed, as cg31, patches 0001 to 0039,
+The fork is used daily by the author (as cg35, patches 0001 to 0049, commit 8af6c4c, since 2026-11-24, as cg33, patches 0001 to 0043, commit 13350ca, from 2026-11-14 to 2026-11-24, as cg31, patches 0001 to 0039,
 from 2026-11-11 to 2026-11-14, as cg29, patches 0001 to 0027,
 from 2026-11-06 to 2026-11-11, and as cg18, patches 0001 to 0006, from 2026-11-04 to 2026-11-06; the author's toolkit
 runs it with no change on its side, on the CPU engine with the automatic thread count, and does not select the Metal

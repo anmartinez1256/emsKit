@@ -9,6 +9,26 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-24 (later): the head installed; release 0.3.0
+
+The fork's head, 8af6c4c (patches 0001 to 0049, snapshot cg35, `v0.37.0-67-g8af6c4c`), was installed on the author's Mac
+Studio on 2026-11-24. Before it the installed build was cg33 (13350ca, patches 0001 to 0043), from 2026-11-14 to
+2026-11-24. The entry of the same day below says "not installed" and "the smoke tests were not repeated" as of its
+writing; it keeps its text.
+
+- Install. Only libopenEMS changed (sha256 09fd6d11..., UUID 0A4FEF8E-..., version `v0.37.0-67-g8af6c4c`); no installed
+  header or Python module differs between 13350ca and 8af6c4c.
+- Checks from the install, on the Mac Studio loaded by other programs (verdicts only, no speeds): the Debye check; the
+  six-model check against stock with `--lite`, 18 of 18 rows identical; the validation suite 15 of 15 on the fastest
+  engine and on `metal-diamond`; `diamond-check` 72 of 72; both boards end to end with the same stop steps as before
+  (GCPW 34300, SMA 50320); the smoke suite 14 of 14. With the 247 unit tests, all 261 tests in 28 suites passed on this
+  tree. Not the full check of `BUILD.md` section 9.
+- Tests. The installed rows of `LibraryTests.swift` and the install list of `SmokeTests.swift` gained the row of cg35;
+  the count stays 261 tests in 28 suites.
+- Documents. The statements that say which build is installed now name cg35 since 2026-11-24 and cg33 from 2026-11-14
+  to 2026-11-24; measurements keep naming the build they were made with (the Mac Studio set is cg33's).
+- Release 0.3.0 (`CITATION.cff`, 2026-11-24). No DOI for 0.3.0 is minted yet.
+
 ## 2026-11-24: large grids and the dispersive pass are published as patches 0044 to 0049; the documents are brought up to date
 
 The six local commits of the entries of 2026-11-22 and 2026-11-23 (d918386, e05d419, 8d513ba, d3374c9, f7cae41 and

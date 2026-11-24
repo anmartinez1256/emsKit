@@ -22,11 +22,12 @@ enum Smoke {
     static let stock = (sha: "7eaaee52", version: "v0.37.0", uuid: "B1A89DA1")
     static let cg29 = (sha: "3c859d81", version: "v0.37.0-44-g074a687", uuid: "40BC8CFF")
     /// The installed libopenEMS as section 4.2 records it: cg18's build until 2026-11-06, cg29's until 2026-11-11,
-    /// cg31's until 2026-11-14 and cg33's since, each in other bytes than the snapshot's file.
+    /// cg31's until 2026-11-14, cg33's until 2026-11-24 and cg35's since, each in other bytes than the snapshot's file.
     static let installs = [(sha: "819179a2", uuid: "24C8A7F2", build: "cg18"),
                            (sha: "0d81372e", uuid: "40BC8CFF", build: "cg29"),
                            (sha: "23630ed6", uuid: "499C07FD", build: "cg31"),
-                           (sha: "b81e39a0", uuid: "ABEE95D4", build: "cg33")]
+                           (sha: "b81e39a0", uuid: "ABEE95D4", build: "cg33"),
+                           (sha: "09fd6d11", uuid: "0A4FEF8E", build: "cg35")]
     /// The knobs that came after cg29 (patches 0029 to 0038, and the tiled sweep's three of patch 0040): cg29's
     /// libopenEMS does not have them.
     static let afterCg29: Set<String> = ["OPENEMS_DIAMOND_MERGE", "OPENEMS_DIAMOND_MURMERGE", "OPENEMS_DIAMOND_EVEN",
