@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The knob registry (spec 4.3): the 43 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
+// The knob registry (spec 4.3): the 50 OPENEMS_* names of BUILD.md section 7, their values, which ones the fork reads
 // once per process, the commands that take them, and the library file their name is searched in. For bench and ab a
 // knob travels only inside the CFGs; for validate, e2e and run it goes into the Python process's environment.
 // check, debye-check and diamond-check take none.
@@ -64,7 +64,7 @@ struct FdtdKnobInfo: Codable, Sendable, Equatable {
 
 /// The registry and the knob rules.
 enum FdtdKnobs {
-    /// The 43 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
+    /// The 50 knobs of BUILD.md section 7, in its order (the knob tests compare the names with that table).
     static let registry: [FdtdKnob] = [
         entry("OPENEMS_FUSED", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_FUSED_BLOCK", .integer(min: 1), "integer >= 1"),
@@ -72,9 +72,12 @@ enum FdtdKnobs {
         entry("OPENEMS_FLAGS_SPIN_US", .integer(min: 0), "integer >= 0"),
         entry("OPENEMS_FUSED_STAT", .onlyOne, "1", once: true),
         entry("OPENEMS_BALANCE", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_YBAND", .integerOrAuto(min: 0), "auto, or an integer >= 0 (0 = off)"),
+        entry("OPENEMS_YBAND_CACHE", .number(min: 0, max: nil), "a number >= 0 (MiB a thread; 0 = the machine's value)"),
         entry("OPENEMS_TBLOCK", .integerOrAuto(min: 0), "auto, or an integer >= 0 (0 = off)"),
         entry("OPENEMS_TBLOCK_W", .integer(min: 1), "integer >= 1"),
         entry("OPENEMS_TBLOCK_HOOKS", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_TBLOCK_BOX", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_NO_STAGGER", .onlyOne, "1", once: true),
         entry("OPENEMS_OP_INDEX_PER_CELL", .onlyOne, "1"),
         entry("OPENEMS_NO_PACKED_COEFF", .onlyOne, "1"),
@@ -86,9 +89,13 @@ enum FdtdKnobs {
         entry("OPENEMS_PML_YVEC", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_ADE_MERGED", .oneOf(["0", "1"]), "0, 1"),
         entry("OPENEMS_ADE_PACKED", .oneOf(["0", "1"]), "0, 1"),
+        entry("OPENEMS_ADE_VEC", .oneOf(["0", "1", "2"]), "0, 1, 2"),
+        entry("OPENEMS_ADE_COEF", .oneOf(["group", "table", "table32"]), "group, table, table32"),
+        entry("OPENEMS_ADE_SCRATCH", .oneOf(["0", "1", "alt"]), "0, 1, alt"),
         entry("OPENEMS_QOS", .oneOf(["0", "1", "2"]), "0, 1, 2"),
         entry("OPENEMS_FTZ", .onlyOne, "1", once: true),
         entry("OPENEMS_NF2FF_LEGACY", .onlyOne, "1", once: true, file: FdtdLibraries.nf2ffFile),
+        entry("OPENEMS_SETUP_THREADS", .integer(min: 1), "integer >= 1"),
         entry("OPENEMS_SETUP_TIMING", .onlyOne, "1", once: true),
         entry("OPENEMS_EXPORT_OPERATOR", .existingFolder, "an existing folder", runOnly: true),
         entry("OPENEMS_EXPORT_FIELDS", .existingFolder, "an existing folder", runOnly: true),

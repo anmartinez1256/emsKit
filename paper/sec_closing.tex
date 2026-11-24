@@ -183,9 +183,14 @@ as an opt-in tiled sweep (patch 0040, Section~\ref{sec:tiled}): at 4 threads it 
 best on two large grids (1.08 and 1.23$\times$) and behind on four other models (0.71--0.92$\times$); on the M5 Pro,
 timed as a set of its own, it pays only on the 16.8\,M-cell box (1.43$\times$; Section~\ref{sec:m5pro}). What stays
 open is a choice between the two sweeps at run time and, on the M5, a paired run of the tiled sweep against master's
-\code{cpu} engine. The fused sweep was run against that engine on the M5 Pro (Section~\ref{sec:cg33}); the largest open CPU
-item is the 8\,M-cell dispersive case, where the fork is at 0.54 to 0.73 of master's rate and neither the packed hooks of
-patch 0042 nor the tiled sweep close the gap. In the Metal kernel, the cost of an extension
+\code{cpu} engine. The fused sweep was run against that engine on the M5 Pro (Section~\ref{sec:cg33}) and, with the bands of patches
+0044 to 0046, on the M5 Max at three sizes (Section~\ref{sec:large}), where the large-grid gap to it (0.83--0.99$\times$ at
+30\,M cells) is closed on five of six cases, and the dispersive case, 0.48$\times$ there, is brought to 1.20$\times$ master and 0.97$\times$
+upstream's newest engine by patches 0047 to 0049. The open CPU items are the remaining 3\,\% behind that engine on the
+dispersive case at 30\,M cells (its setup, 4.9\,s against 2.1--2.3\,s, and its memory, 3\,737 against 2\,680\,MiB), the 6-thread
+points, where master's older engine still leads on cases with extension work (0.85--0.96$\times$), the two boards, which are below the
+bands' threshold and unchanged, a run-time choice between the fused and the tiled sweep, and a GPU version of the steady-state
+detection, without which the fork's Metal engine cannot run upstream's benchmark cases on the GPU. In the Metal kernel, the cost of an extension
 that is compiled in: in timing-only builds of two snapshots the GCPW line ran 1.26--1.35$\times$ as fast without its
 Mur faces and 1.22--1.32$\times$ without its sheets, but skipping one of their stages at run time (on the later of the
 two) gave 1.02--1.07$\times$, and what in the GPU's execution makes it so was not found. The third is a shorter excitation pulse (next paragraph).
@@ -249,19 +254,19 @@ the repository and its folder keep that name, as do the result files, the patche
 The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
 \href{https://doi.org/10.5281/zenodo.24118865}{10.5281/zenodo.24118865}), contains:
 \begin{itemize}
-\item \code{patches/openems/}: the fork as \code{git am} patches 0001--0043 on commit 7bb294f of upstream's
+\item \code{patches/openems/}: the fork as \code{git am} patches 0001--0049 on commit 7bb294f of upstream's
   \code{gpu-engine} branch (\code{BASE\_origin\_gpu-engine.txt}; upstream has since deleted the branch, so
-  \code{BUILD.md} fetches the commit by its hash), and one cumulative diff that gives the same tree (211a3de).
+  \code{BUILD.md} fetches the commit by its hash), and one cumulative diff that gives the same tree (08098d9).
   0001--0006 are
   cg18, the build installed on the author's Mac from 2026-11-04 to 2026-11-06; 0007--0016 add the Metal diamond
   engine, one patch per snapshot cg19--cg28; 0017--0027 are the CPU items of cg29 (Section~\ref{sec:cg29}), so
   0001--0027 give cg29, the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are the first twelve
   commits of 2026-11-11 (72a6492 to ff2538a, Section~\ref{sec:cg31}), so 0001--0039 give cg31, the build installed there
   from 2026-11-11 to 2026-11-14 (tree dc4a352); 0040 (0ef186b, snapshot cg32d) adds the opt-in tiled sweep of
-  Section~\ref{sec:tiled}; 0041 (8bcec90, snapshot cg33a), 0042 (c6ef5c5, cg33c) and 0043 (13350ca, the fork's head,
+  Section~\ref{sec:tiled}; 0041 (8bcec90, snapshot cg33a), 0042 (c6ef5c5, cg33c) and 0043 (13350ca, the installed build's head,
   cg33d) are the thread-search start, the packed dispersive hooks and their guard of Section~\ref{sec:cg33}; 0001--0043 give
-  cg33, the build installed on the author's Mac Studio on 2026-11-14 (Section~\ref{sec:studio}). The result files carry these snapshot names. All 43 patch files were made again on 2026-11-13, when 0041
-  to 0043 were added (before that, 40 on 2026-11-11, when 0040 was added); in 0001--0040 only the numbering in the subject
+  cg33, the build installed on the author's Mac Studio on 2026-11-14 (Section~\ref{sec:studio}); 0044 (d918386, cg34a), 0045 (e05d419, cg34b), 0046 (8d513ba, cg34c) are the box hooks, the y-banded fused sweep and the box hooks of the remaining extensions, and 0047 (d3374c9, cg35a), 0048 (f7cae41, cg35b) and 0049 (8af6c4c, the fork's head, cg35c) are the vector groups of the dispersive hooks, the Debye transients in per-thread scratch and the threaded dispersive setup (Section~\ref{sec:large}); 0001--0049 give cg35, a build that is not installed. The result files carry these snapshot names. All 49 patch files were made again on 2026-11-24, when 0044
+  to 0049 were added (before that, 43 on 2026-11-13, when 0041 to 0043 were added, and 40 on 2026-11-11); in 0001--0043 only the numbering in the subject
   line changed.
   The fork's commits up to cg29 were rewritten for publication on 2026-11-07, with the author's public identity,
   the trailers
@@ -271,8 +276,8 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   build folders were configured, from before the rewrite; the fresh build of 2026-11-07 (pub29) prints the hash of
   its own \code{git am} commit, v0.37.0-45-g1d091c7, and the installed cg31 that of its commit,
   v0.37.0-57-gff2538a. Snapshot cg32d was built in the folder configured for cg31 and prints cg31's string, and cg33a to
-  cg33d print v0.37.0-58-g0ef186b; cg33, rebuilt from the fork's head after configuring again, prints
-  v0.37.0-61-g13350ca.
+  cg33d print v0.37.0-58-g0ef186b; cg33, rebuilt from 13350ca after configuring again, prints
+  v0.37.0-61-g13350ca (the installed build), and the fork's head, 8af6c4c, prints v0.37.0-67-g8af6c4c.
   \code{patches/csxcad/}: one patch on v0.7.0 (+9 lines), which the openEMS patches need. The changes made in this
   project to the author's simulation toolkit (rfsim) are not published, since the toolkit itself is private;
   Section~\ref{sec:modelling} and \code{CHANGELOG.md} describe them.
@@ -377,7 +382,7 @@ The repository that accompanies this report, \repourl{} (archived at Zenodo, DOI
   eight of cg31 and the three of the tiled sweep were added) and the suite one test more: 245 unit tests, 259 tests
   in 28 suites with the smoke runs; since 2026-11-13 it has 43 names (\code{OPENEMS\_TUNE\_START} and
   \code{OPENEMS\_ADE\_PACKED} were added), and the suite then had 260 tests (the 246 unit tests and the three smoke runs that start no simulation passed that day). On 2026-11-14 all 260 tests in 28 suites, the 14 smoke runs included, passed on the Mac Studio
-  (Section~\ref{sec:studio}); the count is unchanged. The full smoke runs had passed on 2026-11-10, before that day's later
+  (Section~\ref{sec:studio}). Since 2026-11-24 the list has 50 names (the seven new ones are named in Section~\ref{sec:method}) and the suite 261 tests. The full smoke runs had passed on 2026-11-10, before that day's later
   corrections, as did the runs on cg29: \code{check --lite} gave results identical to stock on the six models,
   \code{diamond-check} 72 of 72, and the GCPW end-to-end run finished (34\,300 steps). The checks of the installed cg29
   (Section~\ref{sec:method}) were run with it.

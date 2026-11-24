@@ -1,0 +1,1232 @@
+From d3374c91b3c8f8c807698ad01f8624814f19a322 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 20:26:45 -0600
+Subject: [PATCH 47/49] Dispersive line hooks a z-vector at a time,
+ coefficients apart from the state
+
+The packed hooks of the Lorentz / Drude and Debye extensions grouped
+four consecutive positions of an x-line. In a filled block those are
+four z of one column, that is four f4vectors with one lane each: every
+group gathered and scattered scalars through twelve float indices, and
+its block held coefficients and state together, so the whole block was
+read and written back each timestep (about 132 bytes a Lorentz cell and
+156 a Debye cell, against 49 for a plain cell).
+
+A group is now the positions of one f4vector (base offset and lane
+mask; masked lanes keep their field bits) whenever a hook has at least
+2.5 positions a group on average; thin structures such as conducting
+sheets keep the position groups. The coefficients live in a table of
+distinct sets with an index a group (16 or 32 bit, or a record a group
+when nearly every group differs), apart from the state that is written.
+The per-position arrays are freed after packing. The arithmetic of each
+lane is unchanged, so results stay bit-identical.
+
+OPENEMS_ADE_VEC=0 keeps the position groups, 2 forces vector groups;
+OPENEMS_ADE_COEF=group|table|table32 picks the coefficient layout
+(both for tests).
+
+Checked bit-identical: 630 box configurations (lanes 4, 3, 2, 1 and a
+split mask, both group kinds, every coefficient layout, y bands, tiled
+box mode, 1 to 6 threads), the dispersive check against stock at 50 k
+and 1 M cells, the closed cylinder, the six harness models, the Debye
+check and the validation suite.
+
+Mac Studio (M5 Max), upstream bench.py with a source, dispersive case,
+18 threads, MC/s before -> after: 30 M cells 2108 -> 2962, 8 M cells
+2068 -> 2976, 1 M cells 2777 -> 3942; memory at 30 M cells 6580 ->
+5857 MiB. Antenna case 0.99 to 1.02 at every size; the two boards
+(conducting sheets, position groups) 1.005 at 18 threads.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/extensions/engine_ext_debyematerial.cpp  | 232 +++++++++++++-----
+ FDTD/extensions/engine_ext_debyematerial.h    |  15 +-
+ FDTD/extensions/engine_ext_dispersive.cpp     | 113 +++++++++
+ FDTD/extensions/engine_ext_dispersive.h       | 186 +++++++++++++-
+ .../extensions/engine_ext_lorentzmaterial.cpp | 230 +++++++++++++----
+ FDTD/extensions/engine_ext_lorentzmaterial.h  |  23 +-
+ 6 files changed, 666 insertions(+), 133 deletions(-)
+
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index b69ee3d..1003d60 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -151,6 +151,7 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ {
+ 	m_Packed = false;
+ 	std::vector<float>().swap(m_Block);
++	m_Coef = CoefSets();
+ #if defined(__GNUC__) || defined(__clang__)
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+ 	// Debye has voltage ADE of order 0 only; the packed hooks replace exactly those
+@@ -165,100 +166,144 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 		return;
+ 	}
+ 	const size_t groups = m_GroupX.size();
+-	m_BlockStride = 3*(3*P+3)*4;
+-	const uint64_t need = (uint64_t)groups*m_BlockStride*sizeof(float);
++	m_BlockStride = 12*(P+2);
++	const unsigned int cstride = 12*(2*P+1);
++	const uint64_t base = (uint64_t)groups*m_BlockStride*sizeof(float) + GroupBytes();
+ 	const uint64_t used = PackedBytesOfOthers();
+-	if (used+need > 2*FieldBytes())
+-	{
+-		ClearGroups();
+-		ReportPackRefusal(PACK_LIMIT, "", need, used);
+-		return;
+-	}
+-	try
++	const uint64_t limit = 2*FieldBytes();
++	uint64_t need = base + (uint64_t)groups*cstride*sizeof(float);
++	int rc = (used+base > limit) ? (int)PACK_LIMIT : (int)PACK_OK;
++	const unsigned int* gp = m_GroupPos.data();
++	Operator_Ext_DebyeMaterial* op = m_Op_Ext_Deb;
++	if (rc==PACK_OK)
++		rc = BuildCoefSets(m_Coef, cstride, limit-used-base, [&](size_t g, float* c)
++		{
++			for (unsigned int l=0; l<4; ++l)
++			{
++				const unsigned int i = gp[4*g+l];   // = the original position index (SetupGroups: in x order)
++				if (i==~0u)
++					continue;
++				for (unsigned int n=0; n<3; ++n)
++				{
++					float* cn = c + 4*n*(2*P+1);
++					for (unsigned int o=0; o<P; ++o)
++					{
++						cn[4*o+l] = op->v_relax_ADE[o][n][i];
++						cn[4*(P+o)+l] = op->v_drive_ADE[o][n][i];
++					}
++					cn[4*(2*P)+l] = op->v_solve_ADE[n][i];
++				}
++			}
++		});
++	if (rc==PACK_OK)
+ 	{
+-		m_Block.assign((size_t)groups*m_BlockStride, 0.0f);
++		need = base + m_Coef.Bytes();
++		try
++		{
++			m_Block.assign((size_t)groups*m_BlockStride, 0.0f);
++		}
++		catch (std::bad_alloc&)
++		{
++			rc = PACK_ALLOC;
++		}
+ 	}
+-	catch (std::bad_alloc&)
++	if (rc!=PACK_OK)
+ 	{
+ 		std::vector<float>().swap(m_Block);
++		m_Coef = CoefSets();
+ 		ClearGroups();
+-		ReportPackRefusal(PACK_ALLOC, "", need, used);
++		ReportPackRefusal((PackRefusal)rc, "", need, used);
+ 		return;
+ 	}
+-	// coefficients, and the current state (zero before the first step) of every used lane
++	// the current state (zero before the first step) of every used lane
+ 	for (size_t g=0; g<groups; ++g)
+-		for (unsigned int l=0; l<m_GroupLanes[g]; ++l)
++		for (unsigned int l=0; l<4; ++l)
+ 		{
+-			const unsigned int i = m_GroupK[g]+l;   // = the original position index (SetupGroups: in x order)
++			const unsigned int i = gp[4*g+l];
++			if (i==~0u)
++				continue;
++			float* st = &m_Block[g*m_BlockStride];
+ 			for (unsigned int n=0; n<3; ++n)
+ 			{
+-				float* c = &m_Block[g*m_BlockStride + (size_t)n*(3*P+3)*4];
+ 				for (unsigned int o=0; o<P; ++o)
+-				{
+-					c[4*o+l] = volt_pole_ADE[o][n][i];
+-					c[4*(P+2+o)+l] = m_Op_Ext_Deb->v_relax_ADE[o][n][i];
+-					c[4*(2*P+2+o)+l] = m_Op_Ext_Deb->v_drive_ADE[o][n][i];
+-				}
+-				c[4*P+l] = volt_pre_ADE[n][i];
+-				c[4*(P+1)+l] = volt_ADE[0][n][i];
+-				c[4*(3*P+2)+l] = m_Op_Ext_Deb->v_solve_ADE[n][i];
++					st[4*(n*P+o)+l] = volt_pole_ADE[o][n][i];
++				st[4*(3*P+n)+l] = volt_pre_ADE[n][i];
++				st[4*(3*P+3+n)+l] = volt_ADE[0][n][i];
+ 			}
+ 		}
++	ReleaseGroupSetup();
+ 	m_Packed = true;
++	// the per-position state is never read again (every hook uses the blocks), nor the arrays of the unpacked line hooks
++	const uint64_t count = m_Op_Ext_Deb->m_LM_Count.at(0);
++	uint64_t freed = 0;
++	for (unsigned int n=0; n<3; ++n)
++	{
++		for (unsigned int o=0; o<P; ++o)
++		{
++			freed += volt_pole_ADE[o][n] ? count*sizeof(FDTD_FLOAT) : 0;
++			delete[] volt_pole_ADE[o][n];
++			volt_pole_ADE[o][n] = NULL;
++		}
++		freed += volt_pre_ADE[n] ? count*sizeof(FDTD_FLOAT) : 0;
++		delete[] volt_pre_ADE[n];
++		volt_pre_ADE[n] = NULL;
++		freed += volt_ADE[0][n] ? count*sizeof(FDTD_FLOAT) : 0;
++		delete[] volt_ADE[0][n];
++		volt_ADE[0][n] = NULL;
++	}
++	ReleaseLineData();
+ 	if (g_settings.GetVerboseLevel()>1)
+-		std::cout << GetExtensionName() << ": packed hooks, " << groups << " groups of " << m_Op_Ext_Deb->m_LM_Count.at(0)
+-				  << " positions, " << m_Block.size()*sizeof(float)/1048576.0 << " MiB" << std::endl;
++		std::cout << GetExtensionName() << ": packed hooks, " << GroupStats() << ", "
++				  << m_Coef.Count() << " coefficient sets (" << m_Coef.Kind() << "), " << PackedBytes()/1048576.0 << " MiB packed, "
++				  << freed/1048576.0 << " MiB of per-position state freed, line data freed" << std::endl;
+ #endif
+ }
+ 
+ #if defined(__GNUC__) || defined(__clang__)
+ namespace
+ {
+-// one group of PrePacked() (block b, float indices f, P poles): W = v_relax*W + v_drive*V, pre += W - W_old
+-inline BOXRUNS_INLINE void DebPreGroup(const float* __restrict volt, float* __restrict b, const unsigned int* __restrict f, unsigned int P)
++// one group of PrePacked() (state st, coefficients c, field through fl, P poles): W = v_relax*W + v_drive*V, pre += W - W_old
++template <class FL> inline BOXRUNS_INLINE void DebPreGroup(const FL& fl, float* __restrict st, const float* __restrict c, unsigned int P)
+ {
+-	const unsigned int cs = (3*P+3)*4;
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+-		float* __restrict c = b + n*cs;
+-		const unsigned int* fn = f + 4*n;
+-		const v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++		const float* __restrict cn = c + 4*n*(2*P+1);
++		float* __restrict w_ = st + 4*n*P;
++		const v4sf v = fl.Load(n);
+ 		v4sf pre = {0.0f, 0.0f, 0.0f, 0.0f};
+ 		for (unsigned int o=0; o<P; ++o)
+ 		{
+-			const v4sf w = Load4(c+4*o);
+-			const v4sf W = Load4(c+4*(P+2+o))*w + Load4(c+4*(2*P+2+o))*v;
++			const v4sf w = Load4(w_+4*o);
++			const v4sf W = Load4(cn+4*o)*w + Load4(cn+4*(P+o))*v;
+ 			pre += W - w;
+-			Store4(c+4*o, W);
++			Store4(w_+4*o, W);
+ 		}
+-		Store4(c+4*P, pre);
++		Store4(st+4*(3*P+n), pre);
+ 	}
+ }
+ 
+ // one group of PostPacked(): V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
+-inline BOXRUNS_INLINE void DebPostGroup(const float* __restrict volt, float* __restrict b, const unsigned int* __restrict f, unsigned int P)
++template <class FL> inline BOXRUNS_INLINE void DebPostGroup(const FL& fl, float* __restrict st, const float* __restrict c, unsigned int P)
+ {
+-	const unsigned int cs = (3*P+3)*4;
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+-		float* __restrict c = b + n*cs;
+-		const unsigned int* fn = f + 4*n;
+-		const v4sf v_raw = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
+-		const v4sf v_n = (v_raw - Load4(c+4*P)) * Load4(c+4*(3*P+2));
+-		Store4(c+4*(P+1), v_raw - v_n);
++		const float* __restrict cn = c + 4*n*(2*P+1);
++		float* __restrict w_ = st + 4*n*P;
++		const v4sf v_raw = fl.Load(n);
++		const v4sf v_n = (v_raw - Load4(st+4*(3*P+n))) * Load4(cn+4*(2*P));
++		Store4(st+4*(3*P+3+n), v_raw - v_n);
+ 		for (unsigned int o=0; o<P; ++o)
+-			Store4(c+4*o, Load4(c+4*o) + Load4(c+4*(2*P+2+o))*v_n);
++			Store4(w_+4*o, Load4(w_+4*o) + Load4(cn+4*(P+o))*v_n);
+ 	}
+ }
+ 
+-// one group of ApplyPacked(): V -= correction for the lanes [l0, l1) (four lanes as a vector)
+-inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __restrict b, const unsigned int* __restrict f, unsigned int P,
++// one position group of ApplyPacked(): V -= correction for the lanes [l0, l1) (four lanes as a vector)
++inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __restrict st, const unsigned int* __restrict f, unsigned int P,
+ 						  unsigned int l0, unsigned int l1)
+ {
+-	const unsigned int cs = (3*P+3)*4;
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+-		const float* c = b + n*cs + 4*(P+1);
++		const float* c = st + 4*(3*P+3+n);
+ 		const unsigned int* fn = f + 4*n;
+ 		if ((l0==0) && (l1==4))
+ 		{
+@@ -274,46 +319,95 @@ inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __
+ 				volt[fn[l]] = volt[fn[l]] - c[l];
+ 	}
+ }
++
++// one vector group of ApplyPacked(): the f4vector p (components cs floats apart) -= correction; lanes outside the mask keep their bits
++inline BOXRUNS_INLINE void DebApplyVec(float* __restrict p, unsigned int cs, ade_v4i mask, const float* __restrict st, unsigned int P)
++{
++	for (unsigned int n=0; n<3; ++n)
++	{
++		float* q = p + n*cs;
++		const v4sf old = Load4(q);
++		const v4sf v = old - Load4(st+4*(3*P+3+n));
++		Store4(q, AdeSelect(mask, v, old));
++	}
++}
++}
++
++// hook 0 = Pre, 1 = Post, 2 = Apply of the groups [g0, g1) (vector groups: whole groups)
++BOXRUNS_INLINE void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned int g0, unsigned int g1)
++{
++	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const CoefPtr cp(m_Coef);
++	float* blk = m_Block.data();
++	const size_t bs = m_BlockStride;
++	if (m_VecGroups)
++	{
++		const unsigned int cs = m_CompStride;
++		for (unsigned int g=g0; g<g1; ++g)
++		{
++			if (hook==2)
++				DebApplyVec(volt + m_GroupBase[g], cs, AdeLaneMask(m_GroupMask[g]), blk + g*bs, P);
++			else
++			{
++				const AdeVector fl = {volt + m_GroupBase[g], cs, AdeLaneMask(m_GroupMask[g])};
++				if (hook==0)
++					DebPreGroup(fl, blk + g*bs, cp(g), P);
++				else
++					DebPostGroup(fl, blk + g*bs, cp(g), P);
++			}
++		}
++		return;
++	}
++	for (unsigned int g=g0; g<g1; ++g)
++	{
++		const unsigned int* f = &m_GroupFi[12*(size_t)g];
++		if (hook==2)
++			DebApplyGroup(volt, blk + g*bs, f, P, 0, m_GroupLanes[g]);
++		else
++		{
++			const AdeGather fl = {volt, f};
++			if (hook==0)
++				DebPreGroup(fl, blk + g*bs, cp(g), P);
++			else
++				DebPostGroup(fl, blk + g*bs, cp(g), P);
++		}
++	}
+ }
+ 
+ // the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
+ void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
+ {
+-	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+-	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+-	for (unsigned int g=g0; g<g1; ++g)
+-		DebPreGroup(volt, &m_Block[(size_t)g*m_BlockStride], &m_GroupFi[12*(size_t)g], P);
++	PackedGroups(0, g0, g1);
+ }
+ 
+ // the operations of DoPostVoltageUpdatesLines() per lane: V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
+ void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1)
+ {
+-	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+-	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+-	for (unsigned int g=g0; g<g1; ++g)
+-		DebPostGroup(volt, &m_Block[(size_t)g*m_BlockStride], &m_GroupFi[12*(size_t)g], P);
++	PackedGroups(1, g0, g1);
+ }
+ 
+ // the operation of Apply2VoltagesLines() per lane: V -= correction (only the used lanes are written)
+ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1)
+ {
+-	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+-	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+-	for (unsigned int g=g0; g<g1; ++g)
+-		DebApplyGroup(volt, &m_Block[(size_t)g*m_BlockStride], &m_GroupFi[12*(size_t)g], P, 0, m_GroupLanes[g]);
++	PackedGroups(2, g0, g1);
+ }
+ 
+-// the box version: whole groups as above, a group cut by the y range only on its lanes in the range (CutGroup)
++// the box version: vector groups whole (a y range never cuts one); position groups as above, a group cut by the y range only
++// on its lanes in the range (CutGroup on its state)
+ void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {
++	if (m_VecGroups)
++		return ForBoxGroups(x0, x1, y0, y1, [&](unsigned int ga, unsigned int gb) {PackedGroups(hook, ga, gb);});
+ 	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	const CoefPtr cp(m_Coef);
+ 	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
+ 	{
+ 		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
+@@ -322,20 +416,27 @@ void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int
+ 			const unsigned int* f = &m_GroupFi[12*(size_t)g];
+ 			if (hook==2)
+ 				return DebApplyGroup(volt, b, f, P, l0, l1);
++			const float* c = cp(g);
+ 			const bool whole = (l0==0) && (l1==m_GroupLanes[g]);
+ 			if (hook==0)
+ 			{
+ 				if (whole)
+-					DebPreGroup(volt, b, f, P);
++				{
++					const AdeGather fl = {volt, f};
++					DebPreGroup(fl, b, c, P);
++				}
+ 				else
+-					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {DebPreGroup(volt, t, ft, P);});
++					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {const AdeGather fl = {volt, ft}; DebPreGroup(fl, t, c, P);});
+ 			}
+ 			else
+ 			{
+ 				if (whole)
+-					DebPostGroup(volt, b, f, P);
++				{
++					const AdeGather fl = {volt, f};
++					DebPostGroup(fl, b, c, P);
++				}
+ 				else
+-					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {DebPostGroup(volt, t, ft, P);});
++					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {const AdeGather fl = {volt, ft}; DebPostGroup(fl, t, c, P);});
+ 			}
+ 		});
+ 	});
+@@ -347,6 +448,7 @@ void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1) {UNU
+ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {UNUSED(hook); UNUSED(x0); UNUSED(x1); UNUSED(y0); UNUSED(y1);}
++void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned int g0, unsigned int g1) {UNUSED(hook); UNUSED(g0); UNUSED(g1);}
+ #endif
+ 
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
+index f0f0549..981a914 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.h
++++ b/FDTD/extensions/engine_ext_debyematerial.h
+@@ -74,21 +74,24 @@ public:
+ 	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+ protected:
+-	//! Packed groups (OPENEMS_ADE_PACKED=0: off): the positions in groups of up to four of one x-line
+-	//! (Engine_Ext_Dispersive::SetupGroups), the state and coefficients of a group in one block of m_BlockStride
+-	//! floats, per component n at n*(3P+3)*4: W[pole] (P x 4 lanes), pre (4), correction volt_ADE (4),
+-	//! v_relax[pole] (P x 4), v_drive[pole] (P x 4), v_solve (4). Four lanes at a time, the same operations per lane
+-	//! as the one-position loops. While packed, every hook (whole grid or lines) uses the blocks.
++	//! Packed groups (OPENEMS_ADE_PACKED=0: off), in the groups of Engine_Ext_Dispersive::SetupGroups (position or vector
++	//! groups). The written state of a group in one block of m_BlockStride = 12*(P+2) floats: W[n][pole] at 4*(n*P+pole),
++	//! pre[n] at 4*(3P+n), correction volt_ADE[n] at 4*(3P+3+n); the coefficients apart in m_Coef (CoefSets), per component
++	//! n at 4*n*(2P+1): v_relax[pole] (P vectors), v_drive[pole] (P vectors), v_solve. Four lanes at a time, the same
++	//! operations per lane as the one-position loops. While packed, every hook (whole grid, lines or boxes) uses the blocks.
+ 	virtual void SetupPacked();
+-	virtual uint64_t PackedBytes() const {return (uint64_t)m_Block.size()*sizeof(float);}
++	virtual uint64_t PackedBytes() const {return m_Packed ? (uint64_t)m_Block.size()*sizeof(float) + m_Coef.Bytes() + GroupBytes() : 0;}
+ 	bool m_Packed;
+ 	unsigned int m_BlockStride;
+ 	std::vector<float> m_Block;
++	CoefSets m_Coef;
+ 	void PrePacked(unsigned int x0, unsigned int x1);
+ 	void PostPacked(unsigned int x0, unsigned int x1);
+ 	void ApplyPacked(unsigned int x0, unsigned int x1);
+ 	//! hook 0 = Pre, 1 = Post, 2 = Apply of the packed groups with y in [y0, y1)
+ 	void PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	//! hook 0 = Pre, 1 = Post, 2 = Apply of the packed groups [g0, g1)
++	void PackedGroups(int hook, unsigned int g0, unsigned int g1);
+ 	//! the line hooks' loops without packing for the sorted positions [k0, k1)
+ 	void PreK(unsigned int k0, unsigned int k1);
+ 	void PostK(unsigned int k0, unsigned int k1);
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index 290ebcf..d4ed395 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -23,6 +23,7 @@
+ #include <cstdlib>
+ #include <iostream>
+ #include <new>
++#include <sstream>
+ 
+ Engine_Ext_Dispersive::Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_disp) : Engine_Extension(op_ext_disp)
+ {
+@@ -31,6 +32,8 @@ Engine_Ext_Dispersive::Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_dis
+ 	m_LinesChecked = false;
+ 	m_BoxReady = false;
+ 	m_VoltMerged = m_CurrMerged = false;
++	m_VecGroups = false;
++	m_CompStride = 0;
+ 	int order = m_Op_Ext_Disp->m_Order;
+ 	curr_ADE = new FDTD_FLOAT**[order];
+ 	volt_ADE = new FDTD_FLOAT**[order];
+@@ -213,10 +216,39 @@ void Engine_Ext_Dispersive::ReportPackRefusal(PackRefusal r, const char* what, u
+ 
+ void Engine_Ext_Dispersive::ClearGroups()
+ {
++	m_VecGroups = false;
++	m_CompStride = 0;
+ 	std::vector<unsigned int>().swap(m_GroupX);
+ 	std::vector<unsigned int>().swap(m_GroupK);
+ 	std::vector<unsigned char>().swap(m_GroupLanes);
+ 	std::vector<unsigned int>().swap(m_GroupFi);
++	std::vector<uint64_t>().swap(m_GroupKey);
++	std::vector<unsigned int>().swap(m_GroupBase);
++	std::vector<unsigned char>().swap(m_GroupMask);
++	std::vector<unsigned int>().swap(m_GroupPos);
++}
++
++uint64_t Engine_Ext_Dispersive::GroupBytes() const
++{
++	return (uint64_t)m_GroupX.size()*sizeof(unsigned int) + m_GroupK.size()*sizeof(unsigned int) + m_GroupLanes.size() +
++		   m_GroupFi.size()*sizeof(unsigned int) + m_GroupKey.size()*sizeof(uint64_t) + m_GroupBase.size()*sizeof(unsigned int) +
++		   m_GroupMask.size();
++}
++
++std::string Engine_Ext_Dispersive::GroupStats() const
++{
++	size_t h[5] = {0, 0, 0, 0, 0}, pos = 0;
++	const size_t groups = m_GroupX.size();
++	for (size_t g=0; g<groups; ++g)
++	{
++		const unsigned int n = m_VecGroups ? (unsigned int)((m_GroupMask[g]&1) + ((m_GroupMask[g]>>1)&1) + ((m_GroupMask[g]>>2)&1) + ((m_GroupMask[g]>>3)&1)) : m_GroupLanes[g];
++		++h[n<=4 ? n : 0];
++		pos += n;
++	}
++	std::ostringstream o;
++	o << (m_VecGroups ? "vector groups" : "position groups") << ", " << groups << " groups of " << pos << " positions (mean lanes "
++	  << (groups ? (double)pos/groups : 0.0) << "; groups with 1/2/3/4 lanes: " << h[1] << "/" << h[2] << "/" << h[3] << "/" << h[4] << ")";
++	return o.str();
+ }
+ 
+ bool Engine_Ext_Dispersive::SetupGroups()
+@@ -243,8 +275,74 @@ bool Engine_Ext_Dispersive::SetupGroups()
+ 		if (std::adjacent_find(f.begin(), f.end())!=f.end())
+ 			return false;
+ 	}
++	// vector groups: the (x, y) keys of the positions non-decreasing (the positions of one (x, y) consecutive), the
++	// components of every position at the same float distance, lane = float index mod 4 (f4vector arrays)
++	const char* env = getenv("OPENEMS_ADE_VEC");
++	const int vec = (env && *env) ? atoi(env) : 1;
++	bool vecOk = (vec!=0) && m_BoxReady && !m_BoxKey.empty() && (m_BoxKey[0].size()==count);
++	const unsigned int cs = vecOk ? fi[1]-fi[0] : 0;
++	for (size_t k=0; vecOk && (k<count); ++k)
++		vecOk = (fi[3*k+1]-fi[3*k]==cs) && (fi[3*k+2]-fi[3*k+1]==cs) && (cs%4==0) && (cs>0);
+ 	try
+ 	{
++		if (vecOk)
++		{
++			// count the vector groups: per run of positions with one (x, y), the distinct f4vectors
++			const std::vector<uint64_t>& key = m_BoxKey[0];
++			size_t groups = 0;
++			std::vector<unsigned int> base;
++			for (size_t k=0; k<count; )
++			{
++				size_t e = k;
++				base.clear();
++				while ((e<count) && (key[e]==key[k]))
++					base.push_back(fi[3*e++]&~3u);
++				std::sort(base.begin(), base.end());
++				groups += std::unique(base.begin(), base.end())-base.begin();
++				k = e;
++			}
++			const double mean = (double)count/(double)groups;
++			if ((vec==2) || (mean>=2.5))
++			{
++				m_GroupX.reserve(groups);
++				m_GroupKey.reserve(groups);
++				m_GroupBase.reserve(groups);
++				m_GroupMask.reserve(groups);
++				m_GroupPos.reserve(4*groups);
++				std::vector<std::pair<unsigned int, unsigned int> > run;   // (float index, k)
++				for (size_t k=0; k<count; )
++				{
++					size_t e = k;
++					run.clear();
++					while ((e<count) && (key[e]==key[k]))
++					{
++						run.push_back(std::make_pair(fi[3*e], (unsigned int)e));
++						++e;
++					}
++					std::sort(run.begin(), run.end());
++					for (size_t r=0; r<run.size(); )
++					{
++						const unsigned int b = run[r].first&~3u;
++						unsigned int lanePos[4] = {~0u, ~0u, ~0u, ~0u};
++						unsigned char mask = 0;
++						for (; (r<run.size()) && ((run[r].first&~3u)==b); ++r)
++						{
++							lanePos[run[r].first&3u] = run[r].second;
++							mask |= (unsigned char)(1u<<(run[r].first&3u));
++						}
++						m_GroupX.push_back(X[k]);
++						m_GroupKey.push_back(key[k]);
++						m_GroupBase.push_back(b);
++						m_GroupMask.push_back(mask);
++						m_GroupPos.insert(m_GroupPos.end(), lanePos, lanePos+4);
++					}
++					k = e;
++				}
++				m_VecGroups = true;
++				m_CompStride = cs;
++				return true;
++			}
++		}
+ 		for (size_t k=0; k<count; )
+ 		{
+ 			const unsigned int x = X[k];
+@@ -257,6 +355,8 @@ bool Engine_Ext_Dispersive::SetupGroups()
+ 			for (unsigned int n=0; n<3; ++n)
+ 				for (unsigned int l=0; l<4; ++l)
+ 					m_GroupFi.push_back(fi[3*(k+(l<lanes ? l : 0))+n]);
++			for (unsigned int l=0; l<4; ++l)
++				m_GroupPos.push_back(l<lanes ? (unsigned int)(k+l) : ~0u);
+ 			k += lanes;
+ 		}
+ 	}
+@@ -268,6 +368,19 @@ bool Engine_Ext_Dispersive::SetupGroups()
+ 	return true;
+ }
+ 
++void Engine_Ext_Dispersive::ReleaseLineData()
++{
++	for (size_t o=0; o<m_SortedIdx.size(); ++o)
++	{
++		std::vector<unsigned int>().swap(m_SortedIdx[o]);
++		std::vector<unsigned int>().swap(m_SortedX[o]);
++		std::vector<unsigned int>().swap(m_FloatIdx[o]);
++	}
++	for (size_t o=0; o<m_BoxKey.size(); ++o)
++		if (m_VecGroups || (o>0))
++			std::vector<uint64_t>().swap(m_BoxKey[o]);
++}
++
+ void Engine_Ext_Dispersive::GroupRange(unsigned int x0, unsigned int x1, unsigned int& g0, unsigned int& g1) const
+ {
+ 	g0 = std::lower_bound(m_GroupX.begin(), m_GroupX.end(), x0) - m_GroupX.begin();
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index c59137b..362b7e1 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -26,12 +26,42 @@
+ #include "tools/array_ops.h"
+ #include "engine_ext_boxruns.h"
+ #include <algorithm>
++#include <cstdlib>
+ #include <cstring>
++#include <new>
++#include <string>
++#include <unordered_map>
+ 
+ #if defined(__GNUC__) || defined(__clang__)
+ //! four consecutive floats at any float address, for the merged ADE line hooks
+ inline v4sf Load4(const float* p) {v4sf v; memcpy(&v, p, sizeof(v)); return v;}
+ inline void Store4(float* p, v4sf v) {memcpy(p, &v, sizeof(v));}
++//! lane masks of the vector groups: all bits set in lane l when bit l of the group's mask is set
++typedef int32_t ade_v4i __attribute__ ((vector_size (16)));
++inline ade_v4i AdeLaneMask(unsigned int bits)
++{
++	alignas(16) static const int32_t tab[16][4] = {
++		{0,0,0,0}, {-1,0,0,0}, {0,-1,0,0}, {-1,-1,0,0}, {0,0,-1,0}, {-1,0,-1,0}, {0,-1,-1,0}, {-1,-1,-1,0},
++		{0,0,0,-1}, {-1,0,0,-1}, {0,-1,0,-1}, {-1,-1,0,-1}, {0,0,-1,-1}, {-1,0,-1,-1}, {0,-1,-1,-1}, {-1,-1,-1,-1}};
++	ade_v4i m; memcpy(&m, tab[bits&15], sizeof(m)); return m;
++}
++//! the lanes of a where m is set, the lanes of b elsewhere (bitwise: the bits of b's lanes do not change)
++inline v4sf AdeSelect(ade_v4i m, v4sf a, v4sf b) {return (v4sf)(((ade_v4i)a & m) | ((ade_v4i)b & ~m));}
++//! the field of a group, component n: gathered from four float indices (position groups) ...
++struct AdeGather
++{
++	const float* __restrict field;
++	const unsigned int* __restrict f;
++	v4sf Load(unsigned int n) const {const unsigned int* fn = f + 4*n; const v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]}; return v;}
++};
++//! ... or one f4vector of the field arrays, the lanes without a position read as +0 (vector groups)
++struct AdeVector
++{
++	const float* __restrict p;  //!< component 0 of the group's f4vector
++	unsigned int cs;            //!< floats from one component to the next
++	ade_v4i m;                  //!< lane mask
++	v4sf Load(unsigned int n) const {return (v4sf)((ade_v4i)Load4(p + n*cs) & m);}
++};
+ #endif
+ 
+ class Operator_Ext_Dispersive;
+@@ -122,17 +152,70 @@ protected:
+ 				b[j+l] = tmp[j+l];
+ 	}
+ 
+-	//! Groups for packed hooks: the positions of order 0 (in x order, each listed once) in groups of up to four
+-	//! positions of ONE x-line, so a group is never shared by two threads; built by SetupGroups(), false (and empty)
+-	//! when the positions do not allow it
++	//! Groups for packed hooks: the positions of order 0 (in x order, each listed once), built by SetupGroups(), false
++	//! (and empty) when the positions do not allow it. Two kinds:
++	//!  - position groups: up to four consecutive positions of ONE x-line (lane l = position m_GroupK+l, its field
++	//!    gathered through m_GroupFi), so a group is never shared by two threads; a y range can cut such a group;
++	//!  - vector groups (m_VecGroups): the positions that lie in ONE f4vector of the field arrays (same x, y and z-vector),
++	//!    lane l = engine lane l (cell z = l*numVectors + zv), m_GroupMask = the lanes with a position; the field of a
++	//!    component is one vector at m_GroupBase + n*m_CompStride; groups in (x, y, zv) order, so a y range never cuts one.
++	//! Vector groups when the positions fill them well: on average at least 2.5 positions per group (OPENEMS_ADE_VEC=0:
++	//! never, =2: whenever possible, a test switch).
+ 	bool SetupGroups();
+ 	void ClearGroups();
+ 	//! the groups of the x-lines [x0, x1)
+ 	void GroupRange(unsigned int x0, unsigned int x1, unsigned int& g0, unsigned int& g1) const;
++	bool m_VecGroups;
+ 	std::vector<unsigned int> m_GroupX;      //!< [g]: x-line of group g (ascending)
+-	std::vector<unsigned int> m_GroupK;      //!< [g]: first position (index k of order 0) of group g
+-	std::vector<unsigned char> m_GroupLanes; //!< [g]: positions in group g, 1..4
+-	std::vector<unsigned int> m_GroupFi;     //!< [12*g+4*n+l]: float index of component n of lane l (unused lanes: lane 0's)
++	std::vector<unsigned int> m_GroupK;      //!< [g]: position groups: first position (index k of order 0) of group g
++	std::vector<unsigned char> m_GroupLanes; //!< [g]: position groups: positions in group g, 1..4
++	std::vector<unsigned int> m_GroupFi;     //!< [12*g+4*n+l]: position groups: float index of component n of lane l (unused lanes: lane 0's)
++	std::vector<uint64_t> m_GroupKey;        //!< [g]: vector groups: BoxRuns::Key(x, y) (non-decreasing)
++	std::vector<unsigned int> m_GroupBase;   //!< [g]: vector groups: float index of lane 0 of component 0
++	std::vector<unsigned char> m_GroupMask;  //!< [g]: vector groups: bit l = lane l holds a position
++	unsigned int m_CompStride;               //!< vector groups: floats from component n to n+1 in the field arrays
++	std::vector<unsigned int> m_GroupPos;    //!< [4*g+l]: position index k of lane l, ~0u without; setup only (ReleaseGroupSetup)
++	void ReleaseGroupSetup() {std::vector<unsigned int>().swap(m_GroupPos);}
++	//! the bytes of the group arrays the hooks read
++	uint64_t GroupBytes() const;
++	//! for the log: kind, count, mean positions and the number of groups with 1, 2, 3 and 4 positions
++	std::string GroupStats() const;
++	//! the vector groups of the box: f(g0, g1) for every run of groups on one x-line with y in [y0, y1)
++	template <class F> void ForBoxGroups(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1, F f) const
++	{
++		BoxRuns::ForEach(m_GroupKey, x0, x1, y0, y1, f);
++	}
++	//! after packing: the per-position arrays of the unpacked line/box hooks (m_SortedIdx, m_SortedX, m_FloatIdx, m_BoxKey)
++	//! are freed when no unpacked hook can run any more; position groups keep m_BoxKey[0] (their box hooks use it)
++	void ReleaseLineData();
++
++	//! Coefficients of the packed groups, apart from the written state: a table of the distinct per-group sets (compared
++	//! bit for bit, all components, orders/poles and four lanes; lanes without a position hold 0) with a 16-bit or 32-bit
++	//! index per group, or one record per group when a table would not pay (more distinct sets than a quarter of the
++	//! groups). Read-only in the loops. OPENEMS_ADE_COEF=group|table|table32 forces a layout (test switch).
++	struct CoefSets
++	{
++		unsigned int stride;            //!< floats per set
++		std::vector<float> sets;
++		std::vector<uint16_t> idx16;    //!< [g] set of group g (table with <= 65536 sets)
++		std::vector<uint32_t> idx32;    //!< [g] set of group g (larger table); both empty: set g = group g
++		CoefSets() : stride(0) {}
++		size_t Count() const {return stride ? sets.size()/stride : 0;}
++		bool PerGroup() const {return idx16.empty() && idx32.empty();}
++		uint64_t Bytes() const {return (uint64_t)sets.size()*sizeof(float) + idx16.size()*sizeof(uint16_t) + idx32.size()*sizeof(uint32_t);}
++		const char* Kind() const {return PerGroup() ? "one per group" : (idx16.empty() ? "table, 32-bit index" : "table, 16-bit index");}
++	};
++	//! the coefficient pointer of group g (the loops hoist the three arrays)
++	struct CoefPtr
++	{
++		const float* s; unsigned int stride; const uint16_t* i16; const uint32_t* i32;
++		CoefPtr(const CoefSets& c) : s(c.sets.data()), stride(c.stride), i16(c.idx16.empty() ? NULL : c.idx16.data()),
++			i32(c.idx32.empty() ? NULL : c.idx32.data()) {}
++		const float* operator()(size_t g) const {return s + (size_t)stride*(i16 ? i16[g] : (i32 ? i32[g] : g));}
++	};
++	//! fill(g, rec) writes group g's coefficients into rec (stride floats, zeroed before); budget = the bytes the sets
++	//! may take; PACK_OK, PACK_LIMIT (budget, c left empty) or PACK_ALLOC
++	template <class F> int BuildCoefSets(CoefSets& c, unsigned int stride, uint64_t budget, F fill) const;
+ 	//! the bytes of the engine's voltage and current arrays (the limit for packed copies: twice this)
+ 	uint64_t FieldBytes() const;
+ 	//! Packed blocks need the GCC/clang vector extensions (v4sf, Load4/Store4); other compilers never build them.
+@@ -170,4 +253,95 @@ protected:
+ 	FDTD_FLOAT ***volt_ADE;
+ };
+ 
++template <class F> int Engine_Ext_Dispersive::BuildCoefSets(CoefSets& c, unsigned int stride, uint64_t budget, F fill) const
++{
++	c = CoefSets();
++	c.stride = stride;
++	const size_t groups = m_GroupX.size();
++	const char* env = getenv("OPENEMS_ADE_COEF");
++	const std::string mode = env ? env : "";
++	// a table pays while it has at most a quarter as many sets as there are groups
++	const size_t maxSets = (mode=="table" || mode=="table32") ? groups : groups/4;
++	bool table = (mode!="group") && (maxSets>0);
++	try
++	{
++		if (table)
++		{
++			std::vector<float> rec(stride);
++			std::vector<uint32_t> id(groups);
++			std::unordered_map<uint64_t, uint32_t> head;  // hash -> newest set with that hash
++			std::vector<uint32_t> next;                   // [set]: older set with the same hash, ~0u at the end
++			for (size_t g=0; g<groups; ++g)
++			{
++				std::fill(rec.begin(), rec.end(), 0.0f);
++				fill(g, rec.data());
++				uint64_t h = 1469598103934665603ull;      // FNV-1a over the bits
++				for (unsigned int j=0; j<stride; ++j)
++				{
++					uint32_t w;
++					memcpy(&w, &rec[j], sizeof(w));
++					h = (h^w)*1099511628211ull;
++				}
++				std::unordered_map<uint64_t, uint32_t>::iterator it = head.find(h);
++				uint32_t s = ~0u;
++				if (it!=head.end())
++					for (uint32_t t=it->second; t!=~0u; t=next[t])
++						if (memcmp(&c.sets[(size_t)t*stride], rec.data(), stride*sizeof(float))==0)
++						{
++							s = t;
++							break;
++						}
++				if (s==~0u)
++				{
++					if (next.size()>=maxSets)
++					{
++						table = false;
++						break;
++					}
++					s = (uint32_t)next.size();
++					next.push_back(it!=head.end() ? it->second : ~0u);
++					head[h] = s;
++					c.sets.insert(c.sets.end(), rec.begin(), rec.end());
++				}
++				id[g] = s;
++			}
++			if (table)
++			{
++				if ((next.size()<=65536) && (mode!="table32"))
++				{
++					c.idx16.resize(groups);
++					for (size_t g=0; g<groups; ++g)
++						c.idx16[g] = (uint16_t)id[g];
++				}
++				else
++					c.idx32.swap(id);
++				std::vector<float>(c.sets).swap(c.sets);
++			}
++		}
++		if (!table)
++		{
++			std::vector<float>().swap(c.sets);
++			if ((uint64_t)groups*stride*sizeof(float) > budget)
++			{
++				c = CoefSets();
++				return PACK_LIMIT;
++			}
++			c.sets.assign((size_t)groups*stride, 0.0f);
++			for (size_t g=0; g<groups; ++g)
++				fill(g, &c.sets[g*stride]);
++		}
++	}
++	catch (std::bad_alloc&)
++	{
++		c = CoefSets();
++		return PACK_ALLOC;
++	}
++	if (c.Bytes() > budget)
++	{
++		c = CoefSets();
++		return PACK_LIMIT;
++	}
++	return PACK_OK;
++}
++
+ #endif // ENGINE_EXT_DISPERSIVE_H
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index c603a7d..cd356ed 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -96,6 +96,7 @@ void Engine_Ext_LorentzMaterial::SetupPacked()
+ 							 op->v_Lor_ADE, op->m_volt_Lor_ADE_On, rv, nv, uv);
+ 	const bool i = SetupSide(m_PI, m_CurrMerged, m_CurrOrders, curr_ADE, curr_Lor_ADE, op->i_int_ADE, op->i_ext_ADE,
+ 							 op->i_Lor_ADE, op->m_curr_Lor_ADE_On, ri, ni, ui);
++	ReleaseGroupSetup();
+ 	// one line for the extension: a side refused by the memory limit or a failed allocation, else OPENEMS_ADE_PACKED=0
+ 	{
+ 		const bool mv = (rv==PACK_LIMIT) || (rv==PACK_ALLOC);
+@@ -111,10 +112,44 @@ void Engine_Ext_LorentzMaterial::SetupPacked()
+ 		ClearGroups();
+ 		return;
+ 	}
++	// the per-position state of a packed side is never read again (every hook of that side uses the blocks)
++	uint64_t freed = 0;
++	for (int side=0; side<2; ++side)
++	{
++		const PackedSide& ps = side ? m_PI : m_PV;
++		if (!ps.on)
++			continue;
++		FDTD_FLOAT*** ade = side ? curr_ADE : volt_ADE;
++		FDTD_FLOAT*** lor = side ? curr_Lor_ADE : volt_Lor_ADE;
++		for (int o : ps.orders)
++			for (unsigned int n=0; n<3; ++n)
++			{
++				if (ade[o][n])
++					freed += (uint64_t)m_Op_Ext_Lor->m_LM_Count.at(o)*sizeof(FDTD_FLOAT);
++				delete[] ade[o][n];
++				ade[o][n] = NULL;
++				if (lor[o][n])
++					freed += (uint64_t)m_Op_Ext_Lor->m_LM_Count.at(o)*sizeof(FDTD_FLOAT);
++				delete[] lor[o][n];
++				lor[o][n] = NULL;
++			}
++	}
++	// and the per-position arrays of the unpacked line/box hooks, when no side runs unpacked
++	const bool lines = (v || !AnyVoltADE()) && (i || !AnyCurrADE());
++	if (lines)
++		ReleaseLineData();
+ 	if (g_settings.GetVerboseLevel()>1)
+-		std::cout << GetExtensionName() << ": packed hooks, " << m_GroupX.size() << " groups of " << m_Op_Ext_Lor->m_LM_Count.at(0)
+-				  << " positions, voltages " << (v ? m_PV.orders.size() : 0) << " orders, currents " << (i ? m_PI.orders.size() : 0)
+-				  << " orders, " << (m_PV.block.size()+m_PI.block.size())*sizeof(float)/1048576.0 << " MiB" << std::endl;
++	{
++		std::cout << GetExtensionName() << ": packed hooks, " << GroupStats() << ", voltages " << (v ? m_PV.orders.size() : 0)
++				  << " orders";
++		if (v)
++			std::cout << " (" << m_PV.coef.Count() << " coefficient sets, " << m_PV.coef.Kind() << ")";
++		std::cout << ", currents " << (i ? m_PI.orders.size() : 0) << " orders";
++		if (i)
++			std::cout << " (" << m_PI.coef.Count() << " coefficient sets, " << m_PI.coef.Kind() << ")";
++		std::cout << ", " << PackedBytes()/1048576.0 << " MiB packed, " << freed/1048576.0 << " MiB of per-position state freed"
++				  << (lines ? ", line data freed" : "") << std::endl;
++	}
+ #endif
+ }
+ 
+@@ -136,18 +171,54 @@ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std
+ 	}
+ 	const size_t groups = m_GroupX.size();
+ 	const unsigned int no = orders.size();
+-	const unsigned int stride = 3*no*20;
+-	// the limit counts every packed block of this engine: the other extensions' and this one's other side (s is empty)
+-	need = (uint64_t)groups*stride*sizeof(float);
++	bool anyLor = false;
++	for (int o : orders)
++		anyLor = anyLor || lor_on[o];
++	const unsigned int stride = 4*3*no*(anyLor ? 2 : 1);
++	const unsigned int K = anyLor ? 3 : 2;
++	const unsigned int cstride = 4*3*no*K;
++	// the limit counts every packed array of this engine: the other extensions', this one's other side (s is empty) and
++	// the group arrays (once per extension)
+ 	used = PackedBytesOfOthers() + PackedBytes();
+-	if (used+need > 2*FieldBytes())
++	const uint64_t base = (uint64_t)groups*stride*sizeof(float) + ((m_PV.on || m_PI.on) ? 0 : GroupBytes());
++	const uint64_t limit = 2*FieldBytes();
++	need = base + (uint64_t)groups*cstride*sizeof(float);
++	if (used+base > limit)
+ 	{
+ 		r = PACK_LIMIT;
+ 		return false;
+ 	}
++	// coefficients: the lanes with a position
++	const unsigned int* gp = m_GroupPos.data();
++	const int rc = BuildCoefSets(s.coef, cstride, limit-used-base, [&](size_t g, float* c)
++	{
++		for (unsigned int l=0; l<4; ++l)
++		{
++			const unsigned int k = gp[4*g+l];   // the position index of every merged order (in x order)
++			if (k==~0u)
++				continue;
++			for (unsigned int n=0; n<3; ++n)
++				for (unsigned int m=0; m<no; ++m)
++				{
++					const int o = orders[m];
++					float* cc = c + 4*K*(n*no+m);
++					cc[l] = c_int[o][n][k];
++					cc[4+l] = c_ext[o][n][k];
++					if (lor_on[o])
++						cc[8+l] = c_lor[o][n][k];
++				}
++		}
++	});
++	if (rc!=PACK_OK)
++	{
++		s = PackedSide();
++		r = (PackRefusal)rc;
++		return false;
++	}
++	need = base + s.coef.Bytes();
+ 	try
+ 	{
+-		s.block.assign(groups*stride, 0.0f);
++		s.state.assign(groups*stride, 0.0f);
+ 	}
+ 	catch (std::bad_alloc&)
+ 	{
+@@ -157,27 +228,26 @@ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std
+ 	}
+ 	r = PACK_OK;
+ 	s.stride = stride;
++	s.lorOfs = 4*3*no;
++	s.K = K;
+ 	s.orders = orders;
+ 	for (int o : orders)
+ 		s.lor.push_back(lor_on[o] ? 1 : 0);
+-	// coefficients, and the current state (zero before the first step) of every used lane
++	// the current state (zero before the first step) of every used lane
+ 	for (size_t g=0; g<groups; ++g)
+-		for (unsigned int l=0; l<m_GroupLanes[g]; ++l)
++		for (unsigned int l=0; l<4; ++l)
+ 		{
+-			const unsigned int k = m_GroupK[g]+l;   // the position index of every merged order (in x order)
++			const unsigned int k = gp[4*g+l];
++			if (k==~0u)
++				continue;
++			float* st = &s.state[g*stride];
+ 			for (unsigned int n=0; n<3; ++n)
+ 				for (unsigned int m=0; m<no; ++m)
+ 				{
+ 					const int o = orders[m];
+-					float* c = &s.block[g*stride + (size_t)(n*no+m)*20];
+-					c[l] = ade[o][n][k];
+-					c[8+l] = c_int[o][n][k];
+-					c[12+l] = c_ext[o][n][k];
++					st[4*(n*no+m)+l] = ade[o][n][k];
+ 					if (lor_on[o])
+-					{
+-						c[4+l] = lor[o][n][k];
+-						c[16+l] = c_lor[o][n][k];
+-					}
++						st[s.lorOfs+4*(n*no+m)+l] = lor[o][n][k];
+ 				}
+ 		}
+ 	s.on = true;
+@@ -187,48 +257,50 @@ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std
+ #if defined(__GNUC__) || defined(__clang__)
+ namespace
+ {
+-// one group of PrePacked(): the operations of PreMerged() per lane, on the block b of a group with the float indices f
+-inline BOXRUNS_INLINE void LorPreGroup(const float* __restrict field, float* __restrict b, const unsigned int* __restrict f, unsigned int no, const char* lor)
++// one group of PrePacked(): the operations of PreMerged() per lane, on the state st and the coefficients c of a group,
++// the field through fl (gathered for position groups, one vector for vector groups)
++template <class FL> inline BOXRUNS_INLINE void LorPreGroup(const FL& fl, float* __restrict st, const float* __restrict c, unsigned int no,
++														  const char* lor, unsigned int lo, unsigned int K)
+ {
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+-		const unsigned int* fn = f + 4*n;
+-		const v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++		const v4sf v = fl.Load(n);
+ 		for (unsigned int m=0; m<no; ++m)
+ 		{
+-			float* __restrict c = b + (n*no+m)*20;
+-			v4sf a = Load4(c);
++			const unsigned int j = 4*(n*no+m);
++			const float* __restrict cc = c + K*j;
++			v4sf a = Load4(st+j);
+ 			if (lor[m])
+ 			{
+-				v4sf l = Load4(c+4);
+-				l += Load4(c+16)*a;
+-				a *= Load4(c+8);
+-				a += Load4(c+12)*(v-l);
+-				Store4(c+4, l);
++				v4sf l = Load4(st+lo+j);
++				l += Load4(cc+8)*a;
++				a *= Load4(cc);
++				a += Load4(cc+4)*(v-l);
++				Store4(st+lo+j, l);
+ 			}
+ 			else
+ 			{
+-				a *= Load4(c+8);
+-				a += Load4(c+12)*v;
++				a *= Load4(cc);
++				a += Load4(cc+4)*v;
+ 			}
+-			Store4(c, a);
++			Store4(st+j, a);
+ 		}
+ 	}
+ }
+ 
+-// one group of ApplyPacked(): field -= ADE of every merged order, in order, for the lanes [l0, l1) (four lanes as a vector)
+-inline BOXRUNS_INLINE void LorApplyGroup(float* __restrict field, const float* __restrict b, const unsigned int* __restrict f, unsigned int no,
++// one position group of ApplyPacked(): field -= ADE of every merged order, in order, for the lanes [l0, l1) (four lanes as a vector)
++inline BOXRUNS_INLINE void LorApplyGroup(float* __restrict field, const float* __restrict st, const unsigned int* __restrict f, unsigned int no,
+ 						  unsigned int l0, unsigned int l1)
+ {
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+ 		const unsigned int* fn = f + 4*n;
+-		const float* c = b + n*no*20;
++		const float* a = st + 4*n*no;
+ 		if ((l0==0) && (l1==4))
+ 		{
+ 			v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
+ 			for (unsigned int m=0; m<no; ++m)
+-				v = v - Load4(c + m*20);
++				v = v - Load4(a + 4*m);
+ 			field[fn[0]] = v[0];
+ 			field[fn[1]] = v[1];
+ 			field[fn[2]] = v[2];
+@@ -239,11 +311,27 @@ inline BOXRUNS_INLINE void LorApplyGroup(float* __restrict field, const float* _
+ 			{
+ 				float v = field[fn[l]];
+ 				for (unsigned int m=0; m<no; ++m)
+-					v = v - c[m*20+l];
++					v = v - a[4*m+l];
+ 				field[fn[l]] = v;
+ 			}
+ 	}
+ }
++
++// one vector group of ApplyPacked(): the f4vector p of the field (components cs floats apart) -= ADE of every merged order,
++// in order; the lanes outside the mask keep their bits
++inline BOXRUNS_INLINE void LorApplyVec(float* __restrict p, unsigned int cs, ade_v4i mask, const float* __restrict st, unsigned int no)
++{
++	for (unsigned int n=0; n<3; ++n)
++	{
++		float* q = p + n*cs;
++		const float* a = st + 4*n*no;
++		const v4sf old = Load4(q);
++		v4sf v = old;
++		for (unsigned int m=0; m<no; ++m)
++			v = v - Load4(a + 4*m);
++		Store4(q, AdeSelect(mask, v, old));
++	}
++}
+ }
+ 
+ // the operations of PreMerged() per lane
+@@ -251,10 +339,24 @@ void Engine_Ext_LorentzMaterial::PrePacked(const float* __restrict field, Packed
+ {
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+-	const unsigned int no = s.orders.size();
++	const unsigned int no = s.orders.size(), lo = s.lorOfs, K = s.K;
+ 	const char* lor = s.lor.data();
++	const CoefPtr cp(s.coef);
++	float* st = s.state.data();
++	if (m_VecGroups)
++	{
++		for (unsigned int g=g0; g<g1; ++g)
++		{
++			const AdeVector fl = {field + m_GroupBase[g], m_CompStride, AdeLaneMask(m_GroupMask[g])};
++			LorPreGroup(fl, st + (size_t)g*s.stride, cp(g), no, lor, lo, K);
++		}
++		return;
++	}
+ 	for (unsigned int g=g0; g<g1; ++g)
+-		LorPreGroup(field, &s.block[(size_t)g*s.stride], &m_GroupFi[12*(size_t)g], no, lor);
++	{
++		const AdeGather fl = {field, &m_GroupFi[12*(size_t)g]};
++		LorPreGroup(fl, st + (size_t)g*s.stride, cp(g), no, lor, lo, K);
++	}
+ }
+ 
+ // the operations of ApplyMerged() per lane: field -= ADE of every merged order, in order (only the used lanes are written)
+@@ -263,26 +365,53 @@ void Engine_Ext_LorentzMaterial::ApplyPacked(float* __restrict field, const Pack
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+ 	const unsigned int no = s.orders.size();
++	const float* st = s.state.data();
++	if (m_VecGroups)
++	{
++		for (unsigned int g=g0; g<g1; ++g)
++			LorApplyVec(field + m_GroupBase[g], m_CompStride, AdeLaneMask(m_GroupMask[g]), st + (size_t)g*s.stride, no);
++		return;
++	}
+ 	for (unsigned int g=g0; g<g1; ++g)
+-		LorApplyGroup(field, &s.block[(size_t)g*s.stride], &m_GroupFi[12*(size_t)g], no, 0, m_GroupLanes[g]);
++		LorApplyGroup(field, st + (size_t)g*s.stride, &m_GroupFi[12*(size_t)g], no, 0, m_GroupLanes[g]);
+ }
+ 
+-// the box versions: whole groups as above, a group cut by the y range only on its lanes in the range (CutGroup)
++// the box versions: vector groups are never cut by a y range (whole groups); position groups as above, a group cut by the
++// y range only on its lanes in the range (CutGroup on its state)
+ void Engine_Ext_LorentzMaterial::PrePackedBox(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1,
+ 											  unsigned int y0, unsigned int y1)
+ {
+-	const unsigned int no = s.orders.size();
++	const unsigned int no = s.orders.size(), lo = s.lorOfs, K = s.K;
+ 	const char* lor = s.lor.data();
++	const CoefPtr cp(s.coef);
++	float* st = s.state.data();
++	if (m_VecGroups)
++		return ForBoxGroups(x0, x1, y0, y1, [&](unsigned int ga, unsigned int gb)
++		{
++			for (unsigned int g=ga; g<gb; ++g)
++			{
++				const AdeVector fl = {field + m_GroupBase[g], m_CompStride, AdeLaneMask(m_GroupMask[g])};
++				LorPreGroup(fl, st + (size_t)g*s.stride, cp(g), no, lor, lo, K);
++			}
++		});
+ 	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
+ 	{
+ 		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
+ 		{
+-			float* b = &s.block[(size_t)g*s.stride];
++			float* b = st + (size_t)g*s.stride;
+ 			const unsigned int* f = &m_GroupFi[12*(size_t)g];
++			const float* c = cp(g);
+ 			if ((l0==0) && (l1==m_GroupLanes[g]))
+-				LorPreGroup(field, b, f, no, lor);
++			{
++				const AdeGather fl = {field, f};
++				LorPreGroup(fl, b, c, no, lor, lo, K);
++			}
+ 			else
+-				CutGroup(b, s.stride, f, l0, l1, [&](float* t, const unsigned int* ft) {LorPreGroup(field, t, ft, no, lor);});
++				CutGroup(b, s.stride, f, l0, l1, [&](float* t, const unsigned int* ft)
++				{
++					const AdeGather fl = {field, ft};
++					LorPreGroup(fl, t, c, no, lor, lo, K);
++				});
+ 		});
+ 	});
+ }
+@@ -291,11 +420,18 @@ void Engine_Ext_LorentzMaterial::ApplyPackedBox(float* __restrict field, const P
+ 												unsigned int y0, unsigned int y1)
+ {
+ 	const unsigned int no = s.orders.size();
++	const float* st = s.state.data();
++	if (m_VecGroups)
++		return ForBoxGroups(x0, x1, y0, y1, [&](unsigned int ga, unsigned int gb)
++		{
++			for (unsigned int g=ga; g<gb; ++g)
++				LorApplyVec(field + m_GroupBase[g], m_CompStride, AdeLaneMask(m_GroupMask[g]), st + (size_t)g*s.stride, no);
++		});
+ 	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
+ 	{
+ 		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
+ 		{
+-			LorApplyGroup(field, &s.block[(size_t)g*s.stride], &m_GroupFi[12*(size_t)g], no, l0, l1);
++			LorApplyGroup(field, st + (size_t)g*s.stride, &m_GroupFi[12*(size_t)g], no, l0, l1);
+ 		});
+ 	});
+ }
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.h b/FDTD/extensions/engine_ext_lorentzmaterial.h
+index 377ea17..8f4d1d0 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.h
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.h
+@@ -50,23 +50,28 @@ public:
+ 
+ protected:
+ 	//! Packed groups (OPENEMS_ADE_PACKED=0: off), per side (voltages, currents) whose orders are merged
+-	//! (m_VoltMerged/m_CurrMerged) on the positions of order 0: the positions in groups of up to four of one x-line
+-	//! (Engine_Ext_Dispersive::SetupGroups), a group's state and coefficients in one block: per component n, per merged
+-	//! order m, five vectors of four lanes: ADE, Lorentz ADE, c_int, c_ext, c_lor (the last two of each unused without
+-	//! the Lorentz term). Four lanes at a time, the same operations per lane as PreMerged()/ApplyMerged(); while packed,
+-	//! every hook of that side (whole grid or lines) uses the blocks.
++	//! (m_VoltMerged/m_CurrMerged) on the positions of order 0, in the groups of Engine_Ext_Dispersive::SetupGroups
++	//! (position or vector groups). Per group the written state in one block of `stride` floats: per component n and
++	//! merged order m the ADE vector at 4*(n*no+m), then (when an order has the Lorentz term) the Lorentz ADE vector at
++	//! lorOfs + 4*(n*no+m); the coefficients apart in `coef` (CoefSets): per (n, m) K vectors at 4*K*(n*no+m): c_int,
++	//! c_ext and (K = 3) c_lor. Four lanes at a time, the same operations per lane as PreMerged()/ApplyMerged(); while
++	//! packed, every hook of that side (whole grid, lines or boxes) uses the blocks.
+ 	struct PackedSide
+ 	{
+ 		bool on;
+ 		std::vector<int> orders;
+ 		std::vector<char> lor;
+-		unsigned int stride;   //!< floats per group
+-		std::vector<float> block;
+-		PackedSide() : on(false), stride(0) {}
++		unsigned int stride;   //!< state floats per group
++		unsigned int lorOfs;   //!< offset of the Lorentz ADE vectors in a group's state
++		unsigned int K;        //!< coefficient vectors per (n, m): 2 (c_int, c_ext) or 3 (+ c_lor)
++		std::vector<float> state;
++		CoefSets coef;
++		PackedSide() : on(false), stride(0), lorOfs(0), K(0) {}
++		uint64_t Bytes() const {return (uint64_t)state.size()*sizeof(float) + coef.Bytes();}
+ 	};
+ 	PackedSide m_PV, m_PI;
+ 	virtual void SetupPacked();
+-	virtual uint64_t PackedBytes() const {return (uint64_t)(m_PV.block.size()+m_PI.block.size())*sizeof(float);}
++	virtual uint64_t PackedBytes() const {return m_PV.Bytes()+m_PI.Bytes() + ((m_PV.on || m_PI.on) ? GroupBytes() : 0);}
+ 	//! r: why the side was not packed, need: the bytes it would have needed, used: the bytes already packed in this engine
+ 	bool SetupSide(PackedSide& s, bool merged, const std::vector<int>& orders, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor,
+ 				   FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on,
+-- 
+2.54.0 (Apple Git-157)
+

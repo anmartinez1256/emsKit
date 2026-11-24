@@ -39,9 +39,28 @@ import Testing
         }
     }
 
+    /// The seven knobs of patches 0044 to 0049: the y-banded sweep, the tiled sweep's box hooks, the three switches of
+    /// the dispersive hooks and the setup pool size.
+    @Test func largeGridAndDispersiveKnobs() {
+        for text in ["OPENEMS_YBAND=auto", "OPENEMS_YBAND=0", "OPENEMS_YBAND=46", "OPENEMS_YBAND_CACHE=1.33",
+                     "OPENEMS_TBLOCK_BOX=0", "OPENEMS_ADE_VEC=0", "OPENEMS_ADE_VEC=2", "OPENEMS_ADE_COEF=table32",
+                     "OPENEMS_ADE_SCRATCH=0", "OPENEMS_ADE_SCRATCH=alt", "OPENEMS_SETUP_THREADS=3"] {
+            #expect(Self.issue(text, .bench, .cfgList) == nil, "\(text)")
+        }
+        for text in ["OPENEMS_YBAND=Auto", "OPENEMS_YBAND=-1", "OPENEMS_YBAND=", "OPENEMS_YBAND_CACHE=-1",
+                     "OPENEMS_YBAND_CACHE=big", "OPENEMS_TBLOCK_BOX=2", "OPENEMS_ADE_VEC=3", "OPENEMS_ADE_COEF=packed",
+                     "OPENEMS_ADE_SCRATCH=on", "OPENEMS_SETUP_THREADS=0", "OPENEMS_SETUP_THREADS=auto"] {
+            #expect(Self.issue(text, .bench, .cfgList)?.code == .knobValue, "\(text)")
+        }
+        for name in ["OPENEMS_YBAND", "OPENEMS_YBAND_CACHE", "OPENEMS_TBLOCK_BOX", "OPENEMS_ADE_VEC", "OPENEMS_ADE_COEF",
+                     "OPENEMS_ADE_SCRATCH", "OPENEMS_SETUP_THREADS"] {
+            #expect(FdtdKnobs.knob(named: name)?.readOncePerProcess == false, "\(name)")
+        }
+    }
+
     @Test func registryEqualsBuildMdSection7() throws {
         let names = try Self.buildMdNames()
-        #expect(names.count == 43)
+        #expect(names.count == 50)
         #expect(FdtdKnobs.registry.map { $0.name } == names)
         #expect(Set(FdtdKnobs.registry.map { $0.name }).count == FdtdKnobs.registry.count)
     }

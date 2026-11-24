@@ -1,0 +1,27 @@
+M5 MacBook Air, base-M5 column with the current builds, 2026-11-16 20:33:19-21:11:30 (38 min, exit 0)
+====================================================================================================
+Machine: MacBook Air Mac17,3, Apple M5 (4 Super + 6 Efficiency), 16 GB, macOS 27.2.1 (26B131), on AC power, used by this job alone
+(the other processes: macOS services, 0.2 to 1.0 core median per row, GPU 4 to 11 %; printed beside every row of the records).
+A SET OF ITS OWN: not to be mixed with the closed October/November M5 tables (macOS 27.0.1, cg14..cg31) nor with the M5 Pro
+or M5 Max sets. Builds: stock v0.37.0, cg31 (fork ff2538a), cg33 (fork 13350ca). Harness: bench/abtest.py of emsKit a23c8c9,
+4 interleaved rounds, gate --quiet 150 --quiet-max 10, no redo. Every CPU row's probes identical to stock at 4 threads;
+Metal rows within 9.4e-7 relative. Rates in MC/s, medians.
+
+model (steps)             stock 2 / 4 / 8 thr    cg31 4 / 8 thr   cg33 4 / 8 / auto     cg33 Metal   best cg33 CPU / best stock   Metal / best cg33 CPU
+patch tutorial (10500)     276 /  214 /   89     2079 / 1923      2096 / 1953 / 2002       1047           7.59 (4 thr / 2 thr)          0.50
+GCPW line (15000)          243 /  302 /  175     1725 / 1947      1717 / 1979 / 1837       2241           6.55 (8 / 4)                  1.13
+SMA launch (6000)          257 /  384 /  340     1365 / 1784      1343 / 1765 / 1667       2056           4.60 (8 / 4)                  1.16
+notch tutorial (16000)     234 /  323 /  213     1744 / 2113      1718 / 2096 / 1919       2851           6.49 (8 / 4)                  1.36
+notch x3 (2000)            504 /  734 /  821     1825 / 2299      1808 / 2215 / 2125       3620           2.70 (8 / 8)                  1.63
+patch x5 (1200)            706 /  982 / 1044     1769 / 2029      1747 / 2033 / 1928       3025           1.95 (8 / 8)                  1.49
+
+Ratios in the last two columns are quotients of the medians shown (the records print paired ratios against stock at 4 threads).
+- cg33 = cg31 at fixed thread counts (within 2 %, notch x3 at 8 threads 3.7 % lower in this run).
+- cg33's automatic count runs at 0.92 to 0.96 of the better of the two fixed counts on all six models: on this
+  chip the search starts at the 4 Super cores (the 6 others are named Efficiency), so it is the old climb; short runs.
+- Patch tutorial on the Metal engine: 1047 MC/s here (746 to 1082 over the rounds, others 0.7 to 1.6 cores) against 1887 on
+  2026-11-11 with cg31 under macOS 27.0.1 in a quiet block. NOT EXPLAINED, not investigated (the model evaluates nf2ff dumps
+  on the CPU every 31 steps while macOS services were running; the other five models' Metal rates are in line with before).
+- SMA launch: the mesh is whatever the harness copy on the Air builds (toolkit default); the cell count is not in the record.
+Files: air_speed_MODEL_sSCALE.txt (per-round rows with the others' CPU and GPU), logs/, run_air.out, air_machine.txt, done_air.
+Scripts: the harness in bench/ (abtest.py), run on the Air through two small wrapper scripts that are not in the repository.

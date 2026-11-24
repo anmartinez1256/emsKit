@@ -1,0 +1,1908 @@
+From 8af6c4c55854dff79ab0db68d7170fad0e083571 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 08:46:30 -0600
+Subject: [PATCH 49/49] Dispersive operator setup on the setup threads, setup
+ memory back to the OS
+
+Building the Lorentz / Drude and Debye operator extensions walked the
+whole grid on one thread and asked the material lookup for a
+dynamic_cast per cell; at 30 M cells with half the cells dispersive the
+setup took 13 s where the rest of the operator takes 2 s, and the
+freed setup arrays stayed in the process (5.9 GiB resident).
+
+The two BuildExtension scans now run per x-line on the operator's setup
+pool: each thread collects its lines' entries in blocks, the blocks are
+merged in x order, which is the serial order, so every array is the
+same byte for byte at any pool size. Columns that hold no wanted,
+unmarked primitive are skipped. Operator::GetMaterial remembers the
+cast per thread and setup generation. The EC arrays and the scan blocks
+come from SetupAlloc / SetupFree (tools/setup_memory.h: mmap on macOS,
+malloc elsewhere), so freed setup memory leaves the process. The
+engine's SetupLines skips its stable sort when the positions are
+already sorted by x and tests first-component uniqueness with a bitmap.
+
+OPENEMS_SETUP_THREADS=n sets the pool size; OPENEMS_SETUP_TIMING=1
+prints the new phases (tools/setup_timing.h). No per-timestep function
+changes.
+
+Checked bit-identical against the commit before and against v0.37.0:
+operator arrays by hash at pool sizes 1, 2, 3, 6 and default on 22
+models, 470 box configurations, the dispersive check at 50 k and 1 M
+cells and on the closed cylinder, five models without dispersion, the
+Debye check, six models at three thread settings and the validation
+suite; six of eight planted faults caught (the two others need an
+index pattern no test model has).
+
+Mac Studio (M5 Max), upstream bench.py with a source, 18 threads,
+before -> after: dispersive case at 30 M cells setup 13.25 -> 4.90 s,
+resident memory 5857 -> 3737 MiB; at 8 M cells 3.63 -> 1.55 s, 1742 ->
+1069 MiB; antenna case at 30 M 4.09 -> 2.87 s, 4600 -> 3872 MiB; PML
+case 3872 -> 3154 MiB. Rates 0.98 to 1.01 of before on ten points.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine.cpp                               |   5 +
+ FDTD/engine_multithread.cpp                   |   7 +
+ FDTD/engine_sse.cpp                           |   3 +
+ FDTD/engine_sse_compressed.cpp                |   3 +
+ FDTD/extensions/engine_ext_debyematerial.cpp  |   6 +
+ FDTD/extensions/engine_ext_dispersive.cpp     |  49 +-
+ FDTD/extensions/engine_ext_dispersive.h       |   2 +
+ .../extensions/engine_ext_lorentzmaterial.cpp |   6 +
+ .../extensions/operator_ext_debyematerial.cpp | 193 ++++++--
+ FDTD/extensions/operator_ext_dispersive.cpp   |  43 ++
+ FDTD/extensions/operator_ext_dispersive.h     |  64 +++
+ .../operator_ext_lorentzmaterial.cpp          | 443 ++++++++++--------
+ FDTD/operator.cpp                             |  67 ++-
+ FDTD/operator.h                               |   1 +
+ FDTD/operator_multithread.cpp                 |  13 +-
+ FDTD/operator_sse_compressed.cpp              |   3 +
+ openems.cpp                                   |  21 +
+ tools/setup_memory.h                          |  63 +++
+ tools/setup_timing.h                          | 132 ++++++
+ 19 files changed, 836 insertions(+), 288 deletions(-)
+ create mode 100644 tools/setup_memory.h
+ create mode 100644 tools/setup_timing.h
+
+diff --git a/FDTD/engine.cpp b/FDTD/engine.cpp
+index d12e234..f64234f 100644
+--- a/FDTD/engine.cpp
++++ b/FDTD/engine.cpp
+@@ -16,6 +16,7 @@
+ */
+ 
+ #include "engine.h"
++#include "tools/setup_timing.h"
+ #include "extensions/engine_extension.h"
+ #include "extensions/operator_extension.h"
+ 
+@@ -50,9 +51,11 @@ Engine::~Engine()
+ 
+ void Engine::Init()
+ {
++	SetupTimer timer("Engine::Init");
+ 	numTS = 0;
+ 	volt_ptr = new ArrayLib::ArrayNIJK<FDTD_FLOAT>("volt", numLines);
+ 	curr_ptr = new ArrayLib::ArrayNIJK<FDTD_FLOAT>("curr", numLines);
++	timer.Lap("basic field arrays");
+ 
+ 	InitExtensions();
+ 	SortExtensionByPriority();
+@@ -62,6 +65,7 @@ void Engine::InitExtensions()
+ {
+ 	for (size_t n=0; n<Op->GetNumberOfExtentions(); ++n)
+ 	{
++		SetupTimer timer("Engine::InitExtensions");
+ 		Operator_Extension* op_ext = Op->GetExtension(n);
+ 		Engine_Extension* eng_ext = op_ext->CreateEngineExtention();
+ 		if (eng_ext)
+@@ -69,6 +73,7 @@ void Engine::InitExtensions()
+ 			eng_ext->SetEngine(this);
+ 			m_Eng_exts.push_back(eng_ext);
+ 		}
++		timer.Lap(op_ext->GetExtensionName());
+ 	}
+ }
+ 
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index bd6f1c1..bab31ea 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -32,6 +32,7 @@
+ #include "extensions/engine_extension.h"
+ #include "tools/denormal.h"
+ #include "tools/useful.h"
++#include "tools/setup_timing.h"
+ 
+ #include "boost/date_time/posix_time/posix_time.hpp"
+ #include "boost/date_time/gregorian/gregorian.hpp"
+@@ -421,6 +422,7 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+ 	ResetRanges(m_VoltRange);
+ 	ResetRanges(m_CurrRange);
+ 
++	SetupTimer timer("Engine_Multithread::changeNumThreads");
+ 	m_thread_group = new boost::thread_group();
+ 	for (unsigned int n=0; n<m_numThreads; n++)
+ 	{
+@@ -441,10 +443,15 @@ void Engine_Multithread::changeNumThreads(unsigned int numThreads)
+ 		m_thread_group->add_thread( t );
+ 	}
+ 
++	timer.Lap("threads started");
+ 	for (size_t n=0; n<m_Eng_exts.size(); ++n)
++	{
+ 		m_Eng_exts.at(n)->SetNumberOfThreads(m_numThreads);
++		timer.Lap("SetNumberOfThreads " + m_Eng_exts.at(n)->GetExtensionName());
++	}
+ 	// after SetNumberOfThreads: the extensions pick their fast paths there (the threads wait at the start barrier)
+ 	BuildHookPlan();
++	timer.Lap("BuildHookPlan");
+ }
+ 
+ bool Engine_Multithread::IterateTS(unsigned int iterTS)
+diff --git a/FDTD/engine_sse.cpp b/FDTD/engine_sse.cpp
+index 079cc29..e796fb9 100644
+--- a/FDTD/engine_sse.cpp
++++ b/FDTD/engine_sse.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "engine_sse.h"
+ #include "tools/denormal.h"
++#include "tools/setup_timing.h"
+ 
+ using std::cout;
+ using std::endl;
+@@ -63,6 +64,7 @@ void Engine_sse::Init()
+ 	volt_ptr = NULL;
+ 	delete curr_ptr;
+ 	curr_ptr = NULL;
++	SetupTimer timer("Engine_sse::Init");
+ 
+ 	f4_volt_ptr = new ArrayLib::ArrayENG<f4vector>(
+ 		"f4_volt", {numLines[0], numLines[1], numVectors}
+@@ -70,6 +72,7 @@ void Engine_sse::Init()
+ 	f4_curr_ptr = new ArrayLib::ArrayENG<f4vector>(
+ 		"f4_curr", {numLines[0], numLines[1], numVectors}
+ 	);
++	timer.Lap("basic arrays freed, f4vector field arrays");
+ }
+ 
+ void Engine_sse::Reset()
+diff --git a/FDTD/engine_sse_compressed.cpp b/FDTD/engine_sse_compressed.cpp
+index 0bef8f5..a8067df 100644
+--- a/FDTD/engine_sse_compressed.cpp
++++ b/FDTD/engine_sse_compressed.cpp
+@@ -18,6 +18,7 @@
+ #include "engine_sse_compressed.h"
+ #include "tools/global.h"
+ #include "tools/useful.h"
++#include "tools/setup_timing.h"
+ #include <cstdlib>
+ #include <cstring>
+ #include <string>
+@@ -57,7 +58,9 @@ Engine_SSE_Compressed::~Engine_SSE_Compressed()
+ void Engine_SSE_Compressed::Init()
+ {
+ 	Engine_sse::Init();
++	SetupTimer timer("Engine_SSE_Compressed::Init");
+ 	BuildPackedCoeffs();
++	timer.Lap("BuildPackedCoeffs");
+ }
+ 
+ void Engine_SSE_Compressed::Reset()
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index 21c7e60..cfd3e4d 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -19,6 +19,7 @@
+ #include "operator_ext_debyematerial.h"
+ #include "FDTD/engine_sse.h"
+ #include "tools/global.h"
++#include "tools/setup_timing.h"
+ #include <algorithm>
+ #include <cstdlib>
+ #include <cstring>
+@@ -170,8 +171,10 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 	// Debye has voltage ADE of order 0 only; the packed hooks replace exactly those
+ 	if ((P<1) || (m_Op_Ext_Deb->m_Order!=1) || !m_Op_Ext_Deb->m_volt_ADE_On[0] || m_Op_Ext_Deb->m_curr_ADE_On[0])
+ 		return;
++	SetupTimer timer("Engine_Ext_DebyeMaterial::SetupPacked");
+ 	if (!SetupGroups())
+ 		return;
++	timer.Lap("SetupGroups");
+ 	if (PackedOff())
+ 	{
+ 		ClearGroups();
+@@ -209,6 +212,7 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 				}
+ 			}
+ 		});
++	timer.Lap("coefficient sets");
+ 	if (rc==PACK_OK)
+ 	{
+ 		need = base + m_Coef.Bytes();
+@@ -245,6 +249,7 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 				st[4*(3*P+3+n)+l] = volt_ADE[0][n][i];
+ 			}
+ 		}
++	timer.Lap("blocks and state");
+ 	ReleaseGroupSetup();
+ 	m_Packed = true;
+ 	// the per-position state is never read again (every hook uses the blocks), nor the arrays of the unpacked line hooks
+@@ -266,6 +271,7 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 		volt_ADE[0][n] = NULL;
+ 	}
+ 	ReleaseLineData();
++	timer.Lap("per-position state and line data freed");
+ 	if (g_settings.GetVerboseLevel()>1)
+ 		std::cout << GetExtensionName() << ": packed hooks, " << GroupStats() << ", "
+ 				  << m_Coef.Count() << " coefficient sets (" << m_Coef.Kind() << "), " << PackedBytes()/1048576.0 << " MiB packed, "
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index 4933baa..85cbba6 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -19,6 +19,7 @@
+ #include "operator_ext_dispersive.h"
+ #include "FDTD/engine_sse.h"
+ #include "tools/global.h"
++#include "tools/setup_timing.h"
+ #include <algorithm>
+ #include <cstdlib>
+ #include <iostream>
+@@ -135,6 +136,7 @@ void Engine_Ext_Dispersive::SetupLines()
+ 		return;
+ 	const unsigned int nvec = V->extent(3);
+ 	const int order = m_Op_Ext_Disp->m_Order;
++	SetupTimer timer("Engine_Ext_Dispersive::SetupLines (" + GetExtensionName() + ")");
+ 	m_SortedIdx.assign(order, std::vector<unsigned int>());
+ 	m_SortedX.assign(order, std::vector<unsigned int>());
+ 	m_FloatIdx.assign(order, std::vector<unsigned int>());
+@@ -149,7 +151,9 @@ void Engine_Ext_Dispersive::SetupLines()
+ 		for (unsigned int i=0; i<count; ++i)
+ 			idx[i] = i;
+ 		const unsigned int* x = pos[0];
+-		std::stable_sort(idx.begin(), idx.end(), [x](unsigned int a, unsigned int b) {return x[a]<x[b];});
++		// (the operator lists its positions in x order: then the identity is the stable sort's result)
++		if (!std::is_sorted(x, x+count))
++			std::stable_sort(idx.begin(), idx.end(), [x](unsigned int a, unsigned int b) {return x[a]<x[b];});
+ 		m_SortedX[o].resize(count);
+ 		m_FloatIdx[o].resize((size_t)3*count);
+ 		m_BoxKey[o].resize(count);
+@@ -162,6 +166,7 @@ void Engine_Ext_Dispersive::SetupLines()
+ 				m_FloatIdx[o][3*(size_t)k+n] = (unsigned int)(4*(uint64_t)V->linearIndex({n, pos[0][i], pos[1][i], pos[2][i]%nvec}) + pos[2][i]/nvec);
+ 		}
+ 	}
++	timer.Lap("sort, float indices, box keys");
+ 	m_LinesReady = true;
+ 	for (int o=0; o<order; ++o)
+ 		box = box && std::is_sorted(m_BoxKey[o].begin(), m_BoxKey[o].end());
+@@ -175,7 +180,9 @@ void Engine_Ext_Dispersive::SetupLines()
+ 	if (g_settings.GetVerboseLevel()>1)
+ 		std::cout << GetExtensionName() << ": line hooks, " << (m_Op_Ext_Disp->m_Order>0 ? m_Op_Ext_Disp->m_LM_Count.at(0) : 0) << " positions of order 0, orders merged: voltages "
+ 				  << (m_VoltMerged ? m_VoltOrders.size() : 0) << ", currents " << (m_CurrMerged ? m_CurrOrders.size() : 0) << std::endl;
++	timer.Lap("box check, merge check");
+ 	SetupPacked();
++	timer.Lap("SetupPacked (total)");
+ }
+ 
+ uint64_t Engine_Ext_Dispersive::FieldBytes() const
+@@ -274,14 +281,8 @@ bool Engine_Ext_Dispersive::SetupGroups()
+ 	for (size_t k=0; k<count; ++k)
+ 		if (idx[k]!=k)
+ 			return false;
+-	{
+-		std::vector<unsigned int> f(count);
+-		for (size_t k=0; k<count; ++k)
+-			f[k] = fi[3*k];
+-		std::sort(f.begin(), f.end());
+-		if (std::adjacent_find(f.begin(), f.end())!=f.end())
+-			return false;
+-	}
++	if (!FirstComponentsUnique(fi))
++		return false;
+ 	// vector groups: the (x, y) keys of the positions non-decreasing (the positions of one (x, y) consecutive), the
+ 	// components of every position at the same float distance, lane = float index mod 4 (f4vector arrays)
+ 	const char* env = getenv("OPENEMS_ADE_VEC");
+@@ -413,9 +414,33 @@ bool Engine_Ext_Dispersive::MergeOrders(const bool* on, std::vector<int>& orders
+ 	}
+ 	// the merged apply gathers and scatters four positions at a time, so a position listed twice would lose
+ 	// one of its updates there: every position must appear once (the builders list each cell once)
+-	const std::vector<unsigned int>& fi = m_FloatIdx[orders[0]];
+-	std::vector<unsigned int> f(fi.size()/3);
+-	for (size_t k=0; k<f.size(); ++k)
++	return FirstComponentsUnique(m_FloatIdx[orders[0]]);
++}
++
++bool Engine_Ext_Dispersive::FirstComponentsUnique(const std::vector<unsigned int>& fi)
++{
++	// true when no float index fi[3k] appears twice; a bit per float up to the largest index when that costs at most
++	// a word per position (one pass), else sorted (the same answer either way)
++	const size_t count = fi.size()/3;
++	unsigned int top = 0;
++	for (size_t k=0; k<count; ++k)
++		top = std::max(top, fi[3*k]);
++	const size_t words = (size_t)top/64+1;
++	if ((count>0) && (words<=count))
++	{
++		std::vector<uint64_t> seen(words, 0);
++		for (size_t k=0; k<count; ++k)
++		{
++			const unsigned int f = fi[3*k];
++			const uint64_t bit = 1ull<<(f%64);
++			if (seen[f/64] & bit)
++				return false;
++			seen[f/64] |= bit;
++		}
++		return true;
++	}
++	std::vector<unsigned int> f(count);
++	for (size_t k=0; k<count; ++k)
+ 		f[k] = fi[3*k];
+ 	std::sort(f.begin(), f.end());
+ 	return std::adjacent_find(f.begin(), f.end())==f.end();
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index 319fdf2..bbc469b 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -99,6 +99,8 @@ protected:
+ 	//! with the same operations per float in the same order (OPENEMS_ADE_MERGED=0: one order after the other)
+ 	bool m_VoltMerged, m_CurrMerged;
+ 	std::vector<int> m_VoltOrders, m_CurrOrders; //!< those orders
++	//! no position listed twice: fi[3k] (the first component's float index of position k) all distinct
++	static bool FirstComponentsUnique(const std::vector<unsigned int>& fi);
+ 	bool MergeOrders(const bool* on, std::vector<int>& orders) const;
+ 	//! the merged Apply2*Lines(): field[float index] -= ADE of every order, in order
+ 	void ApplyMerged(float* field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index cd356ed..ba42ad6 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -19,6 +19,7 @@
+ #include "operator_ext_lorentzmaterial.h"
+ #include "FDTD/engine_sse.h"
+ #include "tools/global.h"
++#include "tools/setup_timing.h"
+ #include <cstdlib>
+ #include <iostream>
+ #include <new>
+@@ -87,15 +88,19 @@ void Engine_Ext_LorentzMaterial::SetupPacked()
+ #if defined(__GNUC__) || defined(__clang__)
+ 	if (!m_VoltMerged && !m_CurrMerged)
+ 		return;
++	SetupTimer timer("Engine_Ext_LorentzMaterial::SetupPacked");
+ 	if (!SetupGroups())
+ 		return;
++	timer.Lap("SetupGroups");
+ 	Operator_Ext_LorentzMaterial* op = m_Op_Ext_Lor;
+ 	PackRefusal rv, ri;
+ 	uint64_t nv, ni, uv, ui;
+ 	const bool v = SetupSide(m_PV, m_VoltMerged, m_VoltOrders, volt_ADE, volt_Lor_ADE, op->v_int_ADE, op->v_ext_ADE,
+ 							 op->v_Lor_ADE, op->m_volt_Lor_ADE_On, rv, nv, uv);
++	timer.Lap("SetupSide voltages");
+ 	const bool i = SetupSide(m_PI, m_CurrMerged, m_CurrOrders, curr_ADE, curr_Lor_ADE, op->i_int_ADE, op->i_ext_ADE,
+ 							 op->i_Lor_ADE, op->m_curr_Lor_ADE_On, ri, ni, ui);
++	timer.Lap("SetupSide currents");
+ 	ReleaseGroupSetup();
+ 	// one line for the extension: a side refused by the memory limit or a failed allocation, else OPENEMS_ADE_PACKED=0
+ 	{
+@@ -138,6 +143,7 @@ void Engine_Ext_LorentzMaterial::SetupPacked()
+ 	const bool lines = (v || !AnyVoltADE()) && (i || !AnyCurrADE());
+ 	if (lines)
+ 		ReleaseLineData();
++	timer.Lap("per-position state and line data freed");
+ 	if (g_settings.GetVerboseLevel()>1)
+ 	{
+ 		std::cout << GetExtensionName() << ": packed hooks, " << GroupStats() << ", voltages " << (v ? m_PV.orders.size() : 0)
+diff --git a/FDTD/extensions/operator_ext_debyematerial.cpp b/FDTD/extensions/operator_ext_debyematerial.cpp
+index 052ad1b..248506a 100644
+--- a/FDTD/extensions/operator_ext_debyematerial.cpp
++++ b/FDTD/extensions/operator_ext_debyematerial.cpp
+@@ -22,6 +22,10 @@
+ 
+ #include "tools/constants.h"
+ #include "CSPropDebyeMaterial.h"
++#include "tools/setup_timing.h"
++#include <sstream>
++#include <atomic>
++#include <string>
+ 
+ #include <vector>
+ 
+@@ -87,11 +91,28 @@ Operator_Extension* Operator_Ext_DebyeMaterial::Clone(Operator* op)
+ 	return new Operator_Ext_DebyeMaterial(op, this);
+ }
+ 
++namespace
++{
++bool IsDebyeProperty(CSProperties* prop) {return prop->ToDebyeMaterial()!=NULL;}
++
++// what one setup thread found: per position and direction the solve factor and m_PoleCount relax/drive coefficients
++struct DebyeScanLists
++{
++	DispersiveSetupList<unsigned int> pos[3];
++	DispersiveSetupList<FDTD_FLOAT> solve[3];
++	std::vector<DispersiveSetupList<FDTD_FLOAT> > relax[3], drive[3];	// [n][pole]
++	size_t count = 0;
++	// the first pole this thread skipped (relaxation time too short): its x-line, relaxation time, material
++	bool warned = false;
++	unsigned int warn_x = 0;
++	double warn_tau = 0;
++	std::string warn_name;
++};
++}
++
+ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ {
+ 	double dT = m_Op->GetTimestep();
+-	unsigned int pos[] = {0,0,0};
+-	double coord[3];
+ 	unsigned int numLines[3] = {m_Op->GetNumberOfLines(0,true),m_Op->GetNumberOfLines(1,true),m_Op->GetNumberOfLines(2,true)};
+ 
+ 	m_PoleCount = 0;
+@@ -107,35 +128,48 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 	if (m_PoleCount<1)
+ 		return false; //no Debye material, drop this extension
+ 
+-	// collected in step: one entry per cell, m_PoleCount coefficient sets per direction
+-	std::vector<unsigned int> v_pos[3];
+-	std::vector<double> v_solve[3];
+-	std::vector<std::vector<double> > v_relax[3], v_drive[3];
+-	for (int n=0; n<3; ++n)
+-	{
+-		v_relax[n].resize(m_PoleCount);
+-		v_drive[n].resize(m_PoleCount);
+-	}
++	SetupTimer timer("Operator_Ext_DebyeMaterial::BuildExtension");
+ 
+-	// per cell scratch
+-	std::vector<std::vector<double> > relax(3), drive(3);
+-	for (int n=0; n<3; ++n)
+-	{
+-		relax[n].resize(m_PoleCount);
+-		drive[n].resize(m_PoleCount);
+-	}
+-	double S[3];
+-
+-	bool warn_once = true;
+-
+-	for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
++	// x-lines spread over the setup threads, merged in x order below (= the serial scan order x, y, z)
++	const unsigned int nx = numLines[0];
++	const unsigned int threads = SetupScanThreads(nx);
++	const int poles = m_PoleCount;
++	std::vector<DebyeScanLists> lists(threads);
++	for (unsigned int t=0; t<threads; ++t)
++		for (int n=0; n<3; ++n)
++		{
++			lists[t].relax[n].resize(poles);
++			lists[t].drive[n].resize(poles);
++		}
++	std::vector<size_t> line_begin(nx), line_end(nx);	// in the thread's lists
++	std::vector<unsigned int> line_thread;
++	std::atomic<size_t> skipped(0);
++	auto scan = [&](unsigned int t, unsigned int x)
+ 	{
++		DebyeScanLists& L = lists[t];
++		line_begin[x] = L.count;
++		unsigned int pos[3] = {x, 0, 0};
++		double coord[3];
++		// per cell scratch
++		std::vector<std::vector<double> > relax(3), drive(3);
++		for (int n=0; n<3; ++n)
++		{
++			relax[n].resize(poles);
++			drive[n].resize(poles);
++		}
++		double S[3];
++		size_t skip = 0;
+ 		for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
+ 		{
+ 			std::vector<CSPrimitives*> vPrims = m_Op->GetPrimitivesBoundBox(
+ 				pos[0], pos[1], -1,
+ 				(CSProperties::PropertyType)(CSProperties::MATERIAL | CSProperties::METAL)
+ 			);
++			if (SetupSkipColumn(vPrims, IsDebyeProperty))
++			{
++				++skip;
++				continue;
++			}
+ 
+ 			for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
+ 			{
+@@ -144,7 +178,7 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 				for (int n=0; n<3; ++n)
+ 				{
+ 					S[n] = 0.0;
+-					for (int o=0; o<m_PoleCount; ++o)
++					for (int o=0; o<poles; ++o)
+ 					{
+ 						relax[n][o] = 0.0;
+ 						drive[n][o] = 0.0;
+@@ -165,7 +199,7 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 					if (vi==0)
+ 						continue;
+ 
+-					CSProperties* prop = m_Op->GetGeometryCSX()->GetPropertyByCoordPriority(coord, vPrims, true);
++					CSProperties* prop = m_Op->GetGeometryCSX()->FindPropertyByCoordPriority(coord, vPrims, true);
+ 					if (prop==NULL)
+ 						continue;
+ 					CSPropDebyeMaterial* mat = prop->ToDebyeMaterial();
+@@ -174,8 +208,8 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 
+ 					double A_l = m_Op->GetEdgeArea(n,pos)/m_Op->GetEdgeLength(n,pos);
+ 					int order = mat->GetDispersionOrder();
+-					if (order>m_PoleCount)
+-						order = m_PoleCount;
++					if (order>poles)
++						order = poles;
+ 
+ 					for (int o=0; o<order; ++o)
+ 					{
+@@ -185,14 +219,12 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 							continue;
+ 						if (t_relax < DEBYE_MIN_TAU_PER_DT*dT)
+ 						{
+-							if (warn_once)
++							if (!L.warned)	// the thread's first one (its lines come in increasing x)
+ 							{
+-								warn_once = false;
+-								cerr << "Operator_Ext_DebyeMaterial::BuildExtension(): Warning, "
+-								     << "relaxation time (" << t_relax << "s) of material \""
+-								     << mat->GetName() << "\" needs at least "
+-								     << DEBYE_MIN_TAU_PER_DT << " timesteps (dT=" << dT
+-								     << "s), skipping this pole..." << endl;
++								L.warned = true;
++								L.warn_x = x;
++								L.warn_tau = t_relax;
++								L.warn_name = mat->GetName();
+ 							}
+ 							continue;
+ 						}
+@@ -211,19 +243,39 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 
+ 				for (int n=0; n<3; ++n)
+ 				{
+-					v_pos[n].push_back(pos[n]);
+-					v_solve[n].push_back(1.0/(1.0 + S[n]));
+-					for (int o=0; o<m_PoleCount; ++o)
++					L.pos[n].push_back(pos[n]);
++					L.solve[n].push_back(1.0/(1.0 + S[n]));
++					for (int o=0; o<poles; ++o)
+ 					{
+-						v_relax[n][o].push_back(relax[n][o]);
+-						v_drive[n][o].push_back(drive[n][o]);
++						L.relax[n][o].push_back(relax[n][o]);
++						L.drive[n][o].push_back(drive[n][o]);
+ 					}
+ 				}
++				++L.count;
+ 			}
+ 		}
+-	}
+-
+-	unsigned int count = v_pos[0].size();
++		line_end[x] = L.count;
++		skipped += skip;
++	};
++	SetupScanLines(nx, threads, line_thread, scan);
++
++	// the warning of the serial scan: its first skipped pole in scan order = the thread's first one with the lowest x-line
++	const DebyeScanLists* first = NULL;
++	for (unsigned int t=0; t<threads; ++t)
++		if (lists[t].warned && ((first==NULL) || (lists[t].warn_x<first->warn_x)))
++			first = &lists[t];
++	if (first)
++		cerr << "Operator_Ext_DebyeMaterial::BuildExtension(): Warning, "
++			 << "relaxation time (" << first->warn_tau << "s) of material \""
++			 << first->warn_name << "\" needs at least "
++			 << DEBYE_MIN_TAU_PER_DT << " timesteps (dT=" << dT
++			 << "s), skipping this pole..." << endl;
++
++	unsigned int count = 0;
++	for (unsigned int t=0; t<threads; ++t)
++		count += lists[t].count;
++	timer.Lap("scan (" + std::to_string(count) + " positions, " + std::to_string(threads) + " threads, "
++			  + std::to_string(skipped.load()) + " of " + std::to_string((size_t)numLines[0]*numLines[1]) + " columns skipped)");
+ 	if (count==0)
+ 		return false; //no active cell, drop this extension
+ 
+@@ -249,25 +301,62 @@ bool Operator_Ext_DebyeMaterial::BuildExtension()
+ 		v_drive_ADE[o]  = new FDTD_FLOAT*[3];
+ 	}
+ 
++	// copy the lists line by line in x order; every list is freed as soon as its array is complete
+ 	for (int n=0; n<3; ++n)
+ 	{
+-		m_LM_pos[0][n] = new unsigned int[count];
+-		v_solve_ADE[n]       = new FDTD_FLOAT[count];
+-		for (unsigned int i=0; i<count; ++i)
++		unsigned int* p = m_LM_pos[0][n] = new unsigned int[count];
++		for (unsigned int x=0; x<nx; ++x)
++		{
++			lists[line_thread[x]].pos[n].CopyTo(line_begin[x], line_end[x], p);
++			p += line_end[x]-line_begin[x];
++		}
++		for (unsigned int t=0; t<threads; ++t)
++			lists[t].pos[n].clear();
++
++		FDTD_FLOAT* d = v_solve_ADE[n] = new FDTD_FLOAT[count];
++		for (unsigned int x=0; x<nx; ++x)
+ 		{
+-			m_LM_pos[0][n][i] = v_pos[n].at(i);
+-			v_solve_ADE[n][i]       = v_solve[n].at(i);
++			lists[line_thread[x]].solve[n].CopyTo(line_begin[x], line_end[x], d);
++			d += line_end[x]-line_begin[x];
+ 		}
++		for (unsigned int t=0; t<threads; ++t)
++			lists[t].solve[n].clear();
++
+ 		for (int o=0; o<m_PoleCount; ++o)
+ 		{
+-			v_relax_ADE[o][n] = new FDTD_FLOAT[count];
+-			v_drive_ADE[o][n]  = new FDTD_FLOAT[count];
+-			for (unsigned int i=0; i<count; ++i)
++			d = v_relax_ADE[o][n] = new FDTD_FLOAT[count];
++			for (unsigned int x=0; x<nx; ++x)
++			{
++				lists[line_thread[x]].relax[n][o].CopyTo(line_begin[x], line_end[x], d);
++				d += line_end[x]-line_begin[x];
++			}
++			for (unsigned int t=0; t<threads; ++t)
++				lists[t].relax[n][o].clear();
++			d = v_drive_ADE[o][n] = new FDTD_FLOAT[count];
++			for (unsigned int x=0; x<nx; ++x)
+ 			{
+-				v_relax_ADE[o][n][i] = v_relax[n][o].at(i);
+-				v_drive_ADE[o][n][i]  = v_drive[n][o].at(i);
++				lists[line_thread[x]].drive[n][o].CopyTo(line_begin[x], line_end[x], d);
++				d += line_end[x]-line_begin[x];
+ 			}
++			for (unsigned int t=0; t<threads; ++t)
++				lists[t].drive[n][o].clear();
++		}
++	}
++	timer.Lap("arrays");
++	if (SetupTimer::Enabled())
++	{
++		const size_t c = count;
++		uint64_t h = SetupTimer::Hash(&c, sizeof(c));
++		for (int n=0; n<3; ++n)
++		{
++			h = SetupTimer::Hash(m_LM_pos[0][n], c*sizeof(unsigned int), h);
++			h = SetupTimer::Hash(v_solve_ADE[n], c*sizeof(FDTD_FLOAT), h);
++			for (int o=0; o<m_PoleCount; ++o)
++				h = SetupTimer::Hash(v_drive_ADE[o][n], c*sizeof(FDTD_FLOAT), SetupTimer::Hash(v_relax_ADE[o][n], c*sizeof(FDTD_FLOAT), h));
+ 		}
++		std::ostringstream o;
++		o << c << " positions, " << m_PoleCount << " poles, hash " << std::hex << h;
++		SetupTimer::Note("Operator_Ext_DebyeMaterial arrays", o.str());
+ 	}
+ 
+ 	return true;
+diff --git a/FDTD/extensions/operator_ext_dispersive.cpp b/FDTD/extensions/operator_ext_dispersive.cpp
+index aaa4f63..4b5abe8 100644
+--- a/FDTD/extensions/operator_ext_dispersive.cpp
++++ b/FDTD/extensions/operator_ext_dispersive.cpp
+@@ -16,6 +16,12 @@
+ */
+ 
+ #include "operator_ext_dispersive.h"
++#include "../operator.h"
++#include "CSPrimitives.h"
++#include "CSProperties.h"
++#include <algorithm>
++#include <atomic>
++#include <thread>
+ 
+ using namespace std;
+ 
+@@ -75,3 +81,40 @@ void Operator_Ext_Dispersive::ShowStat(ostream &ostr)  const
+ 		ostr << " N=" << i << ":\t Current ADE is \t: " << On_Off[m_curr_ADE_On[i]] << endl;
+ 	}
+ }
++
++unsigned int Operator_Ext_Dispersive::SetupScanThreads(unsigned int nx) const
++{
++	return std::max(1u, std::min(m_Op->GetNumSetupThreads(), nx));
++}
++
++void Operator_Ext_Dispersive::SetupScanLines(unsigned int nx, unsigned int threads, std::vector<unsigned int>& line_thread,
++											 const std::function<void(unsigned int thread, unsigned int x)>& scan)
++{
++	line_thread.assign(nx, 0);
++	std::atomic<unsigned int> next(0);
++	auto job = [&](unsigned int t)
++	{
++		for (unsigned int x=next.fetch_add(1); x<nx; x=next.fetch_add(1))
++		{
++			line_thread[x] = t;
++			scan(t, x);
++		}
++	};
++	std::vector<std::thread> pool;
++	for (unsigned int t=1; t<threads; ++t)
++		pool.emplace_back(job, t);
++	job(0);
++	for (size_t t=0; t<pool.size(); ++t)
++		pool[t].join();
++}
++
++bool Operator_Ext_Dispersive::SetupSkipColumn(const std::vector<CSPrimitives*>& vPrims, bool (*want)(CSProperties* prop))
++{
++	for (size_t p=0; p<vPrims.size(); ++p)
++	{
++		CSProperties* prop = vPrims[p]->GetProperty();
++		if ((prop==NULL) || want(prop) || !vPrims[p]->GetPrimitiveUsed())
++			return false;
++	}
++	return true;
++}
+diff --git a/FDTD/extensions/operator_ext_dispersive.h b/FDTD/extensions/operator_ext_dispersive.h
+index 1856914..2a99d2b 100644
+--- a/FDTD/extensions/operator_ext_dispersive.h
++++ b/FDTD/extensions/operator_ext_dispersive.h
+@@ -21,6 +21,58 @@
+ //#include "operator.h"
+ #include "operator_extension.h"
+ #include "vector"
++#include <cstddef>
++#include <cstring>
++#include <functional>
++#include "tools/setup_memory.h"
++
++class CSPrimitives;
++class CSProperties;
++
++//! Values one setup thread collects during a dispersive BuildExtension scan, in blocks of a fixed size: growing never copies
++//! (no doubled buffers that stay resident), at most one block is partly filled; clear() frees the blocks (to the OS on
++//! macOS, see setup_memory.h).
++template <typename T> class DispersiveSetupList
++{
++public:
++	DispersiveSetupList() : m_size(0) {}
++	DispersiveSetupList(DispersiveSetupList&& other) : m_blocks(std::move(other.m_blocks)), m_size(other.m_size) {other.m_size = 0;}
++	DispersiveSetupList(const DispersiveSetupList&) = delete;
++	DispersiveSetupList& operator=(const DispersiveSetupList&) = delete;
++	~DispersiveSetupList() {clear();}
++	void push_back(T value)
++	{
++		const size_t o = m_size % Block();
++		if (o==0)
++			m_blocks.push_back(SetupAlloc<T>(Block()));
++		m_blocks.back()[o] = value;
++		++m_size;
++	}
++	size_t size() const {return m_size;}
++	//! copies the entries [begin, end) to dst
++	void CopyTo(size_t begin, size_t end, T* dst) const
++	{
++		while (begin<end)
++		{
++			const size_t o = begin % Block();
++			const size_t n = (Block()-o < end-begin) ? Block()-o : end-begin;
++			std::memcpy(dst, m_blocks[begin/Block()]+o, n*sizeof(T));
++			dst += n;
++			begin += n;
++		}
++	}
++	void clear()
++	{
++		for (size_t i=0; i<m_blocks.size(); ++i)
++			SetupFree(m_blocks[i]);
++		std::vector<T*>().swap(m_blocks);
++		m_size = 0;
++	}
++private:
++	static size_t Block() {return 65536;}
++	std::vector<T*> m_blocks;
++	size_t m_size;
++};
+ 
+ //! Abstract base class for all dispersive material models, based on an ADE (additional differential equation)
+ class Operator_Ext_Dispersive : public Operator_Extension
+@@ -46,6 +98,18 @@ protected:
+ 	//! Copy constructor
+ 	Operator_Ext_Dispersive(Operator* op, Operator_Ext_Dispersive* op_ext);
+ 
++	//! Number of threads for a BuildExtension scan over nx x-lines: the operator's setup threads, at most nx, at least 1
++	unsigned int SetupScanThreads(unsigned int nx) const;
++	//! Runs scan(thread, x) for every x-line x < nx on 'threads' threads. Each thread takes the next line from a shared counter,
++	//! so every thread sees its lines in increasing x; line_thread[x] = the thread that scanned line x. The scans of one
++	//! line run on one thread: a merge in x order gives the serial scan order back.
++	static void SetupScanLines(unsigned int nx, unsigned int threads, std::vector<unsigned int>& line_thread,
++							   const std::function<void(unsigned int thread, unsigned int x)>& scan);
++	//! true when a column may be skipped: no primitive in vPrims has a property for which want() is true (so no cell of the
++	//! column can be found to hold the material) and every primitive is marked used already (the cell lookups of the column
++	//! could only mark used primitives as used again, so WarnUnusedPrimitves() reports the same)
++	static bool SetupSkipColumn(const std::vector<CSPrimitives*>& vPrims, bool (*want)(CSProperties* prop));
++
+ 	//! Dispersive order
+ 	int m_Order;
+ 
+diff --git a/FDTD/extensions/operator_ext_lorentzmaterial.cpp b/FDTD/extensions/operator_ext_lorentzmaterial.cpp
+index 9ccbcb4..7b7e91f 100644
+--- a/FDTD/extensions/operator_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/operator_ext_lorentzmaterial.cpp
+@@ -21,6 +21,10 @@
+ #include "../operator_cylinder.h"
+ 
+ #include "CSPropLorentzMaterial.h"
++#include "tools/setup_timing.h"
++#include <sstream>
++#include <algorithm>
++#include <atomic>
+ 
+ using std::endl;
+ 
+@@ -115,32 +119,32 @@ Operator_Extension* Operator_Ext_LorentzMaterial::Clone(Operator* op)
+ 	return new Operator_Ext_LorentzMaterial(op, this);
+ }
+ 
++namespace
++{
++bool IsLorentzProperty(CSProperties* prop) {return prop->ToLorentzMaterial()!=NULL;}
++
++// the six coefficient lists of a position and the value a position without that ADE gets
++enum {LOR_V_INT, LOR_V_EXT, LOR_I_INT, LOR_I_EXT, LOR_V_LOR, LOR_I_LOR, LOR_KINDS};
++const FDTD_FLOAT LOR_DEFAULT[LOR_KINDS] = {1, 0, 1, 0, 0, 0};
++// the switch of each list: voltage ADE, current ADE, voltage Lorentz ADE, current Lorentz ADE
++const int LOR_GROUP[LOR_KINDS] = {0, 0, 1, 1, 2, 3};
++
++// what one setup thread found for one order. A list group is kept only from the thread's first position that switches it on
++// (start[g]): every position before it holds the default values of that group.
++struct LorentzScanLists
++{
++	DispersiveSetupList<unsigned int> pos[3];
++	DispersiveSetupList<FDTD_FLOAT> val[LOR_KINDS][3];
++	size_t count = 0;
++	size_t start[4] = {0, 0, 0, 0};
++	bool on[4] = {false, false, false, false};
++};
++}
++
+ bool Operator_Ext_LorentzMaterial::BuildExtension()
+ {
+ 	double dT = m_Op->GetTimestep();
+-	unsigned int pos[] = {0,0,0};
+-	double coord[3];
+ 	unsigned int numLines[3] = {m_Op->GetNumberOfLines(0,true),m_Op->GetNumberOfLines(1,true),m_Op->GetNumberOfLines(2,true)};
+-	CSPropLorentzMaterial* mat = NULL;
+-
+-	bool b_pos_on;
+-	std::vector<unsigned int> v_pos[3];
+-
+-	// drude material parameter
+-	double w_plasma,t_relax;
+-	double L_D[3], C_D[3];
+-	double R_D[3], G_D[3];
+-	std::vector<double> v_int[3];
+-	std::vector<double> v_ext[3];
+-	std::vector<double> i_int[3];
+-	std::vector<double> i_ext[3];
+-
+-	//additional Dorentz material parameter
+-	double w_Lor_Pol;
+-	double C_L[3];
+-	double L_L[3];
+-	std::vector<double> v_Lor[3];
+-	std::vector<double> i_Lor[3];
+ 
+ 	m_Order = 0;
+ 	std::vector<CSProperties*> LD_props = m_Op->CSX->GetPropertyByType(CSProperties::LORENTZMATERIAL);
+@@ -167,79 +171,108 @@ bool Operator_Ext_LorentzMaterial::BuildExtension()
+ 	v_Lor_ADE = new FDTD_FLOAT**[m_Order];
+ 	i_Lor_ADE = new FDTD_FLOAT**[m_Order];
+ 
+-	for (int order=0;order<m_Order;++order)
++	SetupTimer timer("Operator_Ext_LorentzMaterial::BuildExtension");
++
++	// One scan for all orders (the material lookups do not depend on the order), x-lines spread over the setup threads; the
++	// lines are merged in x order below, which is the serial scan order (x, y, z), so the arrays are the ones of a serial scan.
++	const unsigned int nx = numLines[0];
++	const unsigned int threads = SetupScanThreads(nx);
++	const int orders = m_Order;
++	std::vector<LorentzScanLists> lists((size_t)threads*orders);	// [thread][order]
++	std::vector<size_t> line_begin((size_t)orders*nx), line_end((size_t)orders*nx);	// [order][x], in the thread's list
++	std::vector<unsigned int> line_thread;
++	std::atomic<size_t> skipped(0);
++	auto scan = [&](unsigned int t, unsigned int x)
+ 	{
+-		m_volt_ADE_On[order]=false;
+-		m_curr_ADE_On[order]=false;
+-
+-		m_volt_Lor_ADE_On[order]=false;
+-		m_curr_Lor_ADE_On[order]=false;
+-
+-		for (int n=0;n<3;++n)
++		LorentzScanLists* L = lists.data() + (size_t)t*orders;
++		for (int order=0; order<orders; ++order)
++			line_begin[(size_t)order*nx+x] = L[order].count;
++		unsigned int pos[3] = {x, 0, 0};
++		double coord_v[3][3], coord_i[3][3];
++		CSPropLorentzMaterial* mat_v[3];
++		CSPropLorentzMaterial* mat_i[3];
++		size_t skip = 0;
++		for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
+ 		{
+-			v_pos[n].clear();
+-
+-			v_int[n].clear();
+-			v_ext[n].clear();
+-			i_int[n].clear();
+-			i_ext[n].clear();
+-
+-			v_Lor[n].clear();
+-			i_Lor[n].clear();
+-		}
++			std::vector<CSPrimitives*> vPrims = m_Op->GetPrimitivesBoundBox(
++				pos[0], pos[1], -1,
++				(CSProperties::PropertyType)(CSProperties::MATERIAL | CSProperties::METAL)
++			);
++			if (SetupSkipColumn(vPrims, IsLorentzProperty))
++			{
++				++skip;
++				continue;
++			}
+ 
+-		for (pos[0]=0; pos[0]<numLines[0]; ++pos[0])
+-		{
+-			for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
++			for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
+ 			{
+-				std::vector<CSPrimitives*> vPrims = m_Op->GetPrimitivesBoundBox(
+-					pos[0], pos[1], -1,
+-					(CSProperties::PropertyType)(CSProperties::MATERIAL | CSProperties::METAL)
+-				);
++				const unsigned int index = pos[0] + pos[1]*numLines[0] + pos[2]*numLines[0]*numLines[1];	// = MainOp->SetPos(pos)
++				bool any = false;
++				for (int n=0; n<3; ++n)
++				{
++					mat_v[n] = NULL;
++					if (m_Op->GetYeeCoords(n,pos,coord_v[n],false)==false)
++						continue;
++					if (m_CC_R0_included && (n==2) && (pos[0]==0))
++						coord_v[n][1] = m_Op->GetDiscLine(1,0);
++					if (m_Op->GetVI(n,pos[0],pos[1],pos[2])==0)
++						continue;
++					CSProperties* prop = m_Op->GetGeometryCSX()->FindPropertyByCoordPriority(coord_v[n], vPrims, true);
++					if (prop==NULL)
++						continue;
++					mat_v[n] = prop->ToLorentzMaterial();
++					any = any || mat_v[n];
++				}
++				for (int n=0; n<3; ++n)
++				{
++					mat_i[n] = NULL;
++					if (m_Op->GetYeeCoords(n,pos,coord_i[n],true)==false)
++						continue;
++					if (m_Op->GetIV(n,pos[0],pos[1],pos[2])==0)
++						continue;
++					CSProperties* prop = m_Op->GetGeometryCSX()->FindPropertyByCoordPriority(coord_i[n], vPrims, true);
++					if (prop==NULL)
++						continue;
++					mat_i[n] = prop->ToLorentzMaterial();
++					any = any || mat_i[n];
++				}
++				if (!any)
++					continue;
+ 
+-				for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
++				for (int order=0; order<orders; ++order)
+ 				{
+-					unsigned int index = m_Op->MainOp->SetPos(pos[0],pos[1],pos[2]);
++					double L_D[3], C_D[3], R_D[3], G_D[3], C_L[3], L_L[3];
++					bool b_pos_on = false;
++					bool group[4] = {false, false, false, false};
+ 					//calc epsilon lorentz material
+-					b_pos_on = false;
+ 					for (int n=0; n<3; ++n)
+ 					{
+ 						L_D[n]=0;
+ 						R_D[n]=0;
+ 						C_L[n]=0;
+-						if (m_Op->GetYeeCoords(n,pos,coord,false)==false)
++						CSPropLorentzMaterial* mat = mat_v[n];
++						if (mat==NULL)
+ 							continue;
+-						if (m_CC_R0_included && (n==2) && (pos[0]==0))
+-							coord[1] = m_Op->GetDiscLine(1,0);
+-
+-						if (m_Op->GetVI(n,pos[0],pos[1],pos[2])==0)
+-							continue;
+-
+-//						CSProperties* prop = m_Op->GetGeometryCSX()->GetPropertyByCoordPriority(coord,(CSProperties::PropertyType)(CSProperties::METAL | CSProperties::MATERIAL), true);
+-						CSProperties* prop = m_Op->GetGeometryCSX()->GetPropertyByCoordPriority(coord, vPrims, true);
+-
+-						if (prop==NULL) continue;
+-
+-						if ((mat = prop->ToLorentzMaterial()))
++						const double* coord = coord_v[n];
++						double w_plasma = mat->GetEpsPlasmaFreqWeighted(order,n,coord) * 2 * PI;
++						if ((w_plasma>0) && (m_Op->EC_C[n][index]>0))
+ 						{
+-							w_plasma = mat->GetEpsPlasmaFreqWeighted(order,n,coord) * 2 * PI;
+-							if ((w_plasma>0) && (m_Op->EC_C[n][index]>0))
+-							{
+-								b_pos_on = true;
+-								m_volt_ADE_On[order] = true;
+-								L_D[n] = 1/(w_plasma*w_plasma*m_Op->EC_C[n][index]);
+-							}
+-							t_relax = mat->GetEpsRelaxTimeWeighted(order,n,coord);
+-							if ((t_relax>0) && m_volt_ADE_On[order])
+-							{
+-								R_D[n] = L_D[n]/t_relax;
+-							}
+-							w_Lor_Pol = mat->GetEpsLorPoleFreqWeighted(order,n,coord) * 2 * PI;
+-							if ((w_Lor_Pol>0) && (L_D[n]>0))
+-							{
+-								m_volt_Lor_ADE_On[order] = true;
+-								C_L[n] = 1/(w_Lor_Pol*w_Lor_Pol*L_D[n]);
+-							}
++							b_pos_on = true;
++							group[0] = true;
++							L_D[n] = 1/(w_plasma*w_plasma*m_Op->EC_C[n][index]);
++						}
++						double t_relax = mat->GetEpsRelaxTimeWeighted(order,n,coord);
++						// (the serial scan tested the order's voltage ADE switch, set by any earlier position; with L_D[n]==0
++						// its R_D[n] = 0/t_relax = 0 was never used, so testing this position is the same)
++						if ((t_relax>0) && (L_D[n]>0))
++						{
++							R_D[n] = L_D[n]/t_relax;
++						}
++						double w_Lor_Pol = mat->GetEpsLorPoleFreqWeighted(order,n,coord) * 2 * PI;
++						if ((w_Lor_Pol>0) && (L_D[n]>0))
++						{
++							group[2] = true;
++							C_L[n] = 1/(w_Lor_Pol*w_Lor_Pol*L_D[n]);
+ 						}
+ 					}
+ 
+@@ -248,161 +281,195 @@ bool Operator_Ext_LorentzMaterial::BuildExtension()
+ 						C_D[n]=0;
+ 						G_D[n]=0;
+ 						L_L[n]=0;
+-						if (m_Op->GetYeeCoords(n,pos,coord,true)==false)
+-							continue;
+-						if (m_Op->GetIV(n,pos[0],pos[1],pos[2])==0)
++						CSPropLorentzMaterial* mat = mat_i[n];
++						if (mat==NULL)
+ 							continue;
+-
+-//						CSProperties* prop = m_Op->GetGeometryCSX()->GetPropertyByCoordPriority(coord,(CSProperties::PropertyType)(CSProperties::METAL | CSProperties::MATERIAL), true);
+-						CSProperties* prop = m_Op->GetGeometryCSX()->GetPropertyByCoordPriority(coord, vPrims, true);
+-
+-						if (prop==NULL) continue;
+-
+-						if ((mat = prop->ToLorentzMaterial()))
++						const double* coord = coord_i[n];
++						double w_plasma = mat->GetMuePlasmaFreqWeighted(order,n,coord) * 2 * PI;
++						if ((w_plasma>0) && (m_Op->EC_L[n][index]>0))
+ 						{
+-							w_plasma = mat->GetMuePlasmaFreqWeighted(order,n,coord) * 2 * PI;
+-							if ((w_plasma>0) && (m_Op->EC_L[n][index]>0))
+-							{
+-								b_pos_on = true;
+-								m_curr_ADE_On[order] = true;
+-								C_D[n] = 1/(w_plasma*w_plasma*m_Op->EC_L[n][index]);
+-							}
+-							t_relax = mat->GetMueRelaxTimeWeighted(order,n,coord);
+-							if ((t_relax>0) && m_curr_ADE_On[order])
+-							{
+-								G_D[n] = C_D[n]/t_relax;
+-							}
+-							w_Lor_Pol = mat->GetMueLorPoleFreqWeighted(order,n,coord) * 2 * PI;
+-							if ((w_Lor_Pol>0) && (C_D[n]>0))
+-							{
+-								m_curr_Lor_ADE_On[order] = true;
+-								L_L[n] = 1/(w_Lor_Pol*w_Lor_Pol*C_D[n]);
+-							}
++							b_pos_on = true;
++							group[1] = true;
++							C_D[n] = 1/(w_plasma*w_plasma*m_Op->EC_L[n][index]);
++						}
++						double t_relax = mat->GetMueRelaxTimeWeighted(order,n,coord);
++						if ((t_relax>0) && (C_D[n]>0))
++						{
++							G_D[n] = C_D[n]/t_relax;
++						}
++						double w_Lor_Pol = mat->GetMueLorPoleFreqWeighted(order,n,coord) * 2 * PI;
++						if ((w_Lor_Pol>0) && (C_D[n]>0))
++						{
++							group[3] = true;
++							L_L[n] = 1/(w_Lor_Pol*w_Lor_Pol*C_D[n]);
+ 						}
+ 					}
+ 
+-					if (b_pos_on) //this position has active drude material
++					if (!b_pos_on) //this position has no active drude material
++						continue;
++					LorentzScanLists& S = L[order];
++					for (int g=0; g<4; ++g)
++						if (group[g] && !S.on[g])
++						{
++							S.on[g] = true;
++							S.start[g] = S.count;
++						}
++					for (unsigned int n=0; n<3; ++n)
+ 					{
+-						for (unsigned int n=0; n<3; ++n)
++						S.pos[n].push_back(pos[n]);
++						if (S.on[0])
+ 						{
+-							v_pos[n].push_back(pos[n]);
+ 							if (L_D[n]>0)
+ 							{
+-								v_int[n].push_back((2.0*L_D[n]-dT*R_D[n])/(2.0*L_D[n]+dT*R_D[n]));
++								S.val[LOR_V_INT][n].push_back((2.0*L_D[n]-dT*R_D[n])/(2.0*L_D[n]+dT*R_D[n]));
+ 								// check for r==0 in clyindrical coords and get special VI coefficient
+ 								if (m_CC_R0_included && n==2 && pos[0]==0)
+-									v_ext[n].push_back(dT/(L_D[n]+dT*R_D[n]/2.0)*m_Op_Cyl->m_Cyl_Ext->vi_R0[pos[2]]);
++									S.val[LOR_V_EXT][n].push_back(dT/(L_D[n]+dT*R_D[n]/2.0)*m_Op_Cyl->m_Cyl_Ext->vi_R0[pos[2]]);
+ 								else
+-									v_ext[n].push_back(dT/(L_D[n]+dT*R_D[n]/2.0)*m_Op->GetVI(n,pos[0],pos[1],pos[2]));
++									S.val[LOR_V_EXT][n].push_back(dT/(L_D[n]+dT*R_D[n]/2.0)*m_Op->GetVI(n,pos[0],pos[1],pos[2]));
+ 							}
+ 							else
+ 							{
+-								v_int[n].push_back(1);
+-								v_ext[n].push_back(0);
++								S.val[LOR_V_INT][n].push_back(1);
++								S.val[LOR_V_EXT][n].push_back(0);
+ 							}
++						}
++						if (S.on[1])
++						{
+ 							if (C_D[n]>0)
+ 							{
+-								i_int[n].push_back((2.0*C_D[n]-dT*G_D[n])/(2.0*C_D[n]+dT*G_D[n]));
+-								i_ext[n].push_back(dT/(C_D[n]+dT*G_D[n]/2.0)*m_Op->GetIV(n,pos[0],pos[1],pos[2]));
++								S.val[LOR_I_INT][n].push_back((2.0*C_D[n]-dT*G_D[n])/(2.0*C_D[n]+dT*G_D[n]));
++								S.val[LOR_I_EXT][n].push_back(dT/(C_D[n]+dT*G_D[n]/2.0)*m_Op->GetIV(n,pos[0],pos[1],pos[2]));
+ 							}
+ 							else
+ 							{
+-								i_int[n].push_back(1);
+-								i_ext[n].push_back(0);
++								S.val[LOR_I_INT][n].push_back(1);
++								S.val[LOR_I_EXT][n].push_back(0);
+ 							}
++						}
++						if (S.on[2])
++						{
+ 							if (C_L[n]>0)
+-								v_Lor[n].push_back(dT/C_L[n]/m_Op->GetVI(n,pos[0],pos[1],pos[2]));
++								S.val[LOR_V_LOR][n].push_back(dT/C_L[n]/m_Op->GetVI(n,pos[0],pos[1],pos[2]));
+ 							else
+-								v_Lor[n].push_back(0);
++								S.val[LOR_V_LOR][n].push_back(0);
++						}
++						if (S.on[3])
++						{
+ 							if (L_L[n]>0)
+-								i_Lor[n].push_back(dT/L_L[n]/m_Op->GetIV(n,pos[0],pos[1],pos[2]));
++								S.val[LOR_I_LOR][n].push_back(dT/L_L[n]/m_Op->GetIV(n,pos[0],pos[1],pos[2]));
+ 							else
+-								i_Lor[n].push_back(0);
++								S.val[LOR_I_LOR][n].push_back(0);
+ 						}
+ 					}
++					++S.count;
+ 				}
+ 			}
+ 		}
++		for (int order=0; order<orders; ++order)
++			line_end[(size_t)order*nx+x] = L[order].count;
++		skipped += skip;
++	};
++	if (orders>0)	// (no order, no scan: the serial code looked nothing up then)
++		SetupScanLines(nx, threads, line_thread, scan);
++	else
++		line_thread.assign(nx, 0);
++	// the serial scan left the shared address operator at the last cell
++	if ((orders>0) && (numLines[0]>0) && (numLines[1]>0) && (numLines[2]>0))
++		m_Op->MainOp->SetPos(numLines[0]-1, numLines[1]-1, numLines[2]-1);
++	{
++		size_t found = 0;
++		for (size_t i=0; i<lists.size(); ++i)
++			found += lists[i].count;
++		timer.Lap("scan (" + std::to_string(found) + " positions, " + std::to_string(orders) + " orders, " + std::to_string(threads)
++				  + " threads, " + std::to_string(skipped.load()) + " of " + std::to_string((size_t)numLines[0]*numLines[1]) + " columns skipped)");
++	}
+ 
+-		//copy all vectors into the array's
+-		m_LM_Count.push_back(v_pos[0].size());
+-
+-		m_LM_pos[order] = new unsigned int*[3];
+-
+-		if (m_volt_ADE_On[order])
+-		{
+-			v_int_ADE[order] = new FDTD_FLOAT*[3];
+-			v_ext_ADE[order] = new FDTD_FLOAT*[3];
+-		}
+-		else
+-		{
+-			v_int_ADE[order] = NULL;
+-			v_ext_ADE[order] = NULL;
+-		}
+-
+-		if (m_curr_ADE_On[order])
+-		{
+-			i_int_ADE[order] = new FDTD_FLOAT*[3];
+-			i_ext_ADE[order] = new FDTD_FLOAT*[3];
+-		}
+-		else
++	for (int order=0;order<orders;++order)
++	{
++		const LorentzScanLists* L = lists.data() + order;	// thread t: L[t*orders]
++		size_t count = 0;
++		bool on[4] = {false, false, false, false};
++		for (unsigned int t=0; t<threads; ++t)
+ 		{
+-			i_int_ADE[order] = NULL;
+-			i_ext_ADE[order] = NULL;
++			count += L[(size_t)t*orders].count;
++			for (int g=0; g<4; ++g)
++				on[g] = on[g] || L[(size_t)t*orders].on[g];
+ 		}
++		m_volt_ADE_On[order] = on[0];
++		m_curr_ADE_On[order] = on[1];
++		m_volt_Lor_ADE_On[order] = on[2];
++		m_curr_Lor_ADE_On[order] = on[3];
+ 
+-		if (m_volt_Lor_ADE_On[order])
+-			v_Lor_ADE[order] = new FDTD_FLOAT*[3];
+-		else
+-			v_Lor_ADE[order] = NULL;
++		//copy all lists into the array's, line by line in x order; every list is freed as soon as its array is complete
++		m_LM_Count.push_back(count);
+ 
+-		if (m_curr_Lor_ADE_On[order])
+-			i_Lor_ADE[order] = new FDTD_FLOAT*[3];
+-		else
+-			i_Lor_ADE[order] = NULL;
++		m_LM_pos[order] = new unsigned int*[3];
++		v_int_ADE[order] = on[0] ? new FDTD_FLOAT*[3] : NULL;
++		v_ext_ADE[order] = on[0] ? new FDTD_FLOAT*[3] : NULL;
++		i_int_ADE[order] = on[1] ? new FDTD_FLOAT*[3] : NULL;
++		i_ext_ADE[order] = on[1] ? new FDTD_FLOAT*[3] : NULL;
++		v_Lor_ADE[order] = on[2] ? new FDTD_FLOAT*[3] : NULL;
++		i_Lor_ADE[order] = on[3] ? new FDTD_FLOAT*[3] : NULL;
++		FDTD_FLOAT*** dst[LOR_KINDS] = {v_int_ADE, v_ext_ADE, i_int_ADE, i_ext_ADE, v_Lor_ADE, i_Lor_ADE};
+ 
+ 		for (int n=0; n<3; ++n)
+ 		{
+-			m_LM_pos[order][n] = new unsigned int[m_LM_Count.at(order)];
+-			for (unsigned int i=0; i<m_LM_Count.at(order); ++i)
+-				m_LM_pos[order][n][i] = v_pos[n].at(i);
+-			if (m_volt_ADE_On[order])
++			unsigned int* p = m_LM_pos[order][n] = new unsigned int[count];
++			for (unsigned int x=0; x<nx; ++x)
+ 			{
+-				v_int_ADE[order][n]  = new FDTD_FLOAT[m_LM_Count.at(order)];
+-				v_ext_ADE[order][n]  = new FDTD_FLOAT[m_LM_Count.at(order)];
+-
+-				for (unsigned int i=0; i<m_LM_Count.at(order); ++i)
+-				{
+-					v_int_ADE[order][n][i] = v_int[n].at(i);
+-					v_ext_ADE[order][n][i] = v_ext[n].at(i);
+-				}
++				const size_t b = line_begin[(size_t)order*nx+x], e = line_end[(size_t)order*nx+x];
++				L[(size_t)line_thread[x]*orders].pos[n].CopyTo(b, e, p);
++				p += e-b;
+ 			}
+-			if (m_curr_ADE_On[order])
+-			{
+-				i_int_ADE[order][n]  = new FDTD_FLOAT[m_LM_Count.at(order)];
+-				i_ext_ADE[order][n]  = new FDTD_FLOAT[m_LM_Count.at(order)];
++			for (unsigned int t=0; t<threads; ++t)
++				lists[(size_t)t*orders+order].pos[n].clear();
+ 
+-				for (unsigned int i=0; i<m_LM_Count.at(order); ++i)
++			for (int k=0; k<LOR_KINDS; ++k)
++			{
++				const int g = LOR_GROUP[k];
++				if (!on[g])
++					continue;
++				FDTD_FLOAT* d = dst[k][order][n] = new FDTD_FLOAT[count];
++				for (unsigned int x=0; x<nx; ++x)
+ 				{
+-					i_int_ADE[order][n][i] = i_int[n].at(i);
+-					i_ext_ADE[order][n][i] = i_ext[n].at(i);
++					const LorentzScanLists& S = L[(size_t)line_thread[x]*orders];
++					const size_t b = line_begin[(size_t)order*nx+x], e = line_end[(size_t)order*nx+x];
++					// positions before the thread switched the group on hold the default
++					const size_t s = S.on[g] ? std::min(std::max(S.start[g], b), e) : e;
++					std::fill(d, d+(s-b), LOR_DEFAULT[k]);
++					if (e>s)
++						S.val[k][n].CopyTo(s-S.start[g], e-S.start[g], d+(s-b));
++					d += e-b;
+ 				}
++				for (unsigned int t=0; t<threads; ++t)
++					lists[(size_t)t*orders+order].val[k][n].clear();
+ 			}
+-
+-			if (m_volt_Lor_ADE_On[order])
+-			{
+-				v_Lor_ADE[order][n]  = new FDTD_FLOAT[m_LM_Count.at(order)];
+-				for (unsigned int i=0; i<m_LM_Count.at(order); ++i)
+-					v_Lor_ADE[order][n][i] = v_Lor[n].at(i);
+-			}
+-			if (m_curr_Lor_ADE_On[order])
++		}
++		timer.Lap("arrays order " + std::to_string(order));
++	}
++	if (SetupTimer::Enabled())
++		for (int order=0; order<m_Order; ++order)
++		{
++			const size_t c = m_LM_Count.at(order);
++			uint64_t h = SetupTimer::Hash(&c, sizeof(c));
++			for (int n=0; n<3; ++n)
+ 			{
+-				i_Lor_ADE[order][n]  = new FDTD_FLOAT[m_LM_Count.at(order)];
+-				for (unsigned int i=0; i<m_LM_Count.at(order); ++i)
+-					i_Lor_ADE[order][n][i] = i_Lor[n].at(i);
++				h = SetupTimer::Hash(m_LM_pos[order][n], c*sizeof(unsigned int), h);
++				if (m_volt_ADE_On[order])
++					h = SetupTimer::Hash(v_ext_ADE[order][n], c*sizeof(FDTD_FLOAT), SetupTimer::Hash(v_int_ADE[order][n], c*sizeof(FDTD_FLOAT), h));
++				if (m_curr_ADE_On[order])
++					h = SetupTimer::Hash(i_ext_ADE[order][n], c*sizeof(FDTD_FLOAT), SetupTimer::Hash(i_int_ADE[order][n], c*sizeof(FDTD_FLOAT), h));
++				if (m_volt_Lor_ADE_On[order])
++					h = SetupTimer::Hash(v_Lor_ADE[order][n], c*sizeof(FDTD_FLOAT), h);
++				if (m_curr_Lor_ADE_On[order])
++					h = SetupTimer::Hash(i_Lor_ADE[order][n], c*sizeof(FDTD_FLOAT), h);
+ 			}
++			std::ostringstream o;
++			o << "order " << order << ": " << c << " positions, ADE v/i/vLor/iLor " << m_volt_ADE_On[order] << m_curr_ADE_On[order]
++			  << m_volt_Lor_ADE_On[order] << m_curr_Lor_ADE_On[order] << ", hash " << std::hex << h;
++			SetupTimer::Note("Operator_Ext_LorentzMaterial arrays", o.str());
+ 		}
+-	}
+ 
+ 	return true;
+ }
+diff --git a/FDTD/operator.cpp b/FDTD/operator.cpp
+index 849ce59..ea17d1e 100644
+--- a/FDTD/operator.cpp
++++ b/FDTD/operator.cpp
+@@ -29,6 +29,8 @@
+ #include "Common/processfields.h"
+ #include "tools/vtk_file_writer.h"
+ #include "tools/useful.h"
++#include "tools/setup_timing.h"
++#include "tools/setup_memory.h"
+ #include "fparser.hh"
+ #include "extensions/operator_ext_excitation.h"
+ 
+@@ -49,21 +51,6 @@ using std::flush;
+ 
+ #include <atomic>
+ 
+-// OPENEMS_SETUP_TIMING=1 prints the time of every phase of the operator setup to stderr
+-struct SetupTimer
+-{
+-	SetupTimer(const char* what) : m_what(what), m_t0(std::chrono::steady_clock::now()) {}
+-	static bool Enabled() { static const bool on = EnvFlag("OPENEMS_SETUP_TIMING"); return on; }
+-	void Lap(const std::string& step)
+-	{
+-		if (!Enabled()) return;
+-		std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
+-		std::cerr << "setup timing: " << m_what << " " << step << ": " << std::chrono::duration<double>(t-m_t0).count() << " s" << std::endl;
+-		m_t0 = t;
+-	}
+-	const char* m_what;
+-	std::chrono::steady_clock::time_point m_t0;
+-};
+ // bumped by every CalcECOperator(): keys the per-thread GetMaterial() cache so a later setup (same mesh and
+ // addresses, properties freed and reallocated) can never reuse a pointer of an earlier one
+ static std::atomic<unsigned int> s_SetupGeneration(0);
+@@ -146,10 +133,10 @@ void Operator::Delete()
+ 	delete MainOp; MainOp=0;
+ 	for (int n=0; n<3; ++n)
+ 	{
+-		delete[] EC_C[n];EC_C[n]=0;
+-		delete[] EC_G[n];EC_G[n]=0;
+-		delete[] EC_L[n];EC_L[n]=0;
+-		delete[] EC_R[n];EC_R[n]=0;
++		SetupFree(EC_C[n]);EC_C[n]=0;
++		SetupFree(EC_G[n]);EC_G[n]=0;
++		SetupFree(EC_L[n]);EC_L[n]=0;
++		SetupFree(EC_R[n]);EC_R[n]=0;
+ 	}
+ 
+ 	delete m_epsR_ptr;
+@@ -1150,13 +1137,13 @@ int Operator::CalcECOperator( DebugFlags debugFlags )
+ 	//cleanup
+ 	for (int n=0; n<3; ++n)
+ 	{
+-		delete[] EC_C[n];
++		SetupFree(EC_C[n]);
+ 		EC_C[n]=NULL;
+-		delete[] EC_G[n];
++		SetupFree(EC_G[n]);
+ 		EC_G[n]=NULL;
+-		delete[] EC_L[n];
++		SetupFree(EC_L[n]);
+ 		EC_L[n]=NULL;
+-		delete[] EC_R[n];
++		SetupFree(EC_R[n]);
+ 		EC_R[n]=NULL;
+ 	}
+ 
+@@ -1351,8 +1338,11 @@ double Operator::GetMaterial(
+ 	// The material averaging asks for two types at the same coordinate in a row (epsilon+kappa, mue+sigma):
+ 	// remember the last lookup per thread, the primitives do not change during the setup.
+ 	// (keyed by the vector's address, size and first/last entry: a later vector may reuse a freed address)
+-	struct LastLookup { double coords[3]; const CSPrimitives* const* prims; size_t num; const CSPrimitives* first; const CSPrimitives* back; CSPropMaterial* mat; bool valid; unsigned int gen; };
+-	static thread_local LastLookup last = {{0,0,0}, NULL, 0, NULL, NULL, NULL, false, 0};
++	// The property found last is mostly found again: remember its cast to CSPropMaterial (a dynamic_cast per lookup was
++	// a sixth of the material averaging), for this setup generation only (properties may be freed between setups).
++	struct LastLookup { double coords[3]; const CSPrimitives* const* prims; size_t num; const CSPrimitives* first; const CSPrimitives* back; CSPropMaterial* mat; bool valid; unsigned int gen;
++						const CSProperties* cast_prop; CSPropMaterial* cast_mat; unsigned int cast_gen; };
++	static thread_local LastLookup last = {{0,0,0}, NULL, 0, NULL, NULL, NULL, false, 0, NULL, NULL, 0};
+ 	const unsigned int gen = s_SetupGeneration.load();
+ 	const CSPrimitives* first = vPrims.empty() ? NULL : vPrims.front();
+ 	const CSPrimitives* back = vPrims.empty() ? NULL : vPrims.back();
+@@ -1363,7 +1353,15 @@ double Operator::GetMaterial(
+ 	else
+ 	{
+ 		CSProperties* prop = CSX->FindPropertyByCoordPriority(coords,vPrims,markAsUsed);
+-		mat = dynamic_cast<CSPropMaterial*>(prop);
++		if (prop==NULL)
++			mat = NULL;
++		else if ((prop==last.cast_prop) && (last.cast_gen==gen))
++			mat = last.cast_mat;
++		else
++		{
++			mat = dynamic_cast<CSPropMaterial*>(prop);
++			last.cast_prop = prop; last.cast_mat = mat; last.cast_gen = gen;
++		}
+ 		last.coords[0]=coords[0]; last.coords[1]=coords[1]; last.coords[2]=coords[2];
+ 		last.prims = vPrims.data(); last.num = vPrims.size(); last.first = first; last.back = back; last.mat = mat; last.valid = markAsUsed; last.gen = gen;
+ 	}
+@@ -1858,14 +1856,15 @@ void Operator::Init_EC()
+ 	for (int n=0; n<3; ++n)
+ 	{
+ 		//init x-cell-array
+-		delete[] EC_C[n];
+-		delete[] EC_G[n];
+-		delete[] EC_L[n];
+-		delete[] EC_R[n];
+-		EC_C[n] = new FDTD_FLOAT[MainOp->GetSize()];
+-		EC_G[n] = new FDTD_FLOAT[MainOp->GetSize()];
+-		EC_L[n] = new FDTD_FLOAT[MainOp->GetSize()];
+-		EC_R[n] = new FDTD_FLOAT[MainOp->GetSize()];
++		// (from the OS on macOS: freed after the setup, they would otherwise stay resident under the engine's arrays)
++		SetupFree(EC_C[n]);
++		SetupFree(EC_G[n]);
++		SetupFree(EC_L[n]);
++		SetupFree(EC_R[n]);
++		EC_C[n] = SetupAlloc<FDTD_FLOAT>(MainOp->GetSize());
++		EC_G[n] = SetupAlloc<FDTD_FLOAT>(MainOp->GetSize());
++		EC_L[n] = SetupAlloc<FDTD_FLOAT>(MainOp->GetSize());
++		EC_R[n] = SetupAlloc<FDTD_FLOAT>(MainOp->GetSize());
+ 		for (unsigned int i=0; i<MainOp->GetSize(); i++) //init all
+ 		{
+ 			EC_C[n][i]=0;
+diff --git a/FDTD/operator.h b/FDTD/operator.h
+index a5b6273..64a7adb 100644
+--- a/FDTD/operator.h
++++ b/FDTD/operator.h
+@@ -35,6 +35,7 @@ class Operator : public Operator_Base
+ {
+ 	friend class Engine;
+ 	friend class Engine_Interface_FDTD;
++	friend class Operator_Ext_Dispersive;
+ 	friend class Operator_Ext_LorentzMaterial;
+ 	friend class Operator_Ext_ConductingSheet;
+ 	friend class Operator_Ext_PML_SF_Plane;
+diff --git a/FDTD/operator_multithread.cpp b/FDTD/operator_multithread.cpp
+index 407335a..15e786b 100644
+--- a/FDTD/operator_multithread.cpp
++++ b/FDTD/operator_multithread.cpp
+@@ -18,6 +18,8 @@
+ #include "operator_multithread.h"
+ #include "engine_multithread.h"
+ #include "tools/useful.h"
++#include <algorithm>
++#include <cstdlib>
+ 
+ using std::cout;
+ using std::cerr;
+@@ -115,9 +117,16 @@ void Operator_Multithread::CalcStartStopLines(
+ 
+ int Operator_Multithread::CalcECOperator( DebugFlags debugFlags )
+ {
+-	// the setup pool (Calc_EC, CalcPEC, timestep search, Calc_ECOperatorPos) uses every core; the engine
+-	// gets its own count (m_orig_numThreads) in CreateEngine()
++	// the setup pool (Calc_EC, CalcPEC, timestep search, Calc_ECOperatorPos, the dispersive scans) uses every core; the
++	// engine gets its own count (m_orig_numThreads) in CreateEngine(). OPENEMS_SETUP_THREADS=n sets the pool size (the results
++	// do not depend on it; for tests, and to keep a shared machine's load down).
+ 	m_numThreads = AvailableThreads();
++	if (const char* env = getenv("OPENEMS_SETUP_THREADS"))
++	{
++		const long n = strtol(env, NULL, 10);
++		if (n>0)
++			m_numThreads = (unsigned int)std::min(n, 1024L);
++	}
+ 
+ 	std::vector<unsigned int> m_Start_Lines;
+ 	std::vector<unsigned int> m_Stop_Lines;
+diff --git a/FDTD/operator_sse_compressed.cpp b/FDTD/operator_sse_compressed.cpp
+index 8684703..9d848d3 100644
+--- a/FDTD/operator_sse_compressed.cpp
++++ b/FDTD/operator_sse_compressed.cpp
+@@ -16,6 +16,7 @@
+ */
+ 
+ #include "operator_sse_compressed.h"
++#include "tools/setup_timing.h"
+ #include <iostream>
+ #include "engine_sse_compressed.h"
+ #include "engine_sse.h"
+@@ -58,8 +59,10 @@ Engine* Operator_SSE_Compressed::CreateEngine()
+ int Operator_SSE_Compressed::CalcECOperator( DebugFlags debugFlags )
+ {
+ 	int ErrCode = Operator_sse::CalcECOperator( debugFlags );
++	SetupTimer timer("Operator_SSE_Compressed");
+ 	m_Use_Compression = false;
+ 	m_Use_Compression = CompressOperator();
++	timer.Lap("CompressOperator");
+ 
+ 	return ErrCode;
+ }
+diff --git a/openems.cpp b/openems.cpp
+index fd84e0d..e08860a 100644
+--- a/openems.cpp
++++ b/openems.cpp
+@@ -21,6 +21,7 @@
+ #include <fstream>
+ #include "tools/signal.h"
+ #include "tools/useful.h"
++#include "tools/setup_timing.h"
+ #include "FDTD/operator_cylinder.h"
+ #include "FDTD/operator_cylindermultigrid.h"
+ #include "FDTD/engine_multithread.h"
+@@ -113,13 +114,16 @@ openEMS::~openEMS()
+ 
+ void openEMS::FreeSimulation()
+ {
++	SetupTimer ftimer("openEMS::FreeSimulation");
+ 	if (PA) PA->DeleteAll();
+ 	delete PA;
+ 	PA=0;
+ 	delete FDTD_Eng;
+ 	FDTD_Eng=0;
++	ftimer.Lap("delete engine");
+ 	delete FDTD_Op;
+ 	FDTD_Op=0;
++	ftimer.Lap("delete operator");
+ 	Eng_Ext_SSD=0; // non-owning observer; deleted by the engine (m_Eng_exts) in 'delete FDTD_Eng' above
+ }
+ 
+@@ -1365,6 +1369,7 @@ int openEMS::SetupFDTD()
+ 
+ 	timeval startTime;
+ 	gettimeofday(&startTime,NULL);
++	SetupTimer stimer("openEMS::SetupFDTD");
+ 
+ 	Signal::SetupHandlerForSIGINT(SIGNAL_EXIT_FORCE);
+ 
+@@ -1385,6 +1390,7 @@ int openEMS::SetupFDTD()
+ 		cerr << ec << endl;
+ 	if (g_settings.GetVerboseLevel()>2)
+ 		m_CSX->ShowPropertyStatus(cerr);
++	stimer.Lap("CSX Update");
+ 
+ 	if (CylinderCoords)
+ 		if (m_CSX->GetCoordInputType()!=CYLINDRICAL)
+@@ -1403,6 +1409,7 @@ int openEMS::SetupFDTD()
+ 		return 2;
+ 	}
+ 
++	stimer.Lap("SetupOperator");
+ 	// default material averaging is quarter cell averaging
+ 	FDTD_Op->SetQuarterCellMaterialAvg();
+ 
+@@ -1431,7 +1438,9 @@ int openEMS::SetupFDTD()
+ 		return(2);
+ 	}
+ 
++	stimer.Lap("SetGeometryCSX");
+ 	SetupBoundaryConditions();
++	stimer.Lap("SetupBoundaryConditions");
+ 
+ 	FDTD_Op->SetTimeStepMethod(m_TS_method);
+ 
+@@ -1483,8 +1492,10 @@ int openEMS::SetupFDTD()
+ 		SetupAbsorbingSheets();
+ 
+ 
++	stimer.Lap("extensions added");
+ 	//check all properties to request material storage during operator creation...
+ 	SetupMaterialStorages();
++	stimer.Lap("SetupMaterialStorages");
+ 
+ 	// The array sizes and linear indices (ArrayLib, AdrOp) are 32-bit: refuse a mesh they cannot address instead
+ 	// of writing past the end of a wrapped array. Arrays over the whole mesh with three components (the stored
+@@ -1520,6 +1531,7 @@ int openEMS::SetupFDTD()
+ 
+ 	FDTD_Op->CalcECOperator( debugFlags );
+ 	/*******************************************************************************/
++	stimer.Lap("CalcECOperator");
+ 
+ 	//reset flags for material storage, if no dump-box resets it to true, it will be cleaned up...
+ 	FDTD_Op->SetMaterialStoreFlags(0,false);
+@@ -1535,6 +1547,7 @@ int openEMS::SetupFDTD()
+ 		return 2;
+ 	m_Exc->DumpVoltageExcite("et");
+ 	m_Exc->DumpCurrentExcite("ht");
++	stimer.Lap("excitation signal");
+ 
+ 	timeval OpDoneTime;
+ 	gettimeofday(&OpDoneTime,NULL);
+@@ -1545,6 +1558,7 @@ int openEMS::SetupFDTD()
+ 		FDTD_Op->ShowExtStat();
+ 		cout << "Creation time for operator: " << CalcDiffTime(OpDoneTime,startTime) << " s" << endl;
+ 	}
++	stimer.Lap("ShowStat");
+ 	cout << "FDTD simulation size: " << FDTD_Op->GetNumberOfLines(0) << "x" << FDTD_Op->GetNumberOfLines(1) << "x" << FDTD_Op->GetNumberOfLines(2) << " --> "  << FDTD_Op->GetNumberCells() << " FDTD cells " << endl;
+ 	cout << "FDTD timestep is: " <<FDTD_Op->GetTimestep()  << " s; Nyquist rate: " <<  m_Exc->GetNyquistNum() << " timesteps @" << CalcNyquistFrequency(m_Exc->GetNyquistNum(),FDTD_Op->GetTimestep()) << " Hz" << endl;
+ 	if (m_Exc->GetNyquistNum()>1000)
+@@ -1580,6 +1594,7 @@ int openEMS::SetupFDTD()
+ 	if (exportOp && *exportOp) // operator, extensions and the excitation signal are complete here
+ 		ExportOperatorRaw(FDTD_Op, exportOp);
+ 	FDTD_Eng = FDTD_Op->CreateEngine();
++	stimer.Lap("CreateEngine");
+ 
+ 	if (Op_Ext_SSD)
+ 	{
+@@ -1593,9 +1608,11 @@ int openEMS::SetupFDTD()
+ 		Signal::SetupHandlerForSIGINT(SIGNAL_ORIGINAL);
+ 		return 2;
+ 	}
++	stimer.Lap("SetupProcessing");
+ 
+ 	// Cleanup all unused material storages...
+ 	FDTD_Op->CleanupMaterialStorage();
++	stimer.Lap("CleanupMaterialStorage");
+ 
+ 	//check and warn for unused properties and primitives
+ 	m_CSX->WarnUnusedPrimitves(cerr);
+@@ -1692,6 +1709,7 @@ void openEMS::RunFDTD()
+ 	}
+ 
+ 	cout << "Running FDTD engine... this may take a while... grab a cup of coffee?!?" << endl;
++	SetupTimer rtimer("openEMS::RunFDTD");
+ 
+ 	Signal::SetupHandlerForSIGINT(SIGNAL_EXIT_GRACEFUL);
+ 
+@@ -1795,6 +1813,7 @@ void openEMS::RunFDTD()
+ 	double t_diff;
+ 	double t_run;
+ 
++	rtimer.Lap("processings and end criteria (before the run timer)");
+ 	timeval currTime;
+ 	gettimeofday(&currTime,NULL);
+ 	timeval startTime = currTime;
+@@ -1938,8 +1957,10 @@ void openEMS::RunFDTD()
+ 	if (exportFields && *exportFields)
+ 		ExportFieldsRaw(FDTD_Op, FDTD_Eng, exportFields);
+ 
++	rtimer.Lap("time stepping and export");
+ 	//*************** postproc ************//
+ 	PA->PostProcess();
++	rtimer.Lap("PostProcess");
+ 
+ 	// the results are written: free the memory of the operator and the engine,
+ 	// e.g. for a post-processing in the same process (NF2FF, SAR)
+diff --git a/tools/setup_memory.h b/tools/setup_memory.h
+new file mode 100644
+index 0000000..422c511
+--- /dev/null
++++ b/tools/setup_memory.h
+@@ -0,0 +1,63 @@
++/*
++*	Copyright (C) 2026 openEMS contributors
++*
++*	This program is free software: you can redistribute it and/or modify
++*	it under the terms of the GNU General Public License as published by
++*	the Free Software Foundation, either version 3 of the License, or
++*	(at your option) any later version.
++*
++*	This program is distributed in the hope that it will be useful,
++*	but WITHOUT ANY WARRANTY; without even the implied warranty of
++*	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++*	GNU General Public License for more details.
++*
++*	You should have received a copy of the GNU General Public License
++*	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#ifndef SETUP_MEMORY_H
++#define SETUP_MEMORY_H
++
++// Large work arrays of the setup that are freed again before the run (the EC arrays, the dispersive scan lists).
++// On macOS a freed malloc block of this size stays resident and is reused only for a block of about the same size, so
++// every later allocation of the setup and the engine lands on top of it and the process' peak memory grows by the whole
++// array; mapped from the OS directly, freeing gives the memory back. Elsewhere: plain new[]/delete[].
++
++#include <cstddef>
++#include <new>
++#if defined(__APPLE__)
++#include <sys/mman.h>
++#endif
++
++// bytes in front of an array of SetupAlloc(): the mapping's size (one cache line, so the array stays cache-line aligned)
++static const size_t SETUP_ALLOC_HEADER = 128;
++
++//! count elements of T (contents undefined; on macOS zero pages), freed with SetupFree()
++template <typename T> T* SetupAlloc(size_t count)
++{
++#if defined(__APPLE__)
++	const size_t bytes = SETUP_ALLOC_HEADER + count*sizeof(T);
++	void* p = mmap(NULL, bytes, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
++	if (p==MAP_FAILED)
++		throw std::bad_alloc();
++	*static_cast<size_t*>(p) = bytes;
++	return reinterpret_cast<T*>(static_cast<char*>(p)+SETUP_ALLOC_HEADER);
++#else
++	return new T[count];
++#endif
++}
++
++//! frees an array of SetupAlloc() (NULL: nothing)
++template <typename T> void SetupFree(T* array)
++{
++	if (array==NULL)
++		return;
++#if defined(__APPLE__)
++	char* p = reinterpret_cast<char*>(array) - SETUP_ALLOC_HEADER;
++	munmap(p, *reinterpret_cast<size_t*>(p));
++#else
++	delete[] array;
++#endif
++}
++
++#endif // SETUP_MEMORY_H
+diff --git a/tools/setup_timing.h b/tools/setup_timing.h
+new file mode 100644
+index 0000000..c488716
+--- /dev/null
++++ b/tools/setup_timing.h
+@@ -0,0 +1,132 @@
++/*
++*	Copyright (C) 2026 openEMS contributors
++*
++*	This program is free software: you can redistribute it and/or modify
++*	it under the terms of the GNU General Public License as published by
++*	the Free Software Foundation, either version 3 of the License, or
++*	(at your option) any later version.
++*
++*	This program is distributed in the hope that it will be useful,
++*	but WITHOUT ANY WARRANTY; without even the implied warranty of
++*	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++*	GNU General Public License for more details.
++*
++*	You should have received a copy of the GNU General Public License
++*	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#ifndef SETUP_TIMING_H
++#define SETUP_TIMING_H
++
++// OPENEMS_SETUP_TIMING=1 prints every phase of the setup to stderr, one line a phase:
++//   setup timing: <what> <step>: <wall> s, cpu <cpu> s, rss <now> MiB, peak <peak> MiB
++// wall and cpu (the process, all threads: cpu/wall > 1 is a phase that runs on several threads) since the timer's last
++// lap; rss = the resident memory now, peak = the most it ever was (what a benchmark's maximum RSS reports); on Apple
++// also heap = the bytes malloc has handed out and not got back (freed memory that stays resident counts in rss, not here).
++// Nothing is measured unless the variable is set.
++
++#include <chrono>
++#include <ctime>
++#include <iostream>
++#include <sstream>
++#include <string>
++#include "useful.h"
++#include <cstdint>
++#include <cstddef>
++#if defined(__APPLE__)
++#include <mach/mach.h>
++#include <malloc/malloc.h>
++#endif
++#if defined(__APPLE__) || defined(__unix__)
++#include <sys/resource.h>
++#endif
++#if defined(__linux__)
++#include <fstream>
++#include <unistd.h>
++#endif
++
++struct SetupTimer
++{
++	explicit SetupTimer(const std::string& what) : m_what(what)
++	{
++		if (Enabled())
++		{
++			m_t0 = std::chrono::steady_clock::now();
++			m_c0 = CpuSeconds();
++		}
++	}
++	static bool Enabled() { static const bool on = EnvFlag("OPENEMS_SETUP_TIMING"); return on; }
++	//! the CPU time of the process (all threads), s
++	static double CpuSeconds()
++	{
++#if defined(__APPLE__) || defined(__unix__)
++		struct rusage ru;
++		if (getrusage(RUSAGE_SELF, &ru)==0)
++			return ru.ru_utime.tv_sec + ru.ru_stime.tv_sec + 1e-6*(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec);
++#endif
++		return (double)std::clock()/CLOCKS_PER_SEC;
++	}
++	//! the resident memory now and its peak, MiB (0 where unknown)
++	static void Memory(double& now, double& peak)
++	{
++		now = peak = 0;
++#if defined(__APPLE__)
++		mach_task_basic_info_data_t info;
++		mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
++		if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count)==KERN_SUCCESS)
++		{
++			now = info.resident_size/1048576.0;
++			peak = info.resident_size_max/1048576.0;
++		}
++#elif defined(__linux__)
++		std::ifstream statm("/proc/self/statm");
++		unsigned long long size = 0, res = 0;
++		if (statm >> size >> res)
++			now = (double)res*sysconf(_SC_PAGESIZE)/1048576.0;
++		struct rusage ru;
++		if (getrusage(RUSAGE_SELF, &ru)==0)
++			peak = ru.ru_maxrss/1024.0;
++#endif
++	}
++	void Lap(const std::string& step)
++	{
++		if (!Enabled()) return;
++		const std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
++		const double c = CpuSeconds();
++		double now, peak;
++		Memory(now, peak);
++		std::ostringstream o;
++		o.setf(std::ios::fixed);
++		o.precision(3);
++		o << "setup timing: " << m_what << " " << step << ": " << std::chrono::duration<double>(t-m_t0).count() << " s, cpu " << c-m_c0 << " s";
++		o.precision(0);
++		o << ", rss " << now << " MiB, peak " << peak << " MiB";
++#if defined(__APPLE__)
++		malloc_statistics_t st;
++		malloc_zone_statistics(NULL, &st);
++		o << ", heap " << st.size_in_use/1048576.0 << " MiB";
++#endif
++		std::cerr << o.str() << std::endl;
++		m_t0 = t;
++		m_c0 = c;
++	}
++	//! FNV-1a over raw bytes (to compare setup results between builds: same hash, same bytes)
++	static uint64_t Hash(const void* data, size_t bytes, uint64_t h = 1469598103934665603ULL)
++	{
++		const unsigned char* p = static_cast<const unsigned char*>(data);
++		for (size_t i=0; i<bytes; ++i)
++			h = (h ^ p[i])*1099511628211ULL;
++		return h;
++	}
++	//! one line "setup timing: <what>: <text>" (nothing unless enabled)
++	static void Note(const std::string& what, const std::string& text)
++	{
++		if (Enabled())
++			std::cerr << "setup timing: " << what << ": " << text << std::endl;
++	}
++	std::string m_what;
++	std::chrono::steady_clock::time_point m_t0;
++	double m_c0 = 0;
++};
++
++#endif // SETUP_TIMING_H
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,7 +1,7 @@
 From 8bcec904fcaf87974ec1ca1e81f8c51c1f34bcb1 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 03:16:10 -0600
-Subject: [PATCH 41/43] Multithreaded engine: start the thread search at every
+Subject: [PATCH 41/49] Multithreaded engine: start the thread search at every
  non-efficiency core
 
 With numThreads=0 the engine timed 0.15 s windows starting at the core

@@ -9,6 +9,150 @@ the records in `results/` made before then, give the hashes that the fork's comm
 publication that day (with the same trees), and the table in the entry of 2026-11-07 on the fork's rewrite maps them
 to the published ones.
 
+## 2026-11-24: large grids and the dispersive pass are published as patches 0044 to 0049; the documents are brought up to date
+
+The six local commits of the entries of 2026-11-22 and 2026-11-23 (d918386, e05d419, 8d513ba, d3374c9, f7cae41 and
+8af6c4c, on 13350ca) are now patches 0044 to 0049 of `patches/openems/`, and the fork's head is 8af6c4c
+(`v0.37.0-67-g8af6c4c`, snapshot cg35). Those two entries keep their text: they record the days on which the work was
+local only. The installed build on the author's Mac Studio is still cg33 (patches 0001 to 0043, 13350ca); the new head
+is not installed.
+
+- Patches. 49 `git am` patches on 7bb294f (0001 to 0043 changed only in their subject numbering, `[PATCH nn/49]`;
+  0044 = d918386, 0045 = e05d419, 0046 = 8d513ba, 0047 = d3374c9, 0048 = f7cae41, 0049 = 8af6c4c). The cumulative diff
+  is 76 files, +10771/-520 (before: 68 files, +7685/-265, tree 211a3de). `git am` of the 49 and `git apply` of the
+  cumulative diff both give tree 08098d913ef47d24e5c2c18d5cf63e3f24b69251 (checked 2026-11-24). Trees after 0044 to
+  0049: 93ff465, ec1a0fd, c4d3807, 56acc79, b2483dd, 08098d9. Snapshots: cg34a, cg34b and cg34c after 0044, 0045 and
+  0046 (cg34 = 8d513ba), cg35a, cg35b and cg35c after 0047, 0048 and 0049 (cg35 = 8af6c4c).
+- Knob registry: 43 to 50 names. New: `OPENEMS_TBLOCK_BOX` (0044), `OPENEMS_YBAND` and `OPENEMS_YBAND_CACHE` (0045),
+  `OPENEMS_ADE_VEC` and `OPENEMS_ADE_COEF` (0047), `OPENEMS_ADE_SCRATCH` (0048), `OPENEMS_SETUP_THREADS` (0049). Their
+  rows are in `BUILD.md` section 7; the unit tests know them and the library row of cg35 (261 tests in 28 suites
+  with the smoke runs).
+- Two records added that were measured earlier and not yet in the repository. `results/upstream_bench_studio_2026-11-17.txt`:
+  upstream's `benchmark/bench.py` on the M5 Max at S, M and L, the table that started the large-grid work (the fork's
+  CPU engine, cg33, 1.50 to 2.78 times master's `cpu` engine at 1 M cells, 1.10 to 1.29 at 8 M with dispersive at 0.66,
+  0.83 to 0.99 at 30 M with dispersive at 0.48). `results/air_m5_column_2026-11-16.txt`: a base-M5 MacBook Air column
+  with stock, cg31 and cg33 (macOS 27.2.1; a set of its own): the CPU engine of cg33 runs 1.95 to 7.59 times stock's
+  best rate on the six models and the Metal engine 0.50 to 1.63 times the CPU engine's best; the patch tutorial's Metal
+  rate there, 1047 MC/s, is not explained.
+- What the documents gained: the README has items 25 to 30 in its list of engine changes, a section on large grids
+  against upstream's `cpu` engine on the M5 Max and a pointer to the Air column; `BUILD.md` the patch counts, the
+  head and a paragraph on the y-banded sweep (section 7) and the checks of 0044 to 0049 (section 9); `patches/README.md`
+  the table row, the apply order and the regeneration history; `ROADMAP.md` the status of the large-grid and dispersive
+  items; `Docs/fdtdKit/PLAN.md` a log entry; the paper a section on this work.
+- Result in one line (M5 Max, best over threads, upstream's `bench.py` with a source in every case, CPU engines
+  interleaved, 3 runs): at 30 M cells the head runs 1.32 to 1.48 times master 1d710c2 and 1.11 to 1.22 times upstream's
+  head ccb4472 on five of six cases, 1.49 to 1.55 times cg33; at 8 M it gained 9 to 28 % over cg33; at 1 M it is
+  unchanged. The dispersive case, which stood at 0.48 of master at 30 M, is at 0.97 of upstream's head after the three
+  steps (1.13 to 1.20 of master over the last two slots); every CPU result stays bit-identical to stock v0.37.0 in every check.
+- Still open. Dispersive at 30 M is 0.97 of upstream's head; at 6 threads master 1d710c2 leads on the cases with
+  extension work (0.85 to 0.96, dispersive 0.90 to 0.96 after the pass); upstream sets the dispersive case up in 2.1 to
+  2.3 s (the fork 4.9 s) and its head uses 2680 MiB (the fork 3737 MiB); the two boards are below the band rule's
+  threshold, so they gain nothing from patches 0044 to 0049; the fork's Metal engine has no column in `bench.py`'s
+  tables (no GPU-side steady-state detection); upstream's head differs from v0.37.0 on the cylindrical case by 7e-4
+  to 2e-2, not investigated.
+
+Records: `results/large_grid_cg34_2026-11-22.txt`, `results/dispersive_cg35_2026-11-23.txt`,
+`results/upstream_bench_studio_2026-11-17.txt`, `results/air_m5_column_2026-11-16.txt`.
+
+## 2026-11-23: dispersive materials in the CPU engine a z-vector at a time (three local fork commits), measured on the M5 Max
+
+The dispersive case was the one case of upstream's `benchmark/bench.py` that the 2026-11-22 work left behind upstream
+master's `cpu` engine at 8 M and 30 M cells. Like that entry, this one records local work only: commits d3374c9, f7cae41 and 8af6c4c on the
+author's local copy of the fork's branch `speed-m5-gpu` (on 8d513ba), nothing pushed or installed, `patches/`, the README,
+BUILD.md, the knob registry and the paper unchanged. Numbers are of the M5 Max set.
+
+- The cause. The packed hooks of the Lorentz / Drude and Debye extensions grouped four consecutive positions of an x-line:
+  in a filled block that is four f4vectors with one lane each, so every group gathered scalars through twelve indices, and
+  coefficients and state shared one block that was read and written back whole each step.
+- d3374c9. A group is now the positions of one f4vector (base offset and lane mask) when a hook has at least 2.5 positions
+  a group on average; thin structures (conducting sheets) keep the position groups. Coefficients sit in a table of distinct
+  sets apart from the state. Two test switches: `OPENEMS_ADE_VEC` (0 position groups, 2 vector groups) and
+  `OPENEMS_ADE_COEF` (`group`, `table`, `table32`). Per-lane arithmetic unchanged; results bit-identical in every check.
+- Measured (18 threads, MC/s, before -> after): 30 M cells 2108 -> 2962 (1.41), 8 M 2068 -> 2976 (1.44), 1 M 2777 -> 3942
+  (1.42); memory at 30 M 6580 -> 5857 MiB. Antenna case 0.99 to 1.02; the GCPW and SMA boards 1.005. Against upstream at
+  30 M: 0.98 of 1d710c2, 0.89 of the head ccb4472; at 8 M 1.06 and 0.94; at 1 M 2.14 and 1.78.
+- f7cae41 (2026-11-24), the Debye transients. A packed Debye group kept its pre-sum and its correction, 24 of 12(P+2) floats,
+  in the large block only to hand them from one hook to the next. `Engine_Extension` gets `RANGE_LOCAL` and `SetRangeLocal()`:
+  after every plan the engine says whether Pre, Post and Apply of one range run back to back on one thread (fused sweep, y-bands
+  with an open y direction, tiled box mode); then the two values live in per-thread scratch and the blocks hold the pole state
+  only. `OPENEMS_ADE_SCRATCH=0` keeps the stored layout. Bit-identical in every check. Measured (18 threads, MC/s): 30 M cells
+  2969 -> 3266 (1.10), 8 M 2964 -> 3156 (1.06), 1 M 3923 -> 4054 (1.03); antenna and the boards 1.00 to 1.01; one point loses,
+  8 M at 6 threads 1920 -> 1860. Against upstream at 18 threads now: 30 M 1.13 of 1d710c2 and 0.97 of ccb4472, 8 M 1.13 and 1.00.
+- 8af6c4c (2026-11-24), setup time and memory. The Lorentz / Drude and Debye operator extensions scan the grid per x-line on
+  the setup threads (blocks merged in x order, arrays equal byte for byte at every pool size) and the setup arrays come from
+  `mmap` on macOS, so freed setup memory leaves the process. `OPENEMS_SETUP_THREADS` sets the pool size. Bit-identical in every
+  check. Measured (dispersive case, 18 threads): setup at 30 M cells 13.25 -> 4.90 s, memory 5857 -> 3737 MiB; at 8 M 3.63 ->
+  1.55 s, 1742 -> 1069 MiB; rates 0.98 to 1.01 of before. Upstream: 2.1 to 2.3 s, 3961 MiB (1d710c2) and 2680 MiB (ccb4472).
+- Open: at 6 threads master 1d710c2 still leads on the dispersive case (0.90 to 0.96); the stored Debye path costs 1 to 2 %.
+
+Record: `results/dispersive_cg35_2026-11-23.txt`.
+
+## 2026-11-22: the CPU engine on large grids: a y-banded fused sweep (three local fork commits), measured on the M5 Max
+
+With upstream's own `benchmark/bench.py` on the Mac Studio (2026-11-17, sizes S, M and L with a source in every case) the
+fork's CPU engine (cg33, 13350ca) led upstream master's `cpu` engine (1d710c2) at 1 M and 8 M cells and was behind at 30 M
+(ideal 3755 against 4504 MC/s, 0.83; dispersive 0.48). This entry records the work on that gap. The numbers are of the
+M5 Max set and are compared only with each other. Nothing here was pushed or installed: the three commits are on the
+author's local copy of the fork's branch `speed-m5-gpu`, `patches/` still ends at 0043, and the README, BUILD.md, the knob
+registry and the paper are unchanged (the two new switches are described only here and in the record).
+
+- The cause, measured in three quiet slots (2026-11-21 and 2026-11-22). The fused sweep walks a thread's x-slab in whole
+  y-z planes; its rate on the plain box at 18 threads falls from 7477 MC/s at 2 M cells to 3778 at 30 M (no sharp knee: a
+  slope that starts where four planes pass about 1 MB), while master's `cpu` engine holds 3206 to 4548 and crosses the fork
+  at 12 M. Master's lead on the plain box is its temporal blocking (1.22 to 1.35 times its own flat sweep at 30 M); with a
+  PML that gives it only 1.02 to 1.08. The fork's opt-in tiled sweep already ran the plain box at 5764 MC/s at 30 M, but
+  0.26 to 0.79 of the fused sweep with a PML, because its hook stage handed whole x-lines to a few threads.
+- d918386, box hooks. `Engine_Extension` gets `BOX_HOOKS` and six hooks that take an x range and a y range. The tiled sweep
+  runs them on each thread's own y lines inside a task when every extension with a hook has them (`OPENEMS_TBLOCK_BOX=0`
+  keeps the hook stages); UPML, excitation, lumped RLC and the steady-state detection have them here. PML at 30 M and 18
+  threads: 1.15 to 1.28 times the fused sweep (hook stages 0.32). The tiled sweep stays opt-in: at 18 threads its rate on
+  the plain box varied between 1923 and 5477 MC/s from run to run.
+- e05d419, the y-banded fused sweep. Every block of a slab except the slab's last one is cut into bands of H y lines: the
+  voltages of the block, then the currents of the lines behind one row back in y. The slab's last block and the line before
+  the slab keep whole planes, so the neighbour flags between threads work as before. `OPENEMS_YBAND` = `0` (off), a number
+  (that height), `auto` (the default when unset); `OPENEMS_YBAND_CACHE` gives the cache share in MiB a thread. The automatic
+  rule turns bands on when four planes of voltages and currents exceed a thread's share of the L2 cache
+  (`hw.perflevelN.l2cachesize` over `cpusperl2`, the smallest over the performance levels the threads occupy) and sets H to
+  half the share over four lines. On the M5 Max: 311 lines a side, bands of 93 lines at 6 threads and 46 at 12 and 18;
+  201 lines, off at 6 threads and 71 lines at 12 and 18; 101 lines, off. An extension with hooks but without box hooks
+  keeps whole planes for the whole model. A sweep of the height at 30 M and 18 threads: 46 lines (automatic) 5661 MC/s,
+  32 lines 5633, 16 lines 5171, 96 lines 4926, no bands 3738.
+- 8d513ba, box hooks for the remaining extensions: Mur (the engine never cuts a band between the two rows a y-face
+  couples), conducting sheets, Lorentz, Drude and Debye (a packed group cut by the y range runs on a copy and writes back
+  only its own lanes), and the closed cylinder (the last band runs row 0 first). With it all six benchmark cases and the
+  toolkit's models can run in bands.
+- Identity. `check --lite` 18 of 18 rows identical to stock on the six models, the Debye check and the validation suite
+  15 of 15 for the final tree; raw fields and probes identical to the unbanded sweep on 17 kinds of model for every band
+  height from 1 to NY-1 at 1 to 6 threads (1388 of 1388 configurations), the closed cylinder 116 of 116, the steady-state
+  stop step with Mur and with a PML, and in the final benchmark the probes of all six cases at 1 M, 8 M and 30 M cells at
+  6, 12 and 18 threads (54 of 54 rows identical to cg33). Planted errors were caught by the checks.
+- Final benchmark, 2026-11-22 21:21 to 22:22 (61 minutes, 756 runs, none failed), the machine held quiet (others' CPU
+  median 0.2 core, p90 0.4; GPU idle in the CPU parts): cg33, the new tree, master 1d710c2 and upstream's head ccb4472
+  (its `cpu` engine tiles along two axes), interleaved run for run at 6, 12 and 18 threads, 3 runs of 3 s. Best over the
+  thread counts, MC/s, fork before | fork now | master 1d710c2 | upstream head ccb4472:
+
+  | case | 30 M cells | 8 M cells | 1 M cells |
+  |---|---|---|---|
+  | ideal | 3755, 5719, 4341, 5096 | 4758, 6092, 4179, 4914 | 7635, 7632, 2963, 3477 |
+  | pml | 2702, 4149, 2996, 3411 | 2991, 3669, 2564, 2921 | 3755, 3726, 1392, 1890 |
+  | inhomogeneous | 2691, 4173, 2976, 3464 | 3006, 3684, 2597, 2965 | 3876, 3866, 1400, 1917 |
+  | dispersive | 1375, 2121, 2845, 3334 | 1903, 2068, 2764, 3155 | 2796, 2808, 1836, 2235 |
+  | antenna | 2537, 3936, 2969, 3437 | 2916, 3415, 2505, 2921 | 3708, 3688, 1420, 1905 |
+  | cylindrical | 3901, 5797, 3909, 5231 | 5384, 6336, 3999, 5304 | 8427, 8493, 2935, 4158 |
+
+  At 30 M the fork now runs 1.32 to 1.48 times master 1d710c2 and 1.11 to 1.22 times upstream's head on five cases, and
+  1.49 to 1.55 times its own rate before. At 8 M it gains 1.09 to 1.28; at 1 M, where bands stay off, it is unchanged
+  (0.99 to 1.01). The dispersive case stays behind at 8 M and 30 M (0.75 of master, 0.64 to 0.66 of upstream's head)
+  although bands lift it 1.54 times at 30 M; its setup (13.3 s against 2.0 to 2.2 s) and memory (6.6 GiB against 4.0 and
+  2.7) are untouched. It is the open item. The gain is at 12 and 18 threads; at 6 threads bands change little (0.96 to 1.03)
+  and master 1d710c2 leads the fork on the cases with extension work (0.85 to 0.96; dispersive 0.71 to 0.73).
+- Probes of the upstream builds against the fork (which equals v0.37.0): 1d710c2 within 2.9e-5 relative on every case;
+  ccb4472 within 1.8e-5 on five cases, and 7.2e-4 (30 M), 8.8e-4 (8 M) and 1.4e-2 to 2.1e-2 (1 M) on the cylindrical case,
+  beyond `bench.py`'s tolerance. Its gpu engine differs from 1d710c2's on that case by the same amounts. Not looked into here.
+- Not built: two-axis tiles for the fork's tiled sweep (the y-bands reach both upstream builds on the cases they were aimed at).
+- The record with every point, the table at equal thread counts, setup times, memory and the load beside each part is
+  `results/large_grid_cg34_2026-11-22.txt`.
+
 ## 2026-11-15: the fork on a third machine, an M5 Max Mac Studio; cg33 installed
 
 The project moved on 2026-11-14 to a third machine: a Mac Studio (Mac17,14) with an Apple M5 Max (6 "Super" cores,

@@ -1,0 +1,270 @@
+\section{Large grids and dispersive materials on the M5 Max}\label{sec:large}
+
+Section~\ref{sec:studio} measured the build of patches 0001--0043 (cg33, commit 13350ca) on the M5 Max Mac Studio. On
+2026-11-17 the same machine was used for upstream's own benchmark, \code{benchmark/bench.py}, at three sizes, and the
+fork's CPU engine was behind upstream's new \code{cpu} engine at the largest one. This section describes what was done
+about it: patches 0044 to 0049 (six commits, written 2026-11-21 to 2026-11-24 and committed 2026-11-22 to 2026-11-24, d918386 to 8af6c4c, snapshots cg34a to cg35c;
+the fork's head is now 8af6c4c, v0.37.0-67-g8af6c4c). The installed build on the author's Mac Studio is still cg33; the
+head is not installed. All numbers are from the M5 Max (6 ``Super'' and 12 ``Performance'' cores, 36\,GB, macOS~27.0) and
+form part of the set of Section~\ref{sec:studio}; none is compared with a number of the M5 or the M5 Pro. The records
+are \code{results/upstream\_bench\_studio\_2026-11-17.txt}, \code{results/large\_grid\_cg34\_2026-11-22.txt} and
+\code{results/dispersive\_cg35\_2026-11-23.txt}.
+
+\paragraph{Conditions of every table.} Upstream's \code{bench.py} with an odd number of mesh lines (101, 201 and 311), so that
+every case has a source: with the even counts of upstream's own meshes (100 and 200 lines) no mesh line passes through the
+origin and the ideal, pml and dispersive cases run with all fields zero (such runs are not a test of correctness). The sizes are S 1.03\,M, M 8.12\,M and L 30.08\,M cells (the cylindrical case 29.51\,M at L);
+six cases (ideal, pml, inhomogeneous, dispersive, antenna, cylindrical); 6, 12 and 18 threads; 3 runs of 3\,s a point
+(2\,s in the last slot); the builds run one after the other inside each point, run for run, and the table shows the best
+rate over the thread counts, the median of the runs. ``master'' is upstream's commit 1d710c2 (with CSXCAD fdff4b5), its
+\code{cpu} engine tiling along x only, and ``upstream head'' is ccb4472 (CSXCAD 7a24c75), tiling along two axes. The fork's
+rows are in the CPU engine (\code{multithreaded}). The other processes used a median of 0.1 to 0.2 cores in every slot
+(5\,s samples, the GPU 0\,\% outside the GPU parts; the loads of each part are in the records). In every comparison of
+the fork's builds the probes are bit-identical (cg34c against cg33 on 54 of 54 rows, cg35a, cg35b and cg35c against their
+predecessors on every row); the upstream builds differ from the fork, which is identical to v0.37.0, by $10^{-7}$ to
+$3\times10^{-5}$ relative, and upstream's head differs on the cylindrical case by $7\times10^{-4}$ to
+$2\times10^{-2}$, beyond the tolerance of \code{bench.py} (which side is right was not examined). The fork's Metal engine has no column: every case of the tool uses the
+steady-state detection, which that engine runs on its CPU loops.
+
+\subsection{Where cg33 stood}
+Table~\ref{tab:largebefore} is the table of 2026-11-17: cg33 against master's \code{cpu} engine, paired. The fork led
+at 1\,M cells (2.5 to 2.8$\times$ on five cases) and at 8\,M cells (1.10 to 1.29$\times$), was behind at 30\,M on every case
+(0.83 to 0.86$\times$, cylindrical 0.99$\times$), and was at 0.48$\times$ on the dispersive case there. Master's \code{cpu}
+engine held its rate from 8 to 30\,M cells on the ideal case (4\,320 to 4\,504\,\MC) while the fork's fell (4\,755 to 3\,755).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & \multicolumn{1}{c}{1\,M} & \multicolumn{1}{c}{8\,M} & \multicolumn{3}{c}{30\,M} \\
+\cmidrule(lr){2-2}\cmidrule(lr){3-3}\cmidrule(l){4-6}
+case & fork / master & fork / master & fork & master & fork / master \\
+\midrule
+ideal & 2.64 & 1.10 & 3\,755 & 4\,504 & 0.83 \\
+pml & 2.65 & 1.13 & 2\,692 & 3\,143 & 0.86 \\
+inhomogeneous & 2.67 & 1.13 & 2\,686 & 3\,142 & 0.85 \\
+dispersive & 1.50 & 0.66 & 1\,378 & 2\,879 & 0.48 \\
+antenna & 2.54 & 1.13 & 2\,511 & 2\,950 & 0.85 \\
+cylindrical & 2.78 & 1.29 & 3\,860 & 3\,894 & 0.99 \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max, 2026-11-17: the fork's CPU engine (cg33, 13350ca) against upstream master's \code{cpu} engine (1d710c2),
+best rate over 6, 12 and 18 threads, medians of 3 runs of 3\,s, interleaved; ratios are the fork's rate over master's; the
+two columns of rates are in \MC. A source in every case; the other processes used a median of 0.10 to 0.16 cores.
+\code{results/upstream\_bench\_studio\_2026-11-17.txt}.}\label{tab:largebefore}
+\end{table}
+
+\subsection{The cause}
+The fused sweep (Section~\ref{sec:cg29}) walks each thread's x-slab in whole y-z planes and reuses the line behind. Once
+four planes of voltages and currents no longer fit a thread's share of the L2 cache, that line has left the cache. On the
+plain box at 18 threads the fork's rate falls from 7\,477\,\MC\ at 2\,M cells to 4\,803 at 8\,M, 4\,080 at 16\,M and 3\,778 at 30\,M;
+master's, from 3\,206 to 4\,548 over the same range, crosses it at 12\,M cells. There is no sharp knee: a slope that
+starts where four planes pass about 1\,MB. A timed test of master's own switch (blocked against flat, 30\,M cells) showed what its lead
+consists of: on the plain box the temporal blocking is worth 1.22 to 1.35$\times$, on the pml case 1.02 to 1.08$\times$, so master's lead on the plain box
+is its tiles, and on the pml case it is its flat kernel. The fork's opt-in tiled sweep (patch 0040, Section~\ref{sec:tiled}) already ran the
+plain box at 30\,M cells at 5\,764\,\MC\ (against master's 4\,356 and the fused sweep's 3\,731 in the same slot), but
+with a PML it ran at 0.26 to 0.79 of the fused sweep, because its hook stage gave whole x-lines to a few threads.
+
+\subsection{Box hooks and the y-banded fused sweep (patches 0044 to 0046)}
+\paragraph{Box hooks (0044, d918386).} Extensions get hooks that take an x range and a y range (\code{BOX\_HOOKS}; six
+hooks, for the voltage and current updates, Pre and Post, and the two Apply calls). When every extension with a hook
+declares them, a task of the tiled sweep runs Pre, the update, Post and Apply on each thread's own y lines behind one
+barrier. Patch 0044 gives them to the UPML, the excitation, the lumped RLC elements and the steady-state detection;
+\code{OPENEMS\_TBLOCK\_BOX=0} keeps the old hook stages. With them the tiled sweep with a PML at 30\,M cells and 18
+threads ran at 1.15 to 1.28$\times$ the fused sweep (the hook stages: 0.32$\times$). It stays opt-in: on the plain box
+at 18 threads it is unsteady, and with a
+PML it lost at 8\,M cells.
+
+\paragraph{The y-banded fused sweep (0045, e05d419).} The box hooks are exactly what is needed to cut the fused sweep along
+y. Every block of a thread's x-slab, except the slab's last block, is cut into bands of $H$ y lines. Per band the
+voltages of the block are updated (with the extensions' voltage box hooks), then the currents of the lines behind, on the
+rows one line back in y (the first band takes row 0, the last band runs to the end), so the currents are skewed one row in y
+as the fused sweep skews them one line in x. The planes that the sweep reuses stay in the thread's share of the L2 cache. The slab's last block
+and the line before the slab keep whole planes, so the neighbour-flag protocol between threads is as before (Section~\ref{sec:cg29}).
+The sweep is selected by \code{OPENEMS\_YBAND}: \code{0} (off), a number of lines (forced) or \code{auto}, the default
+when the variable is not set. The automatic rule takes a thread's share of the cache as the smallest
+\code{hw.perflevelN.l2cachesize} over \code{cpusperl2} of the performance levels the threads occupy (the number of MiB can
+be set with \code{OPENEMS\_YBAND\_CACHE}); it uses bands when four y-z planes exceed that share, with $H$ equal to half
+the share over four lines (at least 4), and it is off when two bands would not fit the grid. All or nothing: an
+extension with hooks but without box hooks keeps whole planes.
+On the M5 Max the share is 2.67\,MiB up to 6 threads (the Super cluster's 16\,MiB over 6 cores) and 1.33\,MiB above (the
+8\,MiB clusters), so $311^3$ cells get bands of 93 lines at 6 threads and of 46 lines at 12 and 18, $201^3$ cells get
+none at 6 threads and 71 lines at 12 and 18, and $101^3$ cells get none. At 30\,M cells and 18 threads the band height
+matters little near the automatic value (Table~\ref{tab:largeband}).
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & fused & 16 lines & 32 lines & auto (46) & 96 lines \\
+\midrule
+ideal & 3\,738 & 5\,171 & 5\,633 & 5\,661 & 4\,926 \\
+pml & 2\,690 & 3\,766 & 4\,114 & 4\,136 & 3\,765 \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max, 30\,M cells, 18 threads: the fork with y-bands of different heights (cg34b), in \MC, medians of the runs of
+one slot of 2026-11-22. \code{results/large\_grid\_cg34\_2026-11-22.txt}, steps before the final run.}\label{tab:largeband}
+\end{table}
+
+\paragraph{Box hooks for the remaining extensions (0046, 8d513ba).} With patches 0044 and 0045 the bands covered only the
+ideal and the pml cases. Patch 0046 adds box hooks for the Mur boundary (the face cells are sorted by y per x-line; a y-face
+couples two rows, so no band and no thread's y share is cut between them), for the conducting sheets and the Lorentz, Drude and
+Debye materials (a packed group that a y range cuts runs on a thread-local copy and writes back only its inside lanes) and
+for the closed cylinder (the extension declares a wrap in y: the last band runs row 0 first and the block of x-line 0
+runs in whole planes). With these, every extension of the six cases and of the two boards has box hooks. Boards are below the
+automatic rule's threshold and did not change.
+
+\subsection{Result: 30\,M cells}
+Table~\ref{tab:largefinal} is the final benchmark of 2026-11-22 (a quiet slot of 61 minutes: 252 points, 756 runs, none failed).
+At 30\,M cells the fork leads upstream's \code{cpu} engines on five cases of six: 1.32 to 1.48$\times$ master and 1.11
+to 1.22$\times$ upstream's head, and 1.49 to 1.55$\times$ its former self. At 8\,M cells it is 1.09 to 1.28$\times$
+cg33, 1.36 to 1.58$\times$ master and 1.17 to 1.26$\times$ the head on five cases, where cg33 was only level with the head (0.97 to 1.02$\times$). At 1\,M cells the bands are off and cg34 equals cg33 within 1\,\% on
+all six cases, still 1.53 to 2.89$\times$ master and 1.26 to 2.19$\times$ the head. The gain is at 12 and 18 threads
+(at 30\,M cells 1.45 to 1.61$\times$ cg33). At 6 threads, the Super cores that the bus does not hold back, the bands
+change little (0.96 to 1.03$\times$ cg33 at 30\,M cells) and master's \code{cpu} engine leads the fork on the cases with
+extension work: 0.94 to 0.96$\times$ on pml, inhomogeneous and antenna at 30\,M cells and 0.85 to 0.89$\times$ at 8\,M,
+the dispersive case 0.71 to 0.73$\times$. The dispersive case is the one case of six that stays behind in this table; the
+band lifts it 1.54$\times$ at 30\,M cells but it remains at 0.75 of master and 0.64 of the head.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}llrrrrrrr@{}}
+\toprule
+ & & \multicolumn{4}{c}{rate, \MC} & \multicolumn{3}{c}{cg34 over} \\
+\cmidrule(lr){3-6}\cmidrule(l){7-9}
+size & case & cg33 & cg34 & master & head & master & head & cg33 \\
+\midrule
+L, 30\,M & ideal & 3\,755 & 5\,719 & 4\,341 & 5\,096 & 1.32 & 1.12 & 1.52 \\
+ & pml & 2\,702 & 4\,149 & 2\,996 & 3\,411 & 1.38 & 1.22 & 1.54 \\
+ & inhomogeneous & 2\,691 & 4\,173 & 2\,976 & 3\,464 & 1.40 & 1.20 & 1.55 \\
+ & dispersive & 1\,375 & 2\,121 & 2\,845 & 3\,334 & 0.75 & 0.64 & 1.54 \\
+ & antenna & 2\,537 & 3\,936 & 2\,969 & 3\,437 & 1.33 & 1.15 & 1.55 \\
+ & cylindrical & 3\,901 & 5\,797 & 3\,909 & 5\,231 & 1.48 & 1.11 & 1.49 \\
+\midrule
+M, 8\,M & ideal & 4\,758 & 6\,092 & 4\,179 & 4\,914 & 1.46 & 1.24 & 1.28 \\
+ & pml & 2\,991 & 3\,669 & 2\,564 & 2\,921 & 1.43 & 1.26 & 1.23 \\
+ & inhomogeneous & 3\,006 & 3\,684 & 2\,597 & 2\,965 & 1.42 & 1.24 & 1.23 \\
+ & dispersive & 1\,903 & 2\,068 & 2\,764 & 3\,155 & 0.75 & 0.66 & 1.09 \\
+ & antenna & 2\,916 & 3\,415 & 2\,505 & 2\,921 & 1.36 & 1.17 & 1.17 \\
+ & cylindrical & 5\,384 & 6\,336 & 3\,999 & 5\,304 & 1.58 & 1.19 & 1.18 \\
+\midrule
+S, 1\,M & ideal & 7\,635 & 7\,632 & 2\,963 & 3\,477 & 2.58 & 2.19 & 1.00 \\
+ & pml & 3\,755 & 3\,726 & 1\,392 & 1\,890 & 2.68 & 1.97 & 0.99 \\
+ & inhomogeneous & 3\,876 & 3\,866 & 1\,400 & 1\,917 & 2.76 & 2.02 & 1.00 \\
+ & dispersive & 2\,796 & 2\,808 & 1\,836 & 2\,235 & 1.53 & 1.26 & 1.00 \\
+ & antenna & 3\,708 & 3\,688 & 1\,420 & 1\,905 & 2.60 & 1.94 & 0.99 \\
+ & cylindrical & 8\,427 & 8\,493 & 2\,935 & 4\,158 & 2.89 & 2.04 & 1.01 \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max, 2026-11-22: best rate over 6, 12 and 18 threads (18 on every point but cg33's dispersive L, at 6, and its
+dispersive and antenna M, at 12) of the fork before (cg33, 13350ca) and with patches 0044 to 0046 (cg34, snapshot cg34c = 8d513ba), upstream master
+(1d710c2) and upstream's head (ccb4472), CPU engines, in \MC, medians of 3 runs of 3\,s, interleaved; the last three columns are
+the ratios of cg34's rate to the others. The other processes used a median of 0.20 cores (90th percentile 0.39), the
+GPU 0\,\%. cg34 against cg33: probes identical on 54 of 54 rows, bands on in 30 of them. Cylindrical L is 29.5\,M cells.
+\code{results/large\_grid\_cg34\_2026-11-22.txt}.}\label{tab:largefinal}
+\end{table}
+
+The patches were checked before they were timed: the six-model check against stock (18 of 18 rows identical), the Debye
+check and the validation suite (15 of 15), raw fields and probes on 17 kinds of model for band heights of 1 to $N_y-1$
+lines on 1 to 6 threads (1\,388 of 1\,388 identical), the closed cylinder (116 of 116) and the steady-state stop step with
+Mur and with PML. The two-axis tiles that the plan allowed for were not needed: the bands reach master on the cases they
+were aimed at.
+
+\subsection{The dispersive pass (patches 0047 to 0049)}
+About half of the dispersive case's cells are dispersive (a Lorentz block and a Debye block). After the bands it ran at 2\,121\,\MC\ at 30\,M cells with 6.4\,GiB of memory (6\,580\,MiB) and a setup of 13\,s, against
+upstream's 2.0 to 2.2\,s. The packed hooks of patches
+0042 and 0043 grouped four consecutive positions of an x-line, in a filled block four z of one column, that is four f4vectors
+with one lane each: scalar gathers through twelve indices a group, and state and coefficients in one block that was
+read and written back whole (about 132 bytes a Lorentz cell-step and 156 a Debye one, against 49 for a plain cell).
+Three steps, each kept only if it passed a rule fixed before the run (Table~\ref{tab:largedisp}):
+
+\begin{itemize}
+\item \textbf{Vector groups (0047, d3374c9, cg35a).} A group is now the positions of one f4vector (a base offset and a lane
+  mask; masked lanes keep their field bits) wherever a hook has at least 2.5 positions a group on average; thin structures
+  such as the conducting sheets keep the position groups. The coefficients move to a table of distinct sets with a 16-bit
+  or 32-bit index a group, apart from the state that is written. The per-position arrays are freed after packing. The
+  arithmetic of every lane is unchanged. \code{OPENEMS\_ADE\_VEC=0} keeps the position groups (2 forces vector groups),
+  \code{OPENEMS\_ADE\_COEF} picks the coefficient layout (both are test switches). Rule: 1.30$\times$ the dispersive case at 30\,M cells;
+  result 1.41$\times$ (nothing else lost more than 2\,\%: antenna 0.99 to 1.02$\times$, the two boards 1.005$\times$).
+\item \textbf{Debye transients in per-thread scratch (0048, f7cae41, cg35b).} A packed Debye group stored, beside the
+  state of its poles, the pre-sum that Pre hands to Post and the correction that Post hands to Apply: 24 of $12(P+2)$ floats a group, written to the large
+  block and read back every time step only to cross two calls. The engine now tells an extension after every plan
+  (\code{RANGE\_LOCAL}, \code{SetRangeLocal}) whether Pre, Post and Apply of one range (an x-line block or an x-y box) run
+  back to back on one thread, and the widest range. That holds for the fused sweep in line blocks, its y-bands with an
+  open y direction and the box mode of the tiled sweep, not for the unfused plan, the tiled sweep's hook stages or bands of a
+  closed y direction. While it holds, the transients live in a scratch slice of the calling thread and the blocks hold the pole
+  state only (144 to 48 bytes written a group and step at one pole); a check of thread, width and call order stops the run if the engine breaks the grant. The
+  Lorentz and Drude state is read again in the next step and is left as it was. \code{OPENEMS\_ADE\_SCRATCH=0} keeps the stored layout. Rule: 1.08$\times$; result 1.10$\times$ at 30\,M cells, with one loss, the dispersive case at 8\,M cells and 6 threads (no bands there) at
+  0.97$\times$ (1\,920 to 1\,860\,\MC). The build with the stored layout runs 1\,864 there, so that cost is in the changed
+  hook code, not in the scratch.
+\item \textbf{Setup threads and setup memory (0049, 8af6c4c, cg35c).} The two operator extensions walked the whole grid on
+  one thread and asked the material lookup for a \code{dynamic\_cast} a cell. They now scan per x-line on the operator's
+  setup threads, the per-thread blocks are merged in x order (the serial order, so every array is the same byte for byte at
+  every pool size), columns without a wanted primitive are skipped, and the material lookup remembers its cast per thread and setup
+  generation. The setup arrays come from \code{mmap} on macOS (\code{tools/setup\_memory.h}), so freed setup memory leaves the
+  process. \code{OPENEMS\_SETUP\_THREADS} sets the pool size and \code{OPENEMS\_SETUP\_TIMING=1} prints the phases. No
+  per-timestep function changes. Rule: setup $-25$\,\% or memory $-10$\,\% and no rate more than 2\,\% lower; result $-63$\,\%
+  and $-36$\,\%, rates 0.98 to 1.01 of before on ten points (the lowest, 6 threads at 30\,M cells, 1\,815 to 1\,782, inside
+  the runs' ranges).
+\end{itemize}
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{dispersive rate, \MC} & \multicolumn{2}{c}{30\,M cells} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-6}
+step & 30\,M & 8\,M & 1\,M & setup, s & memory, MiB \\
+\midrule
+0047, vector groups & 2\,108 $\to$ 2\,962 & 2\,068 $\to$ 2\,976 & 2\,777 $\to$ 3\,942 & 13.0 $\to$ 13.2 & 6\,580 $\to$ 5\,857 \\
+0048, Debye scratch & 2\,969 $\to$ 3\,266 & 2\,964 $\to$ 3\,156 & 3\,923 $\to$ 4\,054 & 13.9 $\to$ 13.2 & 5\,857 $\to$ 5\,857 \\
+0049, setup & 3\,218 $\to$ 3\,233 & 3\,148 $\to$ 3\,172 & 4\,074 $\to$ 4\,074 & 13.3 $\to$ 4.9 & 5\,857 $\to$ 3\,737 \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max, 2026-11-23 and 2026-11-24: the dispersive case at 18 threads, before $\to$ after each patch, in \MC, one
+paired slot a step (cg34 $\to$ cg35a, cg35a $\to$ cg35b, cg35b $\to$ cg35c), medians of 3 runs, upstream's builds
+interleaved; setup time and resident memory at 30\,M cells; memory at 8\,M cells after 0049: 1\,742 to 1\,069\,MiB,
+setup 3.63 to 1.55\,s. The other processes used a median of 0.05 to 0.2 cores. Antenna case
+0.99 to 1.02$\times$ in all three steps (apart from one loaded 6-thread point at 1\,M cells, 1.08) and the two boards 0.996 to 1.014$\times$ for 0047 and 0048 (not timed for 0049). All fork rows identical to their
+predecessor's. \code{results/dispersive\_cg35\_2026-11-23.txt}, three sections.}\label{tab:largedisp}
+\end{table}
+
+Table~\ref{tab:largedispfinal} is the comparison with upstream in the slot of the last step. The fork now leads master
+on the dispersive case at all three sizes and is level with upstream's head at 8\,M cells (1.04$\times$) and just behind
+at 30\,M (0.97$\times$). In the slot of the second step master ran 2\,883 at 30\,M cells and 2\,803 at 8\,M, which makes the ratio
+1.13 at both sizes (1.13 to 1.20 at 30\,M and 1.13 to 1.39 at 8\,M over the two slots: master's runs spread widely in
+the last one, 2\,073 to 2\,852 at 8\,M cells), and in that slot the head ran 1.00$\times$ at 8\,M and 0.97$\times$ at 30\,M.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{rate, \MC} & \multicolumn{2}{c}{fork over} & \multicolumn{3}{c}{setup, s / memory, MiB} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(l){7-9}
+size & fork & master & head & master & head & fork & master & head \\
+\midrule
+30\,M & 3\,233 & 2\,700 & 3\,343 & 1.20 & 0.97 & 4.90 / 3\,737 & 2.08 / 3\,961 & 2.26 / 2\,680 \\
+8\,M & 3\,172 & 2\,284 & 3\,048 & 1.39 & 1.04 & 1.55 / 1\,069 & 0.58 / 1\,231 & 0.64 / 921 \\
+1\,M & 4\,074 & 1\,895 & 2\,248 & 2.15 & 1.81 & 0.25 / 164 & 0.10 / 158 & 0.10 / 117 \\
+\bottomrule
+\end{tabular}
+\caption{M5 Max, 2026-11-24 (08:39 to 08:45): the dispersive case, the fork with patches 0001 to 0049 (cg35c, 8af6c4c)
+against upstream master (1d710c2) and upstream's head (ccb4472), CPU engines, 18 threads, medians of 3 runs of 2\,s,
+interleaved; rates in \MC; setup time and resident memory of the same runs. The other processes used a median of 0.16 cores. Master's runs spread widely in this slot at 30\,M cells (2\,647 to
+2\,884) and at 8\,M cells (2\,073 to 2\,852). Fork probes identical to cg35b's; the upstream builds differ by
+$3\times10^{-6}$ to $3\times10^{-5}$. \code{results/dispersive\_cg35\_2026-11-23.txt}, third section.}\label{tab:largedispfinal}
+\end{table}
+
+The checks before each timing were the same kind as for the bands: 630, 501 and 470 box configurations for the three
+patches, the dispersive check against stock at 50\,k and 1\,M cells and on the closed cylinder, the six-model check
+(18 of 18 identical), the Debye check, the validation suite (15 of 15) and planted faults (for the last patch six of eight were caught; the two others need an index pattern no test model has). Patch 0049 changes no per-timestep function.
+
+\subsection{What stays open}
+\begin{itemize}
+\item The dispersive case at 30\,M cells is at 0.97 of upstream's head; upstream sets it up in 2.1 to 2.3\,s against the fork's 4.9 and its head
+  uses 2\,680\,MiB against 3\,737.
+\item At 6 threads master (1d710c2) still leads the fork on the cases with extension work at 8 and 30\,M cells: 0.85 to
+  0.96$\times$, the dispersive case 0.90 to 0.96$\times$ after the pass. The bands do not help there, and the Super cores are not
+  held back by the bus.
+\item The two boards are below the automatic rule's threshold (their grids are small); the bands are not a gain for them, and
+  they were measured unchanged (0.996 to 1.014$\times$ for patches 0047 and 0048).
+\item The tiled sweep (patch 0040) stays opt-in; with box hooks it gains on pml at 30\,M cells but is unsteady at 18 threads and loses at 8\,M. A choice at run time between the sweeps is not built.
+\item No Metal column in these tables: the steady-state detection that every case of \code{bench.py} uses has no GPU version; with
+  it, the fork's Metal engine runs the CPU loops of that extension and is not measured here.
+\item Upstream's head differs from the fork and from master on the cylindrical case beyond \code{bench.py}'s tolerance;
+  which result is right was not examined.
+\end{itemize}

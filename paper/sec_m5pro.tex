@@ -7,7 +7,7 @@ with the same library files, not rebuilt: cg31 is the fork's commit ff2538a (pat
 (\code{results/m5pro\_speed\_set\_2026-11-12.txt}, \code{results/m5pro\_tiled\_sweep\_2026-11-12.txt}; the scripts are
 in \code{scripts/m5pro/}). On 2026-11-13 stock was measured again at every thread count from 1 to 15
 (Table~\ref{tab:m5prostock}), which corrects the stock column of the speed table of 2026-11-12, and the fork's three
-later patches, 0041 to 0043 (the head, 13350ca), were timed there (Section~\ref{sec:cg33}; \code{results/cpu\_items\_cg33\_2026-11-13.txt}).
+later patches, 0041 to 0043 (13350ca, then the head), were timed there (Section~\ref{sec:cg33}; \code{results/cpu\_items\_cg33\_2026-11-13.txt}).
 These numbers form a set of their own. They are compared only with each other: no table of
 this section holds a number of the M5, and no ratio between the two machines is given, since the two chips differ in
 cores, caches and memory at once.
@@ -286,8 +286,8 @@ boards nothing. A rule that switched it on by itself would need the grid to be f
 to be memory-bound, which only a timed comparison at run time can tell; that is not built.
 
 \subsection{Patches 0041 to 0043: the thread search, packed dispersive hooks and the guard (cg33)}\label{sec:cg33}
-Three commits of 2026-11-13, written on 2026-11-12 and 2026-11-13, follow the tiled sweep, so the fork's head is now 13350ca (patches 0001 to
-0043); the installed build was still cg31 then (cg33 was installed on 2026-11-14, Section~\ref{sec:studio}). Snapshot cg33a is 0ef186b with patch 0041, cg33c adds 0042 and cg33d adds 0043;
+Three commits of 2026-11-13, written on 2026-11-12 and 2026-11-13, follow the tiled sweep, so the fork's head was then 13350ca (patches 0001 to
+0043; since 2026-11-24 the head is 8af6c4c, Section~\ref{sec:large}); the installed build was still cg31 then (cg33 was installed on 2026-11-14, Section~\ref{sec:studio}). Snapshot cg33a is 0ef186b with patch 0041, cg33c adds 0042 and cg33d adds 0043;
 they were built before the commits were made, so their banners read v0.37.0-58-g0ef186b, and cg33, rebuilt from 13350ca,
 reads v0.37.0-61-g13350ca (the same sources as cg33d). The timings are those of the two nights of 2026-11-12 and
 2026-11-13 on the M5 Pro (\code{results/cpu\_items\_cg33\_2026-11-13.txt}); none of these numbers is a number of the M5.

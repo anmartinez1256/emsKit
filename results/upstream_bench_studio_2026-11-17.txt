@@ -1,0 +1,233 @@
+Upstream openEMS benchmark/bench.py on the Mac Studio (Apple M5 Max, 6 Super + 12 Performance cores, 32-core GPU, 36 GB, macOS 27.0)
+Sizes S, M and L. Run 2026-11-17 19:13:50 to 19:50:20 (36 min, exit 0, all 9 parts, 168 points, 492 runs, no failed point).
+A set of its own (tag studio); never mixed with the M5 Air or M5 Pro tables.
+
+What ran
+  master   = openEMS master 1d710c2 (+ CSXCAD fdff4b5), built 2026-11-12, engines multithreaded (6, 12 threads), cpu (6, 12, 18), gpu (6 host threads)
+  fork     = installed build cg33 = fork 13350ca (v0.37.0-61-g13350ca), CPU engine (--engine=multithreaded of the fork) at 6, 12, 18 threads
+  pair_S/M/L : master cpu engine against the fork's CPU engine, interleaved run for run, 3 runs of 3 s each
+  gpu_S/M/L  : master gpu engine, 3 runs; mt_S/M/L: master multithreaded, 2 runs (these two were NOT interleaved with the fork; same 36 minutes)
+  BENCH_ODD_LINES=1: 101 / 201 / 311 mesh lines, so ideal, pml and dispersive have a source at every size
+  (upstream's S and M meshes have an even line count and no source; checked here: every log reports 2, 3 or 54 voltage excitations).
+  No fork Metal column: every bench.py case uses a sinus source with steady-state detection, which the fork's Metal engine
+  has no GPU version of (it then runs CPU loops); not a GPU measurement, so left out.
+
+Load beside the numbers (5 s samples; others = every process except this benchmark; % of one core)
+  pair_S  others CPU median 16, p90 40, max 169 (one sample at 19:14:00)   whole GPU 0 %
+  pair_M  median 10, p90 26, max 97                                         GPU 0 %
+  pair_L  median 13, p90 28, max 148                                        GPU 0 %
+  gpu_S/M/L  median 22-24, max 75      GPU 95-99 % (this run's own gpu parts)
+  mt_S/M/L   median 17-20, max 106     GPU 0 %
+  whole run: median 15, p90 34
+
+Best rate over the thread counts run, MC/s (median of the runs), threads in brackets: see SUMMARY.txt (copied below the findings).
+
+Findings
+  1. Fork CPU against master's cpu engine, best against best (paired):
+     S (1.03 M cells)  2.54 to 2.78 on five cases, dispersive 1.50
+     M (8.12 M)        1.10 to 1.29 on five cases, dispersive 0.66
+     L (30.1 M)        0.83 to 0.86 on four cases, cylindrical 0.99, dispersive 0.48
+     So the fork leads on grids up to 8 M and is behind at 30 M; master's cpu engine holds its rate from M to L
+     (ideal 4320 -> 4504), the fork's falls (4755 -> 3755).
+  2. At equal thread counts the fork is behind at 6 threads already at M on pml / inhomogeneous / antenna (0.86 to 0.91)
+     and at 12 and 18 threads on every L case but cylindrical 18 (0.78 to 0.88; ideal L at 6 threads 1.10).
+  3. Dispersive: the fork peaks at 12 threads at M (1895) and at 6 at L (1378); its setup takes 3.1 to 7.0 times master's
+     (13 to 14 s at L) and it uses 6.6 GiB against 4.0 at L.
+  4. Master's gpu engine is the fastest column at M and L on five cases (4072 to 5253 MC/s), not on dispersive (master cpu 2868 / 2879).
+     At S the fork's CPU engine equals it on ideal (7667 vs 7674) and beats it on dispersive and cylindrical.
+  5. Master's multithreaded engine (the v0.37.0 line): 60 to 64 MC/s on dispersive at every size; the fork is 22 to 47 times that.
+  6. Probes, fork against master cpu: 1.3e-7 to 2.9e-5 relative (master's cpu engine is not bit-identical to v0.37.0; the fork is).
+  7. Spread above 5 % (bench.py's own column): ideal S 12 thr 9.3 %, pml S 18 thr 11.5 %, cylindrical S 6 thr 8.5 %, dispersive S 12 thr 7.6 %,
+     ideal M 12 thr 11.4 %, pml M 18 thr 22.4 %, antenna M 12 thr 9.1 %, antenna L 18 thr 6.8 %.
+
+Upstream bench.py on this Mac: best rate over the thread counts run, MC/s (median of the runs), threads in brackets
+case           size  MCells        master mt       master cpu       master gpu         fork cpu   fork/master cpu
+ideal          S       1.03      3610 (12)         2905 ( 6)         7674 ( 6)         7667 (18)        2.64
+pml            S       1.03       526 (12)         1415 (18)         4995 ( 6)         3744 (18)        2.65
+inhomogeneous  S       1.03       518 (12)         1445 (18)         5161 ( 6)         3854 (18)        2.67
+dispersive     S       1.03        60 ( 6)         1878 (18)         2400 ( 6)         2822 (18)        1.50
+antenna        S       1.03       325 (12)         1443 (18)         4546 ( 6)         3666 (18)        2.54
+cylindrical    S       1.03      2647 (12)         3053 (18)         6595 ( 6)         8480 (18)        2.78
+
+ideal          M       8.12      3184 (12)         4320 (18)         5253 ( 6)         4755 (18)        1.10
+pml            M       8.12       664 (12)         2638 (18)         4388 ( 6)         2977 (18)        1.13
+inhomogeneous  M       8.12       653 (12)         2651 (18)         4426 ( 6)         2988 (18)        1.13
+dispersive     M       8.12        63 (12)         2868 (18)         2317 ( 6)         1895 (12)        0.66
+antenna        M       8.12       453 (12)         2546 (18)         4181 ( 6)         2887 (12)        1.13
+cylindrical    M       8.12      2734 (12)         4204 (18)         4979 ( 6)         5421 (18)        1.29
+
+ideal          L      30.08      2825 (12)         4504 (18)         4769 ( 6)         3755 (18)        0.83
+pml            L      30.08       810 (12)         3143 (18)         4263 ( 6)         2692 (18)        0.86
+inhomogeneous  L      30.08       806 (12)         3142 (18)         4289 ( 6)         2686 (18)        0.85
+dispersive     L      30.08        64 (12)         2879 (18)         2251 ( 6)         1378 ( 6)        0.48
+antenna        L      30.08       360 (12)         2950 (18)         4072 ( 6)         2511 (18)        0.85
+cylindrical    L      29.51      2486 (12)         3894 (18)         4751 ( 6)         3860 (18)        0.99
+
+The probe comparison of the fork with master (bench.py compare) is at the end of each pair_SIZE.out.
+
+Every point (median [min-max] MC/s, setup s, RSS MiB):
+ideal          S   fork cpu    t6    4457.4 [4402-4464]  setup   0.12  rss    125  pair_S
+ideal          S   fork cpu    t12   6173.5 [6124-6178]  setup   0.12  rss    126  pair_S
+ideal          S   fork cpu    t18   7666.7 [7652-7675]  setup   0.12  rss    126  pair_S
+ideal          S   master cpu  t6    2905.0 [2891-3008]  setup   0.09  rss     95  pair_S
+ideal          S   master cpu  t12   2536.9 [2307-2542]  setup   0.06  rss     97  pair_S
+ideal          S   master cpu  t18   2781.7 [2742-2836]  setup   0.05  rss     98  pair_S
+ideal          S   master gpu  t6    7674.0 [7648-7754]  setup   0.08  rss    172  gpu_S
+ideal          S   master mt   t6    2632.9 [2632-2634]  setup   0.08  rss    132  mt_S
+ideal          S   master mt   t12   3609.6 [3601-3618]  setup   0.06  rss    132  mt_S
+pml            S   fork cpu    t6    2025.1 [2019-2036]  setup   0.19  rss    196  pair_S
+pml            S   fork cpu    t12   3021.2 [2989-3025]  setup   0.19  rss    196  pair_S
+pml            S   fork cpu    t18   3744.5 [3740-3754]  setup   0.19  rss    196  pair_S
+pml            S   master cpu  t6    1262.7 [1224-1273]  setup   0.15  rss    166  pair_S
+pml            S   master cpu  t12   1264.6 [1254-1266]  setup   0.10  rss    174  pair_S
+pml            S   master cpu  t18   1415.0 [1284-1447]  setup   0.09  rss    171  pair_S
+pml            S   master gpu  t6    4995.5 [4937-5009]  setup   0.12  rss    293  gpu_S
+pml            S   master mt   t6     382.9 [381-384]  setup   0.11  rss    178  mt_S
+pml            S   master mt   t12    525.8 [524-528]  setup   0.08  rss    178  mt_S
+inhomogeneous  S   fork cpu    t6    1991.4 [1991-1996]  setup   0.21  rss    205  pair_S
+inhomogeneous  S   fork cpu    t12   3054.0 [3054-3065]  setup   0.22  rss    206  pair_S
+inhomogeneous  S   fork cpu    t18   3853.8 [3832-3867]  setup   0.22  rss    206  pair_S
+inhomogeneous  S   master cpu  t6    1255.2 [1253-1266]  setup   0.17  rss    167  pair_S
+inhomogeneous  S   master cpu  t12   1223.6 [1222-1225]  setup   0.12  rss    171  pair_S
+inhomogeneous  S   master cpu  t18   1445.2 [1441-1492]  setup   0.10  rss    171  pair_S
+inhomogeneous  S   master gpu  t6    5160.9 [5078-5205]  setup   0.15  rss    299  gpu_S
+inhomogeneous  S   master mt   t6     379.4 [379-380]  setup   0.14  rss    187  mt_S
+inhomogeneous  S   master mt   t12    518.5 [516-521]  setup   0.10  rss    187  mt_S
+dispersive     S   fork cpu    t6    1565.3 [1564-1571]  setup   0.52  rss    249  pair_S
+dispersive     S   fork cpu    t12   2575.3 [2542-2739]  setup   0.53  rss    249  pair_S
+dispersive     S   fork cpu    t18   2822.1 [2817-2830]  setup   0.53  rss    249  pair_S
+dispersive     S   master cpu  t6    1637.7 [1622-1678]  setup   0.17  rss    141  pair_S
+dispersive     S   master cpu  t12   1746.5 [1722-1757]  setup   0.11  rss    147  pair_S
+dispersive     S   master cpu  t18   1877.6 [1876-1927]  setup   0.09  rss    162  pair_S
+dispersive     S   master gpu  t6    2400.2 [2395-2405]  setup   0.16  rss    258  gpu_S
+dispersive     S   master mt   t6      60.1 [54-66]  setup   0.15  rss    180  mt_S
+dispersive     S   master mt   t12     56.0 [46-66]  setup   0.10  rss    183  mt_S
+antenna        S   fork cpu    t6    1858.9 [1844-1867]  setup   0.31  rss    250  pair_S
+antenna        S   fork cpu    t12   2859.9 [2855-2860]  setup   0.30  rss    250  pair_S
+antenna        S   fork cpu    t18   3665.7 [3660-3666]  setup   0.30  rss    251  pair_S
+antenna        S   master cpu  t6    1221.8 [1222-1237]  setup   0.21  rss    194  pair_S
+antenna        S   master cpu  t12   1214.5 [1210-1216]  setup   0.15  rss    201  pair_S
+antenna        S   master cpu  t18   1442.8 [1417-1450]  setup   0.13  rss    204  pair_S
+antenna        S   master gpu  t6    4546.3 [4533-4584]  setup   0.18  rss    354  gpu_S
+antenna        S   master mt   t6     281.4 [255-308]  setup   0.16  rss    219  mt_S
+antenna        S   master mt   t12    324.6 [318-331]  setup   0.12  rss    220  mt_S
+cylindrical    S   fork cpu    t6    4158.6 [4143-4160]  setup   0.19  rss    141  pair_S
+cylindrical    S   fork cpu    t12   6041.6 [6026-6052]  setup   0.20  rss    141  pair_S
+cylindrical    S   fork cpu    t18   8480.5 [8480-8500]  setup   0.20  rss    141  pair_S
+cylindrical    S   master cpu  t6    2634.8 [2466-2690]  setup   0.12  rss     98  pair_S
+cylindrical    S   master cpu  t12   2474.7 [2452-2505]  setup   0.08  rss    102  pair_S
+cylindrical    S   master cpu  t18   3052.8 [3050-3159]  setup   0.07  rss    103  pair_S
+cylindrical    S   master gpu  t6    6594.6 [6578-6646]  setup   0.11  rss    194  gpu_S
+cylindrical    S   master mt   t6    2139.2 [2135-2144]  setup   0.11  rss    133  mt_S
+cylindrical    S   master mt   t12   2647.3 [2647-2648]  setup   0.08  rss    133  mt_S
+ideal          M   fork cpu    t6    3556.8 [3531-3566]  setup   0.61  rss    880  pair_M
+ideal          M   fork cpu    t12   4297.9 [4290-4781]  setup   0.62  rss    880  pair_M
+ideal          M   fork cpu    t18   4755.3 [4752-4757]  setup   0.62  rss    880  pair_M
+ideal          M   master cpu  t6    3533.6 [3530-3547]  setup   0.61  rss    638  pair_M
+ideal          M   master cpu  t12   3953.2 [3951-3959]  setup   0.38  rss    641  pair_M
+ideal          M   master cpu  t18   4320.2 [4312-4363]  setup   0.30  rss    645  pair_M
+ideal          M   master gpu  t6    5253.4 [5253-5256]  setup   0.46  rss    891  gpu_M
+ideal          M   master mt   t6    2140.1 [2139-2141]  setup   0.52  rss    952  mt_M
+ideal          M   master mt   t12   3183.9 [3180-3188]  setup   0.36  rss    952  mt_M
+pml            M   fork cpu    t6    1830.0 [1827-1833]  setup   0.89  rss   1268  pair_M
+pml            M   fork cpu    t12   2625.2 [2619-2668]  setup   0.90  rss   1268  pair_M
+pml            M   fork cpu    t18   2977.0 [2965-2985]  setup   0.90  rss   1268  pair_M
+pml            M   master cpu  t6    2015.7 [2013-2019]  setup   0.89  rss    935  pair_M
+pml            M   master cpu  t12   2425.2 [2423-2440]  setup   0.58  rss    947  pair_M
+pml            M   master cpu  t18   2638.3 [2089-2679]  setup   0.46  rss    949  pair_M
+pml            M   master gpu  t6    4388.0 [4387-4390]  setup   0.65  rss   1357  gpu_M
+pml            M   master mt   t6     460.8 [459-463]  setup   0.67  rss   1139  mt_M
+pml            M   master mt   t12    663.6 [664-664]  setup   0.47  rss   1139  mt_M
+inhomogeneous  M   fork cpu    t6    1797.2 [1794-1799]  setup   1.00  rss   1281  pair_M
+inhomogeneous  M   fork cpu    t12   2647.2 [2640-2654]  setup   1.01  rss   1281  pair_M
+inhomogeneous  M   fork cpu    t18   2988.1 [2974-3009]  setup   1.01  rss   1281  pair_M
+inhomogeneous  M   master cpu  t6    2026.4 [2019-2036]  setup   1.09  rss    938  pair_M
+inhomogeneous  M   master cpu  t12   2406.1 [2400-2419]  setup   0.67  rss    952  pair_M
+inhomogeneous  M   master cpu  t18   2651.4 [2587-2655]  setup   0.55  rss    951  pair_M
+inhomogeneous  M   master gpu  t6    4426.4 [4420-4429]  setup   0.77  rss   1362  gpu_M
+inhomogeneous  M   master mt   t6     461.8 [461-463]  setup   0.80  rss   1150  mt_M
+inhomogeneous  M   master mt   t12    652.9 [653-653]  setup   0.57  rss   1151  mt_M
+dispersive     M   fork cpu    t6    1568.7 [1559-1569]  setup   3.89  rss   1960  pair_M
+dispersive     M   fork cpu    t12   1895.1 [1882-1900]  setup   3.90  rss   1960  pair_M
+dispersive     M   fork cpu    t18   1603.9 [1597-1616]  setup   3.71  rss   1961  pair_M
+dispersive     M   master cpu  t6    2029.1 [2005-2032]  setup   1.21  rss   1189  pair_M
+dispersive     M   master cpu  t12   2493.2 [2474-2494]  setup   0.72  rss   1148  pair_M
+dispersive     M   master cpu  t18   2868.0 [2865-2879]  setup   0.56  rss   1234  pair_M
+dispersive     M   master gpu  t6    2317.3 [2317-2320]  setup   1.01  rss   1760  gpu_M
+dispersive     M   master mt   t6      57.9 [57-58]  setup   1.04  rss   1533  mt_M
+dispersive     M   master mt   t12     62.7 [63-63]  setup   0.65  rss   1468  mt_M
+antenna        M   fork cpu    t6    1723.5 [1717-1735]  setup   1.51  rss   1403  pair_M
+antenna        M   fork cpu    t12   2887.2 [2683-2945]  setup   1.49  rss   1403  pair_M
+antenna        M   fork cpu    t18   2849.6 [2831-2868]  setup   1.50  rss   1404  pair_M
+antenna        M   master cpu  t6    2015.9 [1988-2019]  setup   1.18  rss   1137  pair_M
+antenna        M   master cpu  t12   2346.9 [2346-2349]  setup   0.78  rss   1151  pair_M
+antenna        M   master cpu  t18   2545.6 [2532-2574]  setup   0.64  rss   1152  pair_M
+antenna        M   master gpu  t6    4180.5 [4176-4182]  setup   0.86  rss   1758  gpu_M
+antenna        M   master mt   t6     357.6 [355-360]  setup   0.87  rss   1364  mt_M
+antenna        M   master mt   t12    452.7 [453-453]  setup   0.60  rss   1366  mt_M
+cylindrical    M   fork cpu    t6    3534.5 [3521-3539]  setup   1.18  rss    789  pair_M
+cylindrical    M   fork cpu    t12   4772.1 [4763-4776]  setup   1.20  rss    789  pair_M
+cylindrical    M   fork cpu    t18   5421.1 [5368-5438]  setup   1.11  rss    790  pair_M
+cylindrical    M   master cpu  t6    3381.6 [3364-3395]  setup   0.84  rss    653  pair_M
+cylindrical    M   master cpu  t12   3892.9 [3882-3921]  setup   0.49  rss    657  pair_M
+cylindrical    M   master cpu  t18   4204.2 [4187-4205]  setup   0.39  rss    659  pair_M
+cylindrical    M   master gpu  t6    4979.1 [4978-4982]  setup   0.65  rss    935  gpu_M
+cylindrical    M   master mt   t6    1838.3 [1824-1853]  setup   0.72  rss    954  mt_M
+cylindrical    M   master mt   t12   2733.8 [2728-2739]  setup   0.49  rss    954  mt_M
+ideal          L   fork cpu    t6    3456.8 [3442-3477]  setup   2.08  rss   2816  pair_L
+ideal          L   fork cpu    t12   3277.6 [3276-3290]  setup   2.10  rss   2816  pair_L
+ideal          L   fork cpu    t18   3754.7 [3751-3755]  setup   2.11  rss   2816  pair_L
+ideal          L   master cpu  t6    3136.5 [3136-3154]  setup   2.32  rss   2310  pair_L
+ideal          L   master cpu  t12   4190.4 [4169-4198]  setup   1.35  rss   2316  pair_L
+ideal          L   master cpu  t18   4504.4 [4486-4520]  setup   1.09  rss   2316  pair_L
+ideal          L   master gpu  t6    4769.3 [4766-4771]  setup   1.64  rss   3111  gpu_L
+ideal          L   master mt   t6    2221.0 [2215-2227]  setup   1.86  rss   3486  mt_L
+ideal          L   master mt   t12   2824.5 [2824-2825]  setup   1.25  rss   3486  mt_L
+pml            L   fork cpu    t6    2152.7 [2141-2186]  setup   2.79  rss   3872  pair_L
+pml            L   fork cpu    t12   2377.4 [2373-2384]  setup   2.77  rss   3872  pair_L
+pml            L   fork cpu    t18   2691.5 [2689-2693]  setup   2.81  rss   3873  pair_L
+pml            L   master cpu  t6    2268.8 [2254-2280]  setup   3.02  rss   3040  pair_L
+pml            L   master cpu  t12   2832.2 [2826-2838]  setup   1.89  rss   3053  pair_L
+pml            L   master cpu  t18   3143.2 [3128-3187]  setup   1.58  rss   3053  pair_L
+pml            L   master gpu  t6    4263.0 [4262-4271]  setup   2.04  rss   4263  gpu_L
+pml            L   master mt   t6     591.4 [590-593]  setup   2.28  rss   3941  mt_L
+pml            L   master mt   t12    810.3 [810-811]  setup   1.54  rss   3941  mt_L
+inhomogeneous  L   fork cpu    t6    2160.9 [2144-2167]  setup   3.21  rss   3886  pair_L
+inhomogeneous  L   fork cpu    t12   2388.1 [2388-2390]  setup   3.22  rss   3886  pair_L
+inhomogeneous  L   fork cpu    t18   2686.2 [2682-2692]  setup   3.19  rss   3886  pair_L
+inhomogeneous  L   master cpu  t6    2328.7 [2251-2332]  setup   3.63  rss   3051  pair_L
+inhomogeneous  L   master cpu  t12   2831.2 [2812-2833]  setup   2.21  rss   3061  pair_L
+inhomogeneous  L   master cpu  t18   3141.7 [3114-3146]  setup   1.83  rss   3061  pair_L
+inhomogeneous  L   master gpu  t6    4289.3 [4285-4292]  setup   2.53  rss   4267  gpu_L
+inhomogeneous  L   master mt   t6     580.5 [570-591]  setup   2.76  rss   3953  mt_L
+inhomogeneous  L   master mt   t12    805.7 [805-806]  setup   1.90  rss   3953  mt_L
+dispersive     L   fork cpu    t6    1378.3 [1370-1390]  setup  13.69  rss   6575  pair_L
+dispersive     L   fork cpu    t12   1163.0 [1161-1164]  setup  13.16  rss   6575  pair_L
+dispersive     L   fork cpu    t18   1313.9 [1314-1314]  setup  14.04  rss   6575  pair_L
+dispersive     L   master cpu  t6    1955.1 [1920-1959]  setup   4.47  rss   3989  pair_L
+dispersive     L   master cpu  t12   2476.6 [2464-2509]  setup   2.59  rss   3918  pair_L
+dispersive     L   master cpu  t18   2879.5 [2820-2903]  setup   2.02  rss   3969  pair_L
+dispersive     L   master gpu  t6    2250.7 [2250-2252]  setup   3.73  rss   5951  gpu_L
+dispersive     L   master mt   t6      64.0 [61-67]  setup   3.82  rss   5217  mt_L
+dispersive     L   master mt   t12     64.3 [64-65]  setup   2.37  rss   5150  mt_L
+antenna        L   fork cpu    t6    2104.3 [2097-2113]  setup   4.58  rss   4617  pair_L
+antenna        L   fork cpu    t12   2242.8 [2239-2251]  setup   4.60  rss   4617  pair_L
+antenna        L   fork cpu    t18   2511.2 [2494-2524]  setup   4.61  rss   4617  pair_L
+antenna        L   master cpu  t6    2310.3 [2310-2312]  setup   3.82  rss   3782  pair_L
+antenna        L   master cpu  t12   2765.9 [2764-2770]  setup   2.44  rss   3796  pair_L
+antenna        L   master cpu  t18   2949.8 [2775-2977]  setup   2.03  rss   3802  pair_L
+antenna        L   master gpu  t6    4071.8 [4068-4077]  setup   2.72  rss   5727  gpu_L
+antenna        L   master mt   t6     307.7 [307-308]  setup   2.83  rss   4720  mt_L
+antenna        L   master mt   t12    359.7 [360-360]  setup   1.92  rss   4721  mt_L
+cylindrical    L   fork cpu    t6    3468.0 [3467-3490]  setup   3.85  rss   2777  pair_L
+cylindrical    L   fork cpu    t12   3409.1 [3396-3409]  setup   3.98  rss   2777  pair_L
+cylindrical    L   fork cpu    t18   3860.2 [3855-3885]  setup   4.01  rss   2777  pair_L
+cylindrical    L   master cpu  t6    3272.0 [3223-3294]  setup   3.06  rss   2296  pair_L
+cylindrical    L   master cpu  t12   3872.2 [3838-3878]  setup   1.79  rss   2307  pair_L
+cylindrical    L   master cpu  t18   3893.8 [3845-3921]  setup   1.40  rss   2308  pair_L
+cylindrical    L   master gpu  t6    4751.1 [4746-4755]  setup   2.34  rss   3126  gpu_L
+cylindrical    L   master mt   t6    1931.7 [1930-1933]  setup   2.57  rss   3426  mt_L
+cylindrical    L   master mt   t12   2485.8 [2485-2487]  setup   1.71  rss   3426  mt_L
+
+others CPU over the whole run (5 s samples, % of one core): median 15, p90 34, max 169, 432 samples
+whole-GPU utilisation (includes the gpu parts of this run): median 0 %, p90 84 %, max 100 %

@@ -87,7 +87,7 @@ cg9, 0003 = cg10--cg15, 0004 = cg16, 0005 = cg17, 0006 = cg18), the build instal
 one per topic (Table~\ref{tab:cg29}), the build installed there from 2026-11-06 to 2026-11-11; 0028--0039 are cg31
 (Section~\ref{sec:cg31}), the build installed from 2026-11-11 to 2026-11-14, 0040 is the opt-in tiled sweep (snapshot cg32d,
 Section~\ref{sec:tiled}), and 0041--0043 are the thread-search start, the packed dispersive hooks and their guard, the
-fork's head 13350ca (snapshots cg33a, cg33c and cg33d, Section~\ref{sec:cg33}); none of these three groups has a row here. A row lists what the snapshot added
+build installed on the M5 Max, 13350ca (snapshots cg33a, cg33c and cg33d, Section~\ref{sec:cg33}), and 0044--0049 are the six patches of the fork's head, 8af6c4c (snapshots cg34a to cg35c, Section~\ref{sec:large}); none of these four groups has a row here. A row lists what the snapshot added
 over the row above; the intermediate snapshots cg3--cg5 and cg7 appear inside the cg6 and cg8
 rows.}\label{tab:snapshots}
 \end{table}
@@ -329,7 +329,7 @@ cylindrical mesh and 2.5$\times$ on the dispersive case. At 1\,M cells the fork 
 five cases (1.18--1.50$\times$ as measured) and behind on the dispersive one (0.52$\times$). So on large grids
 upstream's own new engine is level with or ahead of this fork's CPU engine, and well ahead with dispersive material;
 a paired run of the two on these cases with the probes compared was made later, on the M5 Pro, with a source on the
-mesh (Section~\ref{sec:cg33}); on this M5 none has been made (on another model, run
+mesh (Section~\ref{sec:cg33}), and on the M5 Max at three sizes up to 30\,M cells (Section~\ref{sec:large}); on this M5 none has been made (on another model, run
 interleaved on 2026-11-11, cg31's CPU engine was 1.27$\times$ master's \code{cpu} engine at 3.0\,M cells and
 0.86$\times$ at 17\,M, with the fork's row the better of 8 and 10 threads and master's at 8; Table~\ref{tab:threebuilds}). The fork's tiled sweep of 2026-11-11, which blocks in time as
 that engine does, was not run on these cases or next to it on the M5; on the M5 Pro it was run on two of them at 8\,M cells

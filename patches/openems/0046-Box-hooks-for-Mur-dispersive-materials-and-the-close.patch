@@ -1,0 +1,1761 @@
+From 8d513ba30e4dc6fb49d0151514cd62bb8985a493 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 22:23:48 -0600
+Subject: [PATCH 46/49] Box hooks for Mur, dispersive materials and the closed
+ cylinder
+
+With these every extension of the six benchmark cases and of the board
+models has box hooks, so the y-banded fused sweep and the tiled sweep's
+box mode cover them.
+
+Mur: face cells sorted by y per x-line; a y-face couples two rows, so
+Engine_Extension::GetCoupledRows names the lower row of each pair and
+the engine never cuts a band or a thread's y share between them
+(SetupYCuts, m_BandEdges). The slow path and unsorted layouts keep the
+line hooks.
+
+Conducting sheets, Lorentz, Drude and Debye: the packed groups of up to
+four positions of one x-line are found by key range; a group cut by the
+y range runs the same group function on a thread-local copy whose
+outside lanes repeat an inside lane, and only the inside lanes are
+written back. The unpacked and merged paths have box loops with the
+same per-position arithmetic.
+
+Closed cylinder (alpha closed): the extension declares Y_WRAP. The last
+band runs row 0 as a box of its own first, the first band starts at
+row 1, and the block of x-line 0 (r = 0 reads every row) runs in whole
+planes. The tiled sweep keeps its hook stages on such a mesh.
+
+Bit-identical to the line hooks: raw fields and probes on 17 kinds of
+model (H from 1 to NY-1, 1 to 6 threads, flags, block and balance
+variants, packed and merged ADE off), closed cylinder with and without
+the axis, steady-state stop step with Mur, the six benchmark cases with
+bands of 5, 2 and 1 lines and at 8 M cells with bands of 24.
+
+Mac Studio (M5 Max), upstream bench.py with a source, 30 M cells,
+18 threads, automatic bands, MC/s before -> after: antenna 2537 -> 3936,
+cylindrical 3901 -> 5797, dispersive 1320 -> 2121; probes identical on
+all six cases at 1 M, 8 M and 30 M cells at 6, 12 and 18 threads.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp                   | 192 ++++++++++-
+ FDTD/engine_multithread.h                     |  16 +
+ FDTD/extensions/engine_ext_boxruns.h          |   8 +
+ FDTD/extensions/engine_ext_cylinder.cpp       | 112 +++++-
+ FDTD/extensions/engine_ext_cylinder.h         |  10 +
+ FDTD/extensions/engine_ext_debyematerial.cpp  | 185 +++++++---
+ FDTD/extensions/engine_ext_debyematerial.h    |   9 +
+ FDTD/extensions/engine_ext_dispersive.cpp     |  87 +++--
+ FDTD/extensions/engine_ext_dispersive.h       |  50 +++
+ .../extensions/engine_ext_lorentzmaterial.cpp | 321 +++++++++++-------
+ FDTD/extensions/engine_ext_lorentzmaterial.h  |  12 +
+ FDTD/extensions/engine_ext_mur_abc.cpp        | 104 ++++++
+ FDTD/extensions/engine_ext_mur_abc.h          |  13 +-
+ FDTD/extensions/engine_extension.h            |  20 +-
+ 14 files changed, 921 insertions(+), 218 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 5fd3e83..b95c1d3 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -87,6 +87,7 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_auto_threads = false;
+ 	m_Fused = false;
+ 	m_YBand = 0;
++	m_YWrap = false;
+ 	m_Tiled = false;
+ 	m_TileK = m_TileW = 0;
+ 	m_TileHooksAll = false;
+@@ -692,6 +693,9 @@ void Engine_Multithread::SetupFused()
+ 	m_Fused = false;
+ 	m_Tiled = false;
+ 	m_YBand = 0;
++	m_BandEdges.clear();
++	m_YWrap = false;
++	m_YCut.clear();
+ 	for (int g=0; g<6; ++g)
+ 		m_LineHooks[g].clear();
+ 	const char* env = getenv("OPENEMS_FUSED");
+@@ -855,16 +859,43 @@ void Engine_Multithread::SetupFused()
+ 				}
+ 			}
+ 		}
++		SetupYCuts();
+ 		if (H>0)
+ 		{
+ 			why = NoBoxHooks();
+ 			if (!why.empty())
+ 				H = 0;
+ 		}
++		if (H>0)
++		{
++			// the band edges: the multiples of H, moved where an extension couples two rows (YCut)
++			std::vector<unsigned int> rows;
++			for (int k=0; k<N; ++k)
++				m_Eng_exts.at(k)->GetCoupledRows(rows);
++			m_BandEdges.assign(1, 0);
++			for (uint64_t c=H; c<NY; c+=H)
++			{
++				const unsigned int u = YCut((unsigned int)c);
++				if ((u>m_BandEdges.back()) && (u<NY))
++					m_BandEdges.push_back(u);
++			}
++			m_BandEdges.push_back(NY);
++			if (m_YWrap && (std::find(rows.begin(), rows.end(), 0u)!=rows.end()))
++				why = "an extension couples the rows 0 and 1 of a closed y direction";
++			else if (m_BandEdges.size()<3)
++				why = "the coupled y rows leave one band";
++			if (!why.empty())
++			{
++				H = 0;
++				m_BandEdges.clear();
++			}
++		}
+ 		m_YBand = H;
+ 		if (H>0)
+ 			bandMsg = ", y-bands of " + std::to_string(H) + " lines (" +
+-					  (autoH ? std::to_string((long long)std::llround(share/1024)) + " KiB a thread" : std::string("OPENEMS_YBAND")) + ")";
++					  (autoH ? std::to_string((long long)std::llround(share/1024)) + " KiB a thread" : std::string("OPENEMS_YBAND")) + ")" +
++					  ((m_BandEdges.size()-1!=(NY+H-1)/H) ? ", " + std::to_string(m_BandEdges.size()-1) + " bands (coupled rows)" : "") +
++					  (m_YWrap ? ", closed y (row 0 in the last band)" : "");
+ 		else if (set && !why.empty())
+ 			bandMsg = ", no y-bands (" + why + ")";
+ 	}
+@@ -873,12 +904,52 @@ void Engine_Multithread::SetupFused()
+ 	if (m_Tiled)
+ 	{
+ 		m_YBand = 0;
++		m_BandEdges.clear();
+ 		bandMsg.clear();
+ 	}
+ 	ReportFused("fused sweep, " + std::to_string(nb) + " blocks of x-lines" +
+ 				(m_UseFlags ? flagMsg : (nonlocal.empty() ? "" : ", barriers (the extension \"" + nonlocal + "\" is not TS_LOCAL)")) + bandMsg);
+ }
+ 
++void Engine_Multithread::SetupYCuts()
++{
++	const unsigned int NY = numLines[1];
++	m_YWrap = false;
++	std::vector<unsigned int> rows;
++	for (size_t k=0; k<m_Eng_exts.size(); ++k)
++	{
++		const unsigned int used = m_Eng_exts.at(k)->GetUsedHooks();
++		if ((used!=Engine_Extension::LEGACY_HOOKS) && (used & Engine_Extension::BOX_HOOKS) && (used & Engine_Extension::Y_WRAP))
++			m_YWrap = true;
++		m_Eng_exts.at(k)->GetCoupledRows(rows);
++	}
++	// ok[i]: a cut at i (between the rows i-1 and i) separates no coupled pair; a closed y direction keeps 0|1 and
++	// NY-2|NY-1 too (its last band must hold NY-2, and its first band a row besides row 0)
++	std::vector<bool> ok(NY+1, true);
++	for (size_t n=0; n<rows.size(); ++n)
++		if (rows[n]+1<NY)
++			ok[rows[n]+1] = false;
++	if (m_YWrap && (NY>=2))
++		ok[1] = ok[NY-1] = false;
++	ok[0] = ok[NY] = true;
++	m_YCut.assign(NY+1, 0);
++	unsigned int below = 0;
++	for (unsigned int i=0; i<=NY; ++i)
++	{
++		if (ok[i])
++			below = i;
++		m_YCut[i] = below;
++	}
++	unsigned int above = NY;
++	for (unsigned int i=NY; i>=1; --i)
++	{
++		if (ok[i])
++			above = i;
++		if (m_YCut[i]==0)
++			m_YCut[i] = above;
++	}
++}
++
+ std::string Engine_Multithread::NoBoxHooks() const
+ {
+ 	// all or none (see Engine_Extension's *Box() hooks): one extension without them would change the order of the
+@@ -1015,6 +1086,8 @@ void Engine_Multithread::SetupTiled(const std::vector<unsigned int>& coupled)
+ 			stageWhy = "OPENEMS_TBLOCK_HOOKS=0";
+ 		else
+ 			stageWhy = NoBoxHooks();
++		if (stageWhy.empty() && m_YWrap)
++			stageWhy = "a closed y direction (Y_WRAP) needs the order of one thread";
+ 		m_TileBox = stageWhy.empty();
+ 		msg = "tiled sweep, " + std::to_string(edge.size()-1) + " tiles of " + std::to_string(W) + " x-lines, " +
+ 			  std::to_string(K) + " timesteps per block" +
+@@ -1077,9 +1150,10 @@ void Engine_Multithread::TileHookShare(int threadID, unsigned int p0, unsigned i
+ void Engine_Multithread::TileYRange(int threadID, unsigned int& y0, unsigned int& y1) const
+ {
+ 	// the same cut for the thread below and the thread above ([0] = 0 and [threads] = 65536 give 0 and NY)
++	// moved by YCut(): coupled rows stay in one thread's range (the map is non-decreasing, so the ranges stay disjoint)
+ 	const unsigned int ny = numLines[1];
+-	y0 = (unsigned int)(((uint64_t)ny*m_TileCum[threadID]+32768)>>16);
+-	y1 = (unsigned int)(((uint64_t)ny*m_TileCum[threadID+1]+32768)>>16);
++	y0 = YCut((unsigned int)(((uint64_t)ny*m_TileCum[threadID]+32768)>>16));
++	y1 = YCut((unsigned int)(((uint64_t)ny*m_TileCum[threadID+1]+32768)>>16));
+ }
+ 
+ void Engine_Multithread::RunBoxHooks(int group, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+@@ -1229,16 +1303,35 @@ void Engine_Multithread::BalanceTiled()
+ 	std::vector<double> speed(m_numThreads, 0);
+ 	double sum = 0;
+ 	bool all = true;
++	unsigned int measured = 0;
++	std::vector<bool> none(m_numThreads, false);
+ 	for (unsigned int t=0; t<m_numThreads; ++t)
+ 	{
+ 		FusedStat& stat = m_FusedStat[t];
++		unsigned int a, b;
++		TileYRange(t, a, b);
++		none[t] = (a>=b);
+ 		if ((stat.busy>0) && (stat.lines>0))
++		{
+ 			speed[t] = stat.lines/stat.busy;
+-		else
++			++measured;
++		}
++		else if (!none[t])
+ 			all = false;
+ 		sum += speed[t];
+ 		stat.busy = stat.lines = 0;
+ 	}
++	// a thread that YCut() left without lines (coupled rows) gets the mean speed of the others
++	if (all && measured && (measured<m_numThreads))
++	{
++		const double mean = sum/measured;
++		for (unsigned int t=0; t<m_numThreads; ++t)
++			if (none[t] && !(speed[t]>0))
++			{
++				speed[t] = mean;
++				sum += mean;
++			}
++	}
+ 	const unsigned int ny = numLines[1];
+ 	if (!all || !(sum>0) || (ny<m_numThreads))
+ 		return;   // a thread without lines (fewer y lines than threads): the shares stay
+@@ -1341,21 +1434,53 @@ void Engine_Multithread::FusedBands(unsigned int b0, unsigned int bl, unsigned i
+ 	// (x, y), (x+1, y) and (x, y+1), which are also the only voltages that read the old currents of (x, y). So every cell
+ 	// gets the operands of the unfused update; the z direction stays inside a row. After the last band the currents of the
+ 	// lines [start, m_Blocks[bl]-1) are done on all rows, exactly what the sweep in whole planes leaves when it reaches the
+-	// block bl. All hooks touch their own cells only (box hooks), in the order Pre, update, Post, Apply of every cell.
+-	const unsigned int NY = numLines[1], H = m_YBand;
+-	for (unsigned int y0=0; y0<NY; y0+=H)
++	// block bl. All hooks touch their own cells only (box hooks), in the order Pre, update, Post, Apply of every cell; the
++	// band edges never separate two rows an extension couples (m_BandEdges, YCut), so such a pair is in one box.
++	// Closed y (m_YWrap): row 0 is a copy of row NY-2 (voltages) and row NY-2 of row 0 (currents), so row 0 moves to the
++	// end: its voltages and currents run in the last band (which holds NY-2 and NY-1), as a second box called with the
++	// band's rows extension by extension, row 0 first, and the first band starts at row 1 (voltages and currents). The
++	// voltages of row 0 need the old currents of row 0 on x and x-1, which run after them in the same last band (x-1 is
++	// a line behind); its currents the final voltages of row 0 on x and x+1 (the same or an earlier block of the last
++	// band) and of row 1 (first band); the voltages of row 1 the old currents of row 0 (still old until the last band).
++	// The voltage Post hook copies row NY-2 into row 0 after the Post hooks before it in the order have run on both boxes,
++	// the current Post hook copies row 0 into NY-2 after row 0's update and earlier Post hooks: the order of a whole
++	// plane for every cell. (The block of x-line 0, whose r=0 hook reads all rows, runs in whole planes: FusedTimestep.)
++	const unsigned int NY = numLines[1];
++	const size_t nb = m_BandEdges.size()-1;
++	for (size_t i=0; i<nb; ++i)
+ 	{
+-		const unsigned int y1 = std::min(NY, y0+H);   // H < NY: no wrap-around
+-		const unsigned int yc0 = (y0==0) ? 0 : y0-1;
+-		const unsigned int yc1 = (y1==NY) ? NY : y1-1;
++		unsigned int y0 = m_BandEdges[i];
++		const unsigned int y1 = m_BandEdges[i+1];
++		unsigned int yc0 = (i==0) ? 0 : y0-1;
++		const unsigned int yc1 = (i+1==nb) ? NY : y1-1;
++		const bool row0 = m_YWrap && (i+1==nb);
++		if (m_YWrap && (i==0))
++			y0 = yc0 = 1;
+ 		for (unsigned int b=b0; b<bl; ++b)
+ 		{
+ 			const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
++			const unsigned int xc0 = (x0==start) ? x0 : x0-1, xc1 = x1-1;
++			if (row0)
++			{
++				RunBoxHooks2(0, x0, x1, 0, 1, y0, y1);
++				UpdateVoltagesY(x0, x1-x0, 0, 1);
++				UpdateVoltagesY(x0, x1-x0, y0, y1);
++				RunBoxHooks2(1, x0, x1, 0, 1, y0, y1);
++				RunBoxHooks2(2, x0, x1, 0, 1, y0, y1);
++				if (xc0<xc1)
++				{
++					RunBoxHooks2(3, xc0, xc1, 0, 1, yc0, yc1);
++					UpdateCurrentsY(xc0, xc1-xc0, 0, 1);
++					UpdateCurrentsY(xc0, xc1-xc0, yc0, yc1);
++					RunBoxHooks2(4, xc0, xc1, 0, 1, yc0, yc1);
++					RunBoxHooks2(5, xc0, xc1, 0, 1, yc0, yc1);
++				}
++				continue;
++			}
+ 			RunBoxHooks(0, x0, x1, y0, y1);
+ 			UpdateVoltagesY(x0, x1-x0, y0, y1);
+ 			RunBoxHooks(1, x0, x1, y0, y1);
+ 			RunBoxHooks(2, x0, x1, y0, y1);
+-			const unsigned int xc0 = (x0==start) ? x0 : x0-1, xc1 = x1-1;
+ 			if ((xc0<xc1) && (yc0<yc1))
+ 			{
+ 				RunBoxHooks(3, xc0, xc1, yc0, yc1);
+@@ -1367,6 +1492,35 @@ void Engine_Multithread::FusedBands(unsigned int b0, unsigned int bl, unsigned i
+ 	}
+ }
+ 
++void Engine_Multithread::RunBoxHooks2(int group, unsigned int x0, unsigned int x1, unsigned int a0, unsigned int a1, unsigned int b0, unsigned int b1)
++{
++	const std::vector<Engine_Extension*>& exts = m_LineHooks[group];
++	for (size_t n=0; n<exts.size(); ++n)
++		for (int k=0; k<2; ++k)
++		{
++			const unsigned int y0 = k ? b0 : a0, y1 = k ? b1 : a1;
++			switch (group)
++			{
++			case 0: exts[n]->DoPreVoltageUpdatesBox(x0, x1, y0, y1); break;
++			case 1: exts[n]->DoPostVoltageUpdatesBox(x0, x1, y0, y1); break;
++			case 2: exts[n]->Apply2VoltagesBox(x0, x1, y0, y1); break;
++			case 3: exts[n]->DoPreCurrentUpdatesBox(x0, x1, y0, y1); break;
++			case 4: exts[n]->DoPostCurrentUpdatesBox(x0, x1, y0, y1); break;
++			case 5: exts[n]->Apply2CurrentBox(x0, x1, y0, y1); break;
++			}
++		}
++}
++
++void Engine_Multithread::FusedBlock(unsigned int b, unsigned int start)
++{
++	const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
++	FusedHooks(0, x0, x1);
++	UpdateVoltages(x0, x1-x0);
++	FusedHooks(1, x0, x1);
++	FusedHooks(2, x0, x1);
++	FusedCurrents((x0==start) ? x0 : x0-1, x1-1);
++}
++
+ void Engine_Multithread::FusedTimestep(int threadID)
+ {
+ 	// The voltages of a block need the old currents of the block and of the line before it; the
+@@ -1379,8 +1533,12 @@ void Engine_Multithread::FusedTimestep(int threadID)
+ 	const unsigned int start = m_Blocks[b0];
+ 	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+ 	const unsigned int bl = (m_YBand && (b1>b0+1)) ? b1-1 : b0;
+-	if (bl>b0)
+-		FusedBands(b0, bl, start);
++	// closed y: the first block of the domain (x-line 0, the r=0 hook reads every row) in whole planes before the bands
++	unsigned int bf = b0;
++	if (m_YWrap && (bl>b0) && (start==0))
++		FusedBlock(bf++, start);
++	if (bl>bf)
++		FusedBands(bf, bl, start);
+ 	for (unsigned int b=bl; b<b1; ++b)
+ 	{
+ 		const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
+@@ -1470,8 +1628,12 @@ void Engine_Multithread::FusedTimestepFlags(int threadID, unsigned int step)
+ 	std::chrono::steady_clock::duration waited = std::chrono::steady_clock::duration::zero();
+ 	// y-bands: the blocks but the last one in bands (they touch no line of a neighbour), the last one as before
+ 	const unsigned int bl = (m_YBand && (b1>b0+1)) ? b1-1 : b0;
+-	if (bl>b0)
+-		FusedBands(b0, bl, start);
++	// closed y: the first block of the domain (x-line 0, the r=0 hook reads every row) in whole planes before the bands
++	unsigned int bf = b0;
++	if (m_YWrap && (bl>b0) && (start==0))
++		FusedBlock(bf++, start);
++	if (bl>bf)
++		FusedBands(bf, bl, start);
+ 	for (unsigned int b=bl; b<b1; ++b)
+ 	{
+ 		if ((b+1==b1) && !last)
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index 7709945..75a0454 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -151,6 +151,17 @@ protected:
+ 	//! run in whole planes (the neighbour flags and barriers are unchanged); in band mode all hooks are box hooks (the
+ 	//! last block's with the whole y range), so every extension that uses a hook must declare BOX_HOOKS.
+ 	unsigned int m_YBand;
++	//! the band edges 0 = m_BandEdges[0] < .. < m_BandEdges[n] = NY (n >= 2) in band mode: the multiples of m_YBand moved by
++	//! YCut() (coupled rows stay together)
++	std::vector<unsigned int> m_BandEdges;
++	//! a Y_WRAP extension (closed alpha): row 0 runs in the last band, the first block of the domain in whole planes
++	bool m_YWrap;
++	//! [i], i = 0 .. NY: the y cut used instead of i: i itself, unless an extension couples the rows i-1 and i
++	//! (GetCoupledRows; with Y_WRAP also 0|1 and NY-2|NY-1); then the largest allowed cut below i, or the smallest above
++	//! it when that would be 0. Non-decreasing, 0 and NY stay.
++	std::vector<unsigned int> m_YCut;
++	void SetupYCuts();
++	unsigned int YCut(unsigned int i) const {return m_YCut.empty() ? i : m_YCut[i];}
+ 	//! the reason why the box hooks cannot run (an extension with hooks but without BOX_HOOKS); empty when they can
+ 	std::string NoBoxHooks() const;
+ 	//! the blocks [b0, bl) of a slab that starts at the x-line start, in y-bands of m_YBand lines
+@@ -191,6 +202,11 @@ protected:
+ 	//! the y lines [y0, y1) of a thread in the tiled sweep (the updates, and the box hooks in box mode)
+ 	void TileYRange(int threadID, unsigned int& y0, unsigned int& y1) const;
+ 	void RunBoxHooks(int group, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	//! RunBoxHooks() on the rows [a0, a1) and [b0, b1) of the x-lines [x0, x1), extension by extension, the first box first
++	//! (the last band of a Y_WRAP sweep)
++	void RunBoxHooks2(int group, unsigned int x0, unsigned int x1, unsigned int a0, unsigned int a1, unsigned int b0, unsigned int b1);
++	//! one block of the fused sweep in whole y-z planes, the currents of its lines behind it (from start at the slab's start)
++	void FusedBlock(unsigned int b, unsigned int start);
+ 	void SetupTiled(const std::vector<unsigned int>& coupled);
+ 	void TiledRun(int threadID, unsigned int iterTS);
+ 	//! The x-lines of one thread in a hook stage over the lines [p0, p1) and [q0, q1) (either may be empty):
+diff --git a/FDTD/extensions/engine_ext_boxruns.h b/FDTD/extensions/engine_ext_boxruns.h
+index 33bd737..b30a883 100644
+--- a/FDTD/extensions/engine_ext_boxruns.h
++++ b/FDTD/extensions/engine_ext_boxruns.h
+@@ -20,6 +20,14 @@
+ #include <cstdint>
+ #include <vector>
+ 
++// The arithmetic of a line hook factored out so that its box hook can run the same source on a sub-range: forced inline in
++// both, so the line hook keeps the machine code it had before the factoring (E1b).
++#if defined(__GNUC__) || defined(__clang__)
++#define BOXRUNS_INLINE __attribute__((always_inline))
++#else
++#define BOXRUNS_INLINE
++#endif
++
+ //! The box hooks of extensions with a list of points (excitation, lumped elements): the points sorted by (x, y) once, so that
+ //! a call for the box [x0, x1) x [y0, y1) finds its points by binary search and costs what lies in the box, not the list.
+ namespace BoxRuns
+diff --git a/FDTD/extensions/engine_ext_cylinder.cpp b/FDTD/extensions/engine_ext_cylinder.cpp
+index ba21b71..fd1e5f9 100644
+--- a/FDTD/extensions/engine_ext_cylinder.cpp
++++ b/FDTD/extensions/engine_ext_cylinder.cpp
+@@ -20,6 +20,7 @@
+ #include "operator_ext_cylinder.h"
+ #include "FDTD/engine_sse.h"
+ #include "engine_extension_dispatcher.h"
++#include <iostream>
+ 
+ Engine_Ext_Cylinder::Engine_Ext_Cylinder(Operator_Ext_Cylinder* op_ext) : Engine_Extension(op_ext)
+ {
+@@ -39,8 +40,12 @@ unsigned int Engine_Ext_Cylinder::GetUsedHooks() const
+ {
+ 	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Cylinder);
+ 	// r=0 reads the alpha currents of x-line 0 before the engine updates them (the fused sweep updates the currents of a
+-	// line after the voltage hooks of that line), everything else stays on one x-line
+-	return POST_VOLT | POST_CURR | PREPOST_WRITES_FIELDS | LINE_HOOKS | TS_LOCAL;
++	// line after the voltage hooks of that line), everything else stays on one x-line.
++	// Box hooks for the y-bands: the closed alpha direction couples the rows 0 and NY-2 of every x-line (and r=0 all rows
++	// of x-line 0), which no ascending band order allows; Y_WRAP makes the engine run row 0 in the last band, with NY-2,
++	// and x-line 0 in whole planes (see Engine_Extension and Engine_Multithread::FusedBands). Without the closed alpha
++	// direction the hooks do nothing.
++	return POST_VOLT | POST_CURR | PREPOST_WRITES_FIELDS | LINE_HOOKS | TS_LOCAL | BOX_HOOKS | (CC_closedAlpha ? Y_WRAP : 0);
+ }
+ 
+ template <typename EngType>
+@@ -108,6 +113,109 @@ void Engine_Ext_Cylinder::DoPostCurrentUpdatesImpl(EngType* eng, unsigned int x0
+ 	}
+ }
+ 
++// The box hooks. Why this is the order of the line hooks for every cell, with the y-bands of a Y_WRAP sweep (a row may
++// only be read after its final write of the step and before its next one):
++// - row 0 of the voltages is written here (copy of row NY-2); it is read by the currents of row 0 (x and x-1) and by the
++//   Post/Apply hooks of later extensions on row 0. The engine runs row 0 (update and hooks) in the last band, in a box
++//   called before the box with NY-2 extension by extension: the copy reads NY-2 after its update and after the Post hooks
++//   of the extensions before this one (the UPML writes there), before those after it, as in a whole plane; the currents
++//   of row 0 come after it in that band. The update of row 0 itself (later overwritten) reads only the old currents of
++//   row 0, which stay old until then.
++// - row NY-2 of the currents is written here (copy of row 0) when the box holds NY-2; the box with row 0 ran first in the
++//   same band (update and the Post hooks before this one), as in a whole plane. NY-2 is read by the voltages of NY-2 and
++//   NY-1 only in the next timestep.
++// - r=0 sums the old alpha currents of every row of x-line 0 and writes every row: whole planes only, which the engine
++//   gives the first block of the domain in Y_WRAP mode.
++// The tiled sweep's box mode (threads on disjoint y ranges at once) is refused for Y_WRAP: the copies cross ranges.
++template <typename EngType>
++void Engine_Ext_Cylinder::DoPostVoltageUpdatesBoxImpl(EngType* eng, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (CC_closedAlpha==false) return;
++	if (x1>numLines[0])
++		x1 = numLines[0];
++	if ((x0>=x1) || (y0>=y1))
++		return;
++
++	if (CC_R0_included && (x0==0))
++	{
++		if ((y0!=0) || (y1<numLines[1]))
++		{
++			static bool told = false;
++			if (!told)
++				std::cerr << "Engine_Ext_Cylinder: error, the r=0 hook was called for the y lines " << y0 << " .. " << y1
++						  << " only (it needs all of them); the result is wrong" << std::endl;
++			told = true;
++		}
++		else
++		{
++			unsigned int pos[3];
++			pos[0] = 0;
++			FDTD_FLOAT volt=0;
++			for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
++			{
++				volt =eng->EngType::GetVolt(2,0,0,pos[2])*cyl_Op->vv_R0[pos[2]];
++				for (pos[1]=0; pos[1]<numLines[1]-1; ++pos[1])
++					volt +=cyl_Op->vi_R0[pos[2]] *  eng->EngType::GetCurr(1,0,pos[1],pos[2]);
++				eng->EngType::SetVolt(2,0,0,pos[2], volt);
++			}
++
++			for (pos[1]=0; pos[1]<numLines[1]; ++pos[1])
++			{
++				for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
++				{
++					eng->EngType::SetVolt(1,0,pos[1],pos[2], 0); //no voltage in alpha-direction at r=0
++					eng->EngType::SetVolt(2,0,pos[1],pos[2], eng->EngType::GetVolt(2,0,0,pos[2]) );
++				}
++			}
++		}
++	}
++
++	// close alpha: row 0 of the box from the last alpha-plane
++	if (y0!=0)
++		return;
++	unsigned int pos[3];
++	unsigned int last_A_Line = numLines[1]-2;
++	for (pos[0]=x0; pos[0]<x1; ++pos[0])
++	{
++		for (pos[2]=0; pos[2]<numLines[2]; ++pos[2])
++		{
++			eng->EngType::SetVolt(0,pos[0],0,pos[2], eng->EngType::GetVolt(0,pos[0],last_A_Line,pos[2]) );
++			eng->EngType::SetVolt(2,pos[0],0,pos[2], eng->EngType::GetVolt(2,pos[0],last_A_Line,pos[2]) );
++		}
++	}
++}
++
++template <typename EngType>
++void Engine_Ext_Cylinder::DoPostCurrentUpdatesBoxImpl(EngType* eng, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (CC_closedAlpha==false) return;
++	if (x1>numLines[0]-1)
++		x1 = numLines[0]-1;
++	unsigned int last_A_Line = numLines[1]-2;
++	// close alpha: row NY-2 of the box from the first alpha-plane
++	if ((last_A_Line<y0) || (last_A_Line>=y1))
++		return;
++	unsigned int pos[3];
++	for (pos[0]=x0; pos[0]<x1; ++pos[0])
++	{
++		for (pos[2]=0; pos[2]<numLines[2]-1; ++pos[2])
++		{
++			eng->EngType::SetCurr(0,pos[0],last_A_Line,pos[2], eng->EngType::GetCurr(0,pos[0],0,pos[2]) );
++			eng->EngType::SetCurr(2,pos[0],last_A_Line,pos[2], eng->EngType::GetCurr(2,pos[0],0,pos[2]) );
++		}
++	}
++}
++
++void Engine_Ext_Cylinder::DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	ENG_DISPATCH_ARGS(DoPostVoltageUpdatesBoxImpl, x0, x1, y0, y1);
++}
++
++void Engine_Ext_Cylinder::DoPostCurrentUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	ENG_DISPATCH_ARGS(DoPostCurrentUpdatesBoxImpl, x0, x1, y0, y1);
++}
++
+ void Engine_Ext_Cylinder::DoPostVoltageUpdates()
+ {
+ 	ENG_DISPATCH_ARGS(DoPostVoltageUpdatesImpl, 0u, numLines[0]);
+diff --git a/FDTD/extensions/engine_ext_cylinder.h b/FDTD/extensions/engine_ext_cylinder.h
+index d6b27cd..bd9f318 100644
+--- a/FDTD/extensions/engine_ext_cylinder.h
++++ b/FDTD/extensions/engine_ext_cylinder.h
+@@ -39,6 +39,11 @@ public:
+ 
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void DoPostCurrentUpdatesLines(unsigned int x0, unsigned int x1);
++	//! The box hooks (y-bands of the fused sweep only: with a closed alpha direction they declare Y_WRAP, see
++	//! Engine_Extension): the voltage hook writes row 0 from row NY-2 when the box holds row 0, the current hook row NY-2
++	//! from row 0 when it holds NY-2, and r=0 runs on a call with the whole y range only.
++	virtual void DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void DoPostCurrentUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+ protected:
+ 	//! for the x-lines [x0, x1)
+@@ -48,6 +53,11 @@ protected:
+ 	template <typename EngType>
+ 	void DoPostCurrentUpdatesImpl(EngType* eng, unsigned int x0, unsigned int x1);
+ 
++	template <typename EngType>
++	void DoPostVoltageUpdatesBoxImpl(EngType* eng, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	template <typename EngType>
++	void DoPostCurrentUpdatesBoxImpl(EngType* eng, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++
+ 	Operator_Ext_Cylinder* cyl_Op;
+ 
+ 	unsigned int numLines[3];
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index 6c40aa0..b69ee3d 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -212,6 +212,70 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ }
+ 
+ #if defined(__GNUC__) || defined(__clang__)
++namespace
++{
++// one group of PrePacked() (block b, float indices f, P poles): W = v_relax*W + v_drive*V, pre += W - W_old
++inline BOXRUNS_INLINE void DebPreGroup(const float* __restrict volt, float* __restrict b, const unsigned int* __restrict f, unsigned int P)
++{
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int n=0; n<3; ++n)
++	{
++		float* __restrict c = b + n*cs;
++		const unsigned int* fn = f + 4*n;
++		const v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++		v4sf pre = {0.0f, 0.0f, 0.0f, 0.0f};
++		for (unsigned int o=0; o<P; ++o)
++		{
++			const v4sf w = Load4(c+4*o);
++			const v4sf W = Load4(c+4*(P+2+o))*w + Load4(c+4*(2*P+2+o))*v;
++			pre += W - w;
++			Store4(c+4*o, W);
++		}
++		Store4(c+4*P, pre);
++	}
++}
++
++// one group of PostPacked(): V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
++inline BOXRUNS_INLINE void DebPostGroup(const float* __restrict volt, float* __restrict b, const unsigned int* __restrict f, unsigned int P)
++{
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int n=0; n<3; ++n)
++	{
++		float* __restrict c = b + n*cs;
++		const unsigned int* fn = f + 4*n;
++		const v4sf v_raw = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++		const v4sf v_n = (v_raw - Load4(c+4*P)) * Load4(c+4*(3*P+2));
++		Store4(c+4*(P+1), v_raw - v_n);
++		for (unsigned int o=0; o<P; ++o)
++			Store4(c+4*o, Load4(c+4*o) + Load4(c+4*(2*P+2+o))*v_n);
++	}
++}
++
++// one group of ApplyPacked(): V -= correction for the lanes [l0, l1) (four lanes as a vector)
++inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __restrict b, const unsigned int* __restrict f, unsigned int P,
++						  unsigned int l0, unsigned int l1)
++{
++	const unsigned int cs = (3*P+3)*4;
++	for (unsigned int n=0; n<3; ++n)
++	{
++		const float* c = b + n*cs + 4*(P+1);
++		const unsigned int* fn = f + 4*n;
++		if ((l0==0) && (l1==4))
++		{
++			v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
++			v = v - Load4(c);
++			volt[fn[0]] = v[0];
++			volt[fn[1]] = v[1];
++			volt[fn[2]] = v[2];
++			volt[fn[3]] = v[3];
++		}
++		else
++			for (unsigned int l=l0; l<l1; ++l)
++				volt[fn[l]] = volt[fn[l]] - c[l];
++	}
++}
++}
++
+ // the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
+ void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
+ {
+@@ -219,27 +283,8 @@ void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+-	const unsigned int cs = (3*P+3)*4;
+ 	for (unsigned int g=g0; g<g1; ++g)
+-	{
+-		float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
+-		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
+-		for (unsigned int n=0; n<3; ++n)
+-		{
+-			float* __restrict c = b + n*cs;
+-			const unsigned int* fn = f + 4*n;
+-			const v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
+-			v4sf pre = {0.0f, 0.0f, 0.0f, 0.0f};
+-			for (unsigned int o=0; o<P; ++o)
+-			{
+-				const v4sf w = Load4(c+4*o);
+-				const v4sf W = Load4(c+4*(P+2+o))*w + Load4(c+4*(2*P+2+o))*v;
+-				pre += W - w;
+-				Store4(c+4*o, W);
+-			}
+-			Store4(c+4*P, pre);
+-		}
+-	}
++		DebPreGroup(volt, &m_Block[(size_t)g*m_BlockStride], &m_GroupFi[12*(size_t)g], P);
+ }
+ 
+ // the operations of DoPostVoltageUpdatesLines() per lane: V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
+@@ -249,22 +294,8 @@ void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1)
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+-	const unsigned int cs = (3*P+3)*4;
+ 	for (unsigned int g=g0; g<g1; ++g)
+-	{
+-		float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
+-		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
+-		for (unsigned int n=0; n<3; ++n)
+-		{
+-			float* __restrict c = b + n*cs;
+-			const unsigned int* fn = f + 4*n;
+-			const v4sf v_raw = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
+-			const v4sf v_n = (v_raw - Load4(c+4*P)) * Load4(c+4*(3*P+2));
+-			Store4(c+4*(P+1), v_raw - v_n);
+-			for (unsigned int o=0; o<P; ++o)
+-				Store4(c+4*o, Load4(c+4*o) + Load4(c+4*(2*P+2+o))*v_n);
+-		}
+-	}
++		DebPostGroup(volt, &m_Block[(size_t)g*m_BlockStride], &m_GroupFi[12*(size_t)g], P);
+ }
+ 
+ // the operation of Apply2VoltagesLines() per lane: V -= correction (only the used lanes are written)
+@@ -274,45 +305,62 @@ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1)
+ 	unsigned int g0, g1;
+ 	GroupRange(x0, x1, g0, g1);
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+-	const unsigned int cs = (3*P+3)*4;
+ 	for (unsigned int g=g0; g<g1; ++g)
++		DebApplyGroup(volt, &m_Block[(size_t)g*m_BlockStride], &m_GroupFi[12*(size_t)g], P, 0, m_GroupLanes[g]);
++}
++
++// the box version: whole groups as above, a group cut by the y range only on its lanes in the range (CutGroup)
++void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
++	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
+ 	{
+-		const float* __restrict b = &m_Block[(size_t)g*m_BlockStride];
+-		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
+-		const unsigned int lanes = m_GroupLanes[g];
+-		for (unsigned int n=0; n<3; ++n)
++		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
+ 		{
+-			const float* c = b + n*cs + 4*(P+1);
+-			const unsigned int* fn = f + 4*n;
+-			if (lanes==4)
++			float* b = &m_Block[(size_t)g*m_BlockStride];
++			const unsigned int* f = &m_GroupFi[12*(size_t)g];
++			if (hook==2)
++				return DebApplyGroup(volt, b, f, P, l0, l1);
++			const bool whole = (l0==0) && (l1==m_GroupLanes[g]);
++			if (hook==0)
+ 			{
+-				v4sf v = {volt[fn[0]], volt[fn[1]], volt[fn[2]], volt[fn[3]]};
+-				v = v - Load4(c);
+-				volt[fn[0]] = v[0];
+-				volt[fn[1]] = v[1];
+-				volt[fn[2]] = v[2];
+-				volt[fn[3]] = v[3];
++				if (whole)
++					DebPreGroup(volt, b, f, P);
++				else
++					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {DebPreGroup(volt, t, ft, P);});
+ 			}
+ 			else
+-				for (unsigned int l=0; l<lanes; ++l)
+-					volt[fn[l]] = volt[fn[l]] - c[l];
+-		}
+-	}
++			{
++				if (whole)
++					DebPostGroup(volt, b, f, P);
++				else
++					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {DebPostGroup(volt, t, ft, P);});
++			}
++		});
++	});
+ }
+ #else
+ // without the vector extensions SetupPacked() never packs (m_Packed stays false), so these are never called
+ void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{UNUSED(hook); UNUSED(x0); UNUSED(x1); UNUSED(y0); UNUSED(y1);}
+ #endif
+ 
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+ 	if (m_Packed)
+ 		return PrePacked(x0, x1);
+-	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int k0, k1;
+ 	LineRange(0, x0, x1, k0, k1);
++	PreK(k0, k1);
++}
++
++BOXRUNS_INLINE void Engine_Ext_DebyeMaterial::PreK(unsigned int k0, unsigned int k1)
++{
++	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	const unsigned int* __restrict idx = m_SortedIdx[0].data();
+ 	const unsigned int* __restrict fi = m_FloatIdx[0].data();
+ 	int poles = m_Op_Ext_Deb->m_PoleCount;
+@@ -340,9 +388,14 @@ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesLines(unsigned int x0, unsign
+ {
+ 	if (m_Packed)
+ 		return PostPacked(x0, x1);
+-	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	unsigned int k0, k1;
+ 	LineRange(0, x0, x1, k0, k1);
++	PostK(k0, k1);
++}
++
++BOXRUNS_INLINE void Engine_Ext_DebyeMaterial::PostK(unsigned int k0, unsigned int k1)
++{
++	const float* __restrict volt = (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	const unsigned int* __restrict idx = m_SortedIdx[0].data();
+ 	const unsigned int* __restrict fi = m_FloatIdx[0].data();
+ 	int poles = m_Op_Ext_Deb->m_PoleCount;
+@@ -361,6 +414,28 @@ void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesLines(unsigned int x0, unsign
+ 	}
+ }
+ 
++// the box hooks: the line hooks' operations for the positions with y in [y0, y1)
++void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_Packed)
++		return PackedBox(0, x0, x1, y0, y1);
++	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [this](unsigned int k0, unsigned int k1) {PreK(k0, k1);});
++}
++
++void Engine_Ext_DebyeMaterial::DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_Packed)
++		return PackedBox(1, x0, x1, y0, y1);
++	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [this](unsigned int k0, unsigned int k1) {PostK(k0, k1);});
++}
++
++void Engine_Ext_DebyeMaterial::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_Packed)
++		return PackedBox(2, x0, x1, y0, y1);
++	Engine_Ext_Dispersive::Apply2VoltagesBox(x0, x1, y0, y1);
++}
++
+ // This used to inherit Engine_Ext_Dispersive's declaration (APPLY_VOLT | LINE_HOOKS), so the
+ // multithreaded engine never called the Pre/Post voltage hooks above and Debye cells ran as their base material.
+ // The Pre/Post hooks only read engine fields and write the extension's own state; the poles are applied by the
+diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
+index c35567d..f0f0549 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.h
++++ b/FDTD/extensions/engine_ext_debyematerial.h
+@@ -68,6 +68,10 @@ public:
+ 	//! with the packed groups, the whole-grid Apply runs the packed line hook over every x-line (one state)
+ 	virtual void Apply2Voltages();
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
++	//! the box hooks: the line hooks' work for the positions with y in [y0, y1) (packed groups cut by the range lane by lane)
++	virtual void DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+ protected:
+ 	//! Packed groups (OPENEMS_ADE_PACKED=0: off): the positions in groups of up to four of one x-line
+@@ -83,6 +87,11 @@ protected:
+ 	void PrePacked(unsigned int x0, unsigned int x1);
+ 	void PostPacked(unsigned int x0, unsigned int x1);
+ 	void ApplyPacked(unsigned int x0, unsigned int x1);
++	//! hook 0 = Pre, 1 = Post, 2 = Apply of the packed groups with y in [y0, y1)
++	void PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	//! the line hooks' loops without packing for the sorted positions [k0, k1)
++	void PreK(unsigned int k0, unsigned int k1);
++	void PostK(unsigned int k0, unsigned int k1);
+ 
+ 	template <typename EngType>
+ 	void DoPreVoltageUpdatesImpl(EngType* eng);
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index e2e6a15..290ebcf 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -29,6 +29,7 @@ Engine_Ext_Dispersive::Engine_Ext_Dispersive(Operator_Ext_Dispersive* op_ext_dis
+ 	m_Op_Ext_Disp = op_ext_disp;
+ 	m_LinesReady = false;
+ 	m_LinesChecked = false;
++	m_BoxReady = false;
+ 	m_VoltMerged = m_CurrMerged = false;
+ 	int order = m_Op_Ext_Disp->m_Order;
+ 	curr_ADE = new FDTD_FLOAT**[order];
+@@ -105,7 +106,8 @@ unsigned int Engine_Ext_Dispersive::GetUsedHooks() const
+ 
+ unsigned int Engine_Ext_Dispersive::DispersiveHooks() const
+ {
+-	return (AnyVoltADE() ? APPLY_VOLT : 0) | (AnyCurrADE() ? APPLY_CURR : 0) | (m_LinesReady ? LINE_HOOKS | TS_LOCAL : 0);
++	return (AnyVoltADE() ? APPLY_VOLT : 0) | (AnyCurrADE() ? APPLY_CURR : 0) | (m_LinesReady ? LINE_HOOKS | TS_LOCAL : 0) |
++		   (m_LinesReady && m_BoxReady ? BOX_HOOKS : 0);
+ }
+ 
+ void Engine_Ext_Dispersive::SetNumberOfThreads(int nrThread)
+@@ -119,6 +121,7 @@ void Engine_Ext_Dispersive::SetupLines()
+ {
+ 	m_LinesChecked = true;
+ 	m_LinesReady = false;
++	m_BoxReady = false;
+ 	if (m_Eng->GetType()!=Engine::SSE)
+ 		return;
+ 	Engine_sse* eng = (Engine_sse*)m_Eng;
+@@ -132,6 +135,8 @@ void Engine_Ext_Dispersive::SetupLines()
+ 	m_SortedIdx.assign(order, std::vector<unsigned int>());
+ 	m_SortedX.assign(order, std::vector<unsigned int>());
+ 	m_FloatIdx.assign(order, std::vector<unsigned int>());
++	m_BoxKey.assign(order, std::vector<uint64_t>());
++	bool box = true;
+ 	for (int o=0; o<order; ++o)
+ 	{
+ 		const unsigned int count = m_Op_Ext_Disp->m_LM_Count.at(o);
+@@ -144,15 +149,22 @@ void Engine_Ext_Dispersive::SetupLines()
+ 		std::stable_sort(idx.begin(), idx.end(), [x](unsigned int a, unsigned int b) {return x[a]<x[b];});
+ 		m_SortedX[o].resize(count);
+ 		m_FloatIdx[o].resize((size_t)3*count);
++		m_BoxKey[o].resize(count);
+ 		for (unsigned int k=0; k<count; ++k)
+ 		{
+ 			const unsigned int i = idx[k];
+ 			m_SortedX[o][k] = x[i];
++			m_BoxKey[o][k] = BoxRuns::Key(x[i], pos[1][i]);
+ 			for (unsigned int n=0; n<3; ++n)
+ 				m_FloatIdx[o][3*(size_t)k+n] = (unsigned int)(4*(uint64_t)V->linearIndex({n, pos[0][i], pos[1][i], pos[2][i]%nvec}) + pos[2][i]/nvec);
+ 		}
+ 	}
+ 	m_LinesReady = true;
++	for (int o=0; o<order; ++o)
++		box = box && std::is_sorted(m_BoxKey[o].begin(), m_BoxKey[o].end());
++	m_BoxReady = box;
++	if (!box)
++		m_BoxKey.clear();
+ 	const char* env = getenv("OPENEMS_ADE_MERGED");
+ 	const bool merge = !(env && *env && (atoi(env)==0));
+ 	m_VoltMerged = merge && MergeOrders(m_Op_Ext_Disp->m_volt_ADE_On, m_VoltOrders);
+@@ -293,6 +305,11 @@ void Engine_Ext_Dispersive::ApplyMerged(float* __restrict field, FDTD_FLOAT*** a
+ {
+ 	unsigned int k0, k1;
+ 	LineRange(orders[0], x0, x1, k0, k1);
++	ApplyMergedK(field, ade, orders, k0, k1);
++}
++
++BOXRUNS_INLINE void Engine_Ext_Dispersive::ApplyMergedK(float* __restrict field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int k0, unsigned int k1)
++{
+ 	const unsigned int* __restrict fi = m_FloatIdx[orders[0]].data();
+ 	const size_t no = orders.size();
+ 	unsigned int k = k0;
+@@ -337,18 +354,49 @@ void Engine_Ext_Dispersive::Apply2VoltagesLines(unsigned int x0, unsigned int x1
+ 		if (m_Op_Ext_Disp->m_volt_ADE_On[o]==false) continue;
+ 		unsigned int k0, k1;
+ 		LineRange(o, x0, x1, k0, k1);
+-		const unsigned int* __restrict idx = m_SortedIdx[o].data();
+-		const unsigned int* __restrict fi = m_FloatIdx[o].data();
+-		const FDTD_FLOAT* __restrict ade0 = volt_ADE[o][0];
+-		const FDTD_FLOAT* __restrict ade1 = volt_ADE[o][1];
+-		const FDTD_FLOAT* __restrict ade2 = volt_ADE[o][2];
+-		for (unsigned int k=k0; k<k1; ++k)
+-		{
+-			const unsigned int i = idx[k];
+-			volt[fi[3*k+0]] = volt[fi[3*k+0]] - ade0[i];
+-			volt[fi[3*k+1]] = volt[fi[3*k+1]] - ade1[i];
+-			volt[fi[3*k+2]] = volt[fi[3*k+2]] - ade2[i];
+-		}
++		ApplyOrderK(volt, volt_ADE[o], o, k0, k1);
++	}
++}
++
++BOXRUNS_INLINE void Engine_Ext_Dispersive::ApplyOrderK(float* __restrict field, FDTD_FLOAT** ade, int o, unsigned int k0, unsigned int k1)
++{
++	const unsigned int* __restrict idx = m_SortedIdx[o].data();
++	const unsigned int* __restrict fi = m_FloatIdx[o].data();
++	const FDTD_FLOAT* __restrict ade0 = ade[0];
++	const FDTD_FLOAT* __restrict ade1 = ade[1];
++	const FDTD_FLOAT* __restrict ade2 = ade[2];
++	for (unsigned int k=k0; k<k1; ++k)
++	{
++		const unsigned int i = idx[k];
++		field[fi[3*k+0]] = field[fi[3*k+0]] - ade0[i];
++		field[fi[3*k+1]] = field[fi[3*k+1]] - ade1[i];
++		field[fi[3*k+2]] = field[fi[3*k+2]] - ade2[i];
++	}
++}
++
++void Engine_Ext_Dispersive::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
++	if (m_VoltMerged)
++		return BoxRuns::ForEach(m_BoxKey[m_VoltOrders[0]], x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
++								{ApplyMergedK(volt, volt_ADE, m_VoltOrders, k0, k1);});
++	for (int o=0; o<m_Op_Ext_Disp->m_Order; ++o)
++	{
++		if (m_Op_Ext_Disp->m_volt_ADE_On[o]==false) continue;
++		BoxRuns::ForEach(m_BoxKey[o], x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1) {ApplyOrderK(volt, volt_ADE[o], o, k0, k1);});
++	}
++}
++
++void Engine_Ext_Dispersive::Apply2CurrentBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	float* __restrict curr = (float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data();
++	if (m_CurrMerged)
++		return BoxRuns::ForEach(m_BoxKey[m_CurrOrders[0]], x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
++								{ApplyMergedK(curr, curr_ADE, m_CurrOrders, k0, k1);});
++	for (int o=0; o<m_Op_Ext_Disp->m_Order; ++o)
++	{
++		if (m_Op_Ext_Disp->m_curr_ADE_On[o]==false) continue;
++		BoxRuns::ForEach(m_BoxKey[o], x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1) {ApplyOrderK(curr, curr_ADE[o], o, k0, k1);});
+ 	}
+ }
+ 
+@@ -362,18 +410,7 @@ void Engine_Ext_Dispersive::Apply2CurrentLines(unsigned int x0, unsigned int x1)
+ 		if (m_Op_Ext_Disp->m_curr_ADE_On[o]==false) continue;
+ 		unsigned int k0, k1;
+ 		LineRange(o, x0, x1, k0, k1);
+-		const unsigned int* __restrict idx = m_SortedIdx[o].data();
+-		const unsigned int* __restrict fi = m_FloatIdx[o].data();
+-		const FDTD_FLOAT* __restrict ade0 = curr_ADE[o][0];
+-		const FDTD_FLOAT* __restrict ade1 = curr_ADE[o][1];
+-		const FDTD_FLOAT* __restrict ade2 = curr_ADE[o][2];
+-		for (unsigned int k=k0; k<k1; ++k)
+-		{
+-			const unsigned int i = idx[k];
+-			curr[fi[3*k+0]] = curr[fi[3*k+0]] - ade0[i];
+-			curr[fi[3*k+1]] = curr[fi[3*k+1]] - ade1[i];
+-			curr[fi[3*k+2]] = curr[fi[3*k+2]] - ade2[i];
+-		}
++		ApplyOrderK(curr, curr_ADE[o], o, k0, k1);
+ 	}
+ }
+ 
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index ba5e8ef..c59137b 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -24,6 +24,8 @@
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
+ #include "tools/array_ops.h"
++#include "engine_ext_boxruns.h"
++#include <algorithm>
+ #include <cstring>
+ 
+ #if defined(__GNUC__) || defined(__clang__)
+@@ -50,6 +52,9 @@ public:
+ 	unsigned int DispersiveHooks() const;
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
++	//! the box hooks (BOX_HOOKS when m_BoxReady): the line hooks' work for the positions with y in [y0, y1)
++	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void Apply2CurrentBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+ protected:
+ 	//! Line hooks for the SSE engines: the positions of every order sorted by x, with the float index of each
+@@ -71,6 +76,51 @@ protected:
+ 	//! called at the end of SetupLines(): subclasses build their packed groups here
+ 	virtual void SetupPacked() {}
+ 	void LineRange(int o, unsigned int x0, unsigned int x1, unsigned int& k0, unsigned int& k1) const;
++	//! ApplyMerged() for the sorted positions [k0, k1)
++	void ApplyMergedK(float* field, FDTD_FLOAT*** ade, const std::vector<int>& orders, unsigned int k0, unsigned int k1);
++	//! the Apply2*Lines() loop of one order (not merged) for the sorted positions [k0, k1)
++	void ApplyOrderK(float* field, FDTD_FLOAT** ade, int o, unsigned int k0, unsigned int k1);
++
++	//! Box hooks: per order the key (x, y) of every sorted position (BoxRuns::Key), non-decreasing when the positions of
++	//! an x-line are in y order (the builders list them in x, y, z order); m_BoxReady then, else no box hooks
++	std::vector<std::vector<uint64_t> > m_BoxKey;
++	bool m_BoxReady;
++	//! the packed groups of the sorted positions [k0, k1) of one x-line: f(g, l0, l1) for every group g with lanes in it,
++	//! [l0, l1) = those lanes (a y range can cut a group of four positions)
++	template <class F> void ForGroupLanes(unsigned int k0, unsigned int k1, F f) const
++	{
++		if ((k0>=k1) || m_GroupK.empty())
++			return;
++		size_t g = std::upper_bound(m_GroupK.begin(), m_GroupK.end(), k0) - m_GroupK.begin();
++		for (g = g ? g-1 : 0; (g<m_GroupK.size()) && (m_GroupK[g]<k1); ++g)
++		{
++			const unsigned int gk = m_GroupK[g], n = m_GroupLanes[g];
++			f((unsigned int)g, std::max(k0, gk)-gk, std::min(k1, gk+n)-gk);
++		}
++	}
++	//! A group cut by a y range: body(block, fi) runs on a copy of the group's block (stride floats, all of them four-lane
++	//! vectors) and of its float indices in which the lanes outside [l0, l1) repeat lane l0, then the lanes [l0, l1) are
++	//! written back. Those lanes get exactly the operations of the whole group, and only cells of the range are read or
++	//! written (another thread may run the other lanes at the same time).
++	template <class F> static void CutGroup(float* b, unsigned int stride, const unsigned int* f, unsigned int l0, unsigned int l1, F body)
++	{
++		static thread_local std::vector<float> tmp;
++		if (tmp.size()<stride)
++			tmp.resize(stride);
++		unsigned int sel[4], ft[12];
++		for (unsigned int l=0; l<4; ++l)
++			sel[l] = ((l>=l0) && (l<l1)) ? l : l0;
++		for (unsigned int j=0; j<stride; j+=4)
++			for (unsigned int l=0; l<4; ++l)
++				tmp[j+l] = b[j+sel[l]];
++		for (unsigned int n=0; n<3; ++n)
++			for (unsigned int l=0; l<4; ++l)
++				ft[4*n+l] = f[4*n+sel[l]];
++		body(tmp.data(), (const unsigned int*)ft);
++		for (unsigned int j=0; j<stride; j+=4)
++			for (unsigned int l=l0; l<l1; ++l)
++				b[j+l] = tmp[j+l];
++	}
+ 
+ 	//! Groups for packed hooks: the positions of order 0 (in x order, each listed once) in groups of up to four
+ 	//! positions of ONE x-line, so a group is never shared by two threads; built by SetupGroups(), false (and empty)
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.cpp b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+index 8061978..c603a7d 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.cpp
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.cpp
+@@ -185,43 +185,78 @@ bool Engine_Ext_LorentzMaterial::SetupSide(PackedSide& s, bool merged, const std
+ }
+ 
+ #if defined(__GNUC__) || defined(__clang__)
+-// the operations of PreMerged() per lane
+-void Engine_Ext_LorentzMaterial::PrePacked(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1)
++namespace
+ {
+-	unsigned int g0, g1;
+-	GroupRange(x0, x1, g0, g1);
+-	const unsigned int no = s.orders.size();
+-	for (unsigned int g=g0; g<g1; ++g)
++// one group of PrePacked(): the operations of PreMerged() per lane, on the block b of a group with the float indices f
++inline BOXRUNS_INLINE void LorPreGroup(const float* __restrict field, float* __restrict b, const unsigned int* __restrict f, unsigned int no, const char* lor)
++{
++	for (unsigned int n=0; n<3; ++n)
+ 	{
+-		float* __restrict b = &s.block[(size_t)g*s.stride];
+-		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
+-		for (unsigned int n=0; n<3; ++n)
++		const unsigned int* fn = f + 4*n;
++		const v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++		for (unsigned int m=0; m<no; ++m)
+ 		{
+-			const unsigned int* fn = f + 4*n;
+-			const v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
+-			for (unsigned int m=0; m<no; ++m)
++			float* __restrict c = b + (n*no+m)*20;
++			v4sf a = Load4(c);
++			if (lor[m])
+ 			{
+-				float* __restrict c = b + (n*no+m)*20;
+-				v4sf a = Load4(c);
+-				if (s.lor[m])
+-				{
+-					v4sf l = Load4(c+4);
+-					l += Load4(c+16)*a;
+-					a *= Load4(c+8);
+-					a += Load4(c+12)*(v-l);
+-					Store4(c+4, l);
+-				}
+-				else
+-				{
+-					a *= Load4(c+8);
+-					a += Load4(c+12)*v;
+-				}
+-				Store4(c, a);
++				v4sf l = Load4(c+4);
++				l += Load4(c+16)*a;
++				a *= Load4(c+8);
++				a += Load4(c+12)*(v-l);
++				Store4(c+4, l);
++			}
++			else
++			{
++				a *= Load4(c+8);
++				a += Load4(c+12)*v;
+ 			}
++			Store4(c, a);
+ 		}
+ 	}
+ }
+ 
++// one group of ApplyPacked(): field -= ADE of every merged order, in order, for the lanes [l0, l1) (four lanes as a vector)
++inline BOXRUNS_INLINE void LorApplyGroup(float* __restrict field, const float* __restrict b, const unsigned int* __restrict f, unsigned int no,
++						  unsigned int l0, unsigned int l1)
++{
++	for (unsigned int n=0; n<3; ++n)
++	{
++		const unsigned int* fn = f + 4*n;
++		const float* c = b + n*no*20;
++		if ((l0==0) && (l1==4))
++		{
++			v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
++			for (unsigned int m=0; m<no; ++m)
++				v = v - Load4(c + m*20);
++			field[fn[0]] = v[0];
++			field[fn[1]] = v[1];
++			field[fn[2]] = v[2];
++			field[fn[3]] = v[3];
++		}
++		else
++			for (unsigned int l=l0; l<l1; ++l)
++			{
++				float v = field[fn[l]];
++				for (unsigned int m=0; m<no; ++m)
++					v = v - c[m*20+l];
++				field[fn[l]] = v;
++			}
++	}
++}
++}
++
++// the operations of PreMerged() per lane
++void Engine_Ext_LorentzMaterial::PrePacked(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1)
++{
++	unsigned int g0, g1;
++	GroupRange(x0, x1, g0, g1);
++	const unsigned int no = s.orders.size();
++	const char* lor = s.lor.data();
++	for (unsigned int g=g0; g<g1; ++g)
++		LorPreGroup(field, &s.block[(size_t)g*s.stride], &m_GroupFi[12*(size_t)g], no, lor);
++}
++
+ // the operations of ApplyMerged() per lane: field -= ADE of every merged order, in order (only the used lanes are written)
+ void Engine_Ext_LorentzMaterial::ApplyPacked(float* __restrict field, const PackedSide& s, unsigned int x0, unsigned int x1)
+ {
+@@ -229,34 +264,40 @@ void Engine_Ext_LorentzMaterial::ApplyPacked(float* __restrict field, const Pack
+ 	GroupRange(x0, x1, g0, g1);
+ 	const unsigned int no = s.orders.size();
+ 	for (unsigned int g=g0; g<g1; ++g)
++		LorApplyGroup(field, &s.block[(size_t)g*s.stride], &m_GroupFi[12*(size_t)g], no, 0, m_GroupLanes[g]);
++}
++
++// the box versions: whole groups as above, a group cut by the y range only on its lanes in the range (CutGroup)
++void Engine_Ext_LorentzMaterial::PrePackedBox(const float* __restrict field, PackedSide& s, unsigned int x0, unsigned int x1,
++											  unsigned int y0, unsigned int y1)
++{
++	const unsigned int no = s.orders.size();
++	const char* lor = s.lor.data();
++	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
+ 	{
+-		const float* __restrict b = &s.block[(size_t)g*s.stride];
+-		const unsigned int* __restrict f = &m_GroupFi[12*(size_t)g];
+-		const unsigned int lanes = m_GroupLanes[g];
+-		for (unsigned int n=0; n<3; ++n)
++		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
+ 		{
+-			const unsigned int* fn = f + 4*n;
+-			const float* c = b + n*no*20;
+-			if (lanes==4)
+-			{
+-				v4sf v = {field[fn[0]], field[fn[1]], field[fn[2]], field[fn[3]]};
+-				for (unsigned int m=0; m<no; ++m)
+-					v = v - Load4(c + m*20);
+-				field[fn[0]] = v[0];
+-				field[fn[1]] = v[1];
+-				field[fn[2]] = v[2];
+-				field[fn[3]] = v[3];
+-			}
++			float* b = &s.block[(size_t)g*s.stride];
++			const unsigned int* f = &m_GroupFi[12*(size_t)g];
++			if ((l0==0) && (l1==m_GroupLanes[g]))
++				LorPreGroup(field, b, f, no, lor);
+ 			else
+-				for (unsigned int l=0; l<lanes; ++l)
+-				{
+-					float v = field[fn[l]];
+-					for (unsigned int m=0; m<no; ++m)
+-						v = v - c[m*20+l];
+-					field[fn[l]] = v;
+-				}
+-		}
+-	}
++				CutGroup(b, s.stride, f, l0, l1, [&](float* t, const unsigned int* ft) {LorPreGroup(field, t, ft, no, lor);});
++		});
++	});
++}
++
++void Engine_Ext_LorentzMaterial::ApplyPackedBox(float* __restrict field, const PackedSide& s, unsigned int x0, unsigned int x1,
++												unsigned int y0, unsigned int y1)
++{
++	const unsigned int no = s.orders.size();
++	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
++	{
++		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
++		{
++			LorApplyGroup(field, &s.block[(size_t)g*s.stride], &m_GroupFi[12*(size_t)g], no, l0, l1);
++		});
++	});
+ }
+ #else
+ // without the vector extensions SetupPacked() never packs (m_PV.on, m_PI.on stay false), so these are never called
+@@ -264,6 +305,10 @@ void Engine_Ext_LorentzMaterial::PrePacked(const float* field, PackedSide& s, un
+ {UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_LorentzMaterial::ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1)
+ {UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_LorentzMaterial::PrePackedBox(const float* field, PackedSide& s, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1); UNUSED(y0); UNUSED(y1);}
++void Engine_Ext_LorentzMaterial::ApplyPackedBox(float* field, const PackedSide& s, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{UNUSED(field); UNUSED(s); UNUSED(x0); UNUSED(x1); UNUSED(y0); UNUSED(y1);}
+ #endif
+ 
+ void Engine_Ext_LorentzMaterial::Apply2Voltages()
+@@ -306,6 +351,13 @@ void Engine_Ext_LorentzMaterial::PreMerged(const float* __restrict field, FDTD_F
+ {
+ 	unsigned int k0, k1;
+ 	LineRange(orders[0], x0, x1, k0, k1);
++	PreMergedK(field, ade, lor, c_int, c_ext, c_lor, lor_on, orders, k0, k1);
++}
++
++BOXRUNS_INLINE void Engine_Ext_LorentzMaterial::PreMergedK(const float* __restrict field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor,
++	FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext, FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders,
++	unsigned int k0, unsigned int k1)
++{
+ 	const unsigned int* __restrict fi = m_FloatIdx[orders[0]].data();
+ 	const size_t no = orders.size();
+ 	unsigned int k = k0;
+@@ -358,6 +410,42 @@ void Engine_Ext_LorentzMaterial::PreMerged(const float* __restrict field, FDTD_F
+ 		}
+ }
+ 
++namespace
++{
++// one order (not merged) of DoPre*UpdatesLines(): the same per-position operations as DoPre*UpdatesImpl, for the sorted
++// positions [k0, k1); lor = NULL without the Lorentz term
++inline BOXRUNS_INLINE void PreOrderK(const float* __restrict field, const unsigned int* __restrict idx, const unsigned int* __restrict fi,
++					  FDTD_FLOAT* const* ade, FDTD_FLOAT* const* c_int, FDTD_FLOAT* const* c_ext, FDTD_FLOAT* const* lor,
++					  FDTD_FLOAT* const* c_lor, unsigned int k0, unsigned int k1)
++{
++	if (lor)
++	{
++		for (unsigned int k=k0; k<k1; ++k)
++		{
++			const unsigned int i = idx[k];
++			for (unsigned int n=0; n<3; ++n)
++			{
++				lor[n][i]+=c_lor[n][i]*ade[n][i];
++				ade[n][i] *= c_int[n][i];
++				ade[n][i] += c_ext[n][i] * (field[fi[3*k+n]]-lor[n][i]);
++			}
++		}
++	}
++	else
++	{
++		for (unsigned int k=k0; k<k1; ++k)
++		{
++			const unsigned int i = idx[k];
++			for (unsigned int n=0; n<3; ++n)
++			{
++				ade[n][i] *= c_int[n][i];
++				ade[n][i] += c_ext[n][i] * field[fi[3*k+n]];
++			}
++		}
++	}
++}
++}
++
+ // the same per-position operations as DoPreVoltageUpdatesImpl, for the positions on x-lines [x0,x1)
+ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+ {
+@@ -372,38 +460,9 @@ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsig
+ 		if (m_Op_Ext_Lor->m_volt_ADE_On[o]==false) continue;
+ 		unsigned int k0, k1;
+ 		LineRange(o, x0, x1, k0, k1);
+-		const unsigned int* __restrict idx = m_SortedIdx[o].data();
+-		const unsigned int* __restrict fi = m_FloatIdx[o].data();
+-		FDTD_FLOAT* const* ade = volt_ADE[o];
+-		FDTD_FLOAT* const* v_int = m_Op_Ext_Lor->v_int_ADE[o];
+-		FDTD_FLOAT* const* v_ext = m_Op_Ext_Lor->v_ext_ADE[o];
+-		if (m_Op_Ext_Lor->m_volt_Lor_ADE_On[o])
+-		{
+-			FDTD_FLOAT* const* lor = volt_Lor_ADE[o];
+-			FDTD_FLOAT* const* v_lor = m_Op_Ext_Lor->v_Lor_ADE[o];
+-			for (unsigned int k=k0; k<k1; ++k)
+-			{
+-				const unsigned int i = idx[k];
+-				for (unsigned int n=0; n<3; ++n)
+-				{
+-					lor[n][i]+=v_lor[n][i]*ade[n][i];
+-					ade[n][i] *= v_int[n][i];
+-					ade[n][i] += v_ext[n][i] * (volt[fi[3*k+n]]-lor[n][i]);
+-				}
+-			}
+-		}
+-		else
+-		{
+-			for (unsigned int k=k0; k<k1; ++k)
+-			{
+-				const unsigned int i = idx[k];
+-				for (unsigned int n=0; n<3; ++n)
+-				{
+-					ade[n][i] *= v_int[n][i];
+-					ade[n][i] += v_ext[n][i] * volt[fi[3*k+n]];
+-				}
+-			}
+-		}
++		const bool L = m_Op_Ext_Lor->m_volt_Lor_ADE_On[o];
++		PreOrderK(volt, m_SortedIdx[o].data(), m_FloatIdx[o].data(), volt_ADE[o], m_Op_Ext_Lor->v_int_ADE[o], m_Op_Ext_Lor->v_ext_ADE[o],
++				  L ? volt_Lor_ADE[o] : NULL, L ? m_Op_Ext_Lor->v_Lor_ADE[o] : NULL, k0, k1);
+ 	}
+ }
+ 
+@@ -420,41 +479,71 @@ void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesLines(unsigned int x0, unsig
+ 		if (m_Op_Ext_Lor->m_curr_ADE_On[o]==false) continue;
+ 		unsigned int k0, k1;
+ 		LineRange(o, x0, x1, k0, k1);
+-		const unsigned int* __restrict idx = m_SortedIdx[o].data();
+-		const unsigned int* __restrict fi = m_FloatIdx[o].data();
+-		FDTD_FLOAT* const* ade = curr_ADE[o];
+-		FDTD_FLOAT* const* i_int = m_Op_Ext_Lor->i_int_ADE[o];
+-		FDTD_FLOAT* const* i_ext = m_Op_Ext_Lor->i_ext_ADE[o];
+-		if (m_Op_Ext_Lor->m_curr_Lor_ADE_On[o])
+-		{
+-			FDTD_FLOAT* const* lor = curr_Lor_ADE[o];
+-			FDTD_FLOAT* const* i_lor = m_Op_Ext_Lor->i_Lor_ADE[o];
+-			for (unsigned int k=k0; k<k1; ++k)
+-			{
+-				const unsigned int i = idx[k];
+-				for (unsigned int n=0; n<3; ++n)
+-				{
+-					lor[n][i]+=i_lor[n][i]*ade[n][i];
+-					ade[n][i] *= i_int[n][i];
+-					ade[n][i] += i_ext[n][i] * (curr[fi[3*k+n]]-lor[n][i]);
+-				}
+-			}
+-		}
+-		else
++		const bool L = m_Op_Ext_Lor->m_curr_Lor_ADE_On[o];
++		PreOrderK(curr, m_SortedIdx[o].data(), m_FloatIdx[o].data(), curr_ADE[o], m_Op_Ext_Lor->i_int_ADE[o], m_Op_Ext_Lor->i_ext_ADE[o],
++				  L ? curr_Lor_ADE[o] : NULL, L ? m_Op_Ext_Lor->i_Lor_ADE[o] : NULL, k0, k1);
++	}
++}
++
++// the box hooks: the line hooks' operations for the positions with y in [y0, y1)
++void Engine_Ext_LorentzMaterial::PreBox(bool volt, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	Operator_Ext_LorentzMaterial* op = m_Op_Ext_Lor;
++	const float* __restrict field = volt ? (const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data()
++										 : (const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data();
++	FDTD_FLOAT*** ade = volt ? volt_ADE : curr_ADE;
++	FDTD_FLOAT*** lor = volt ? volt_Lor_ADE : curr_Lor_ADE;
++	FDTD_FLOAT*** c_int = volt ? op->v_int_ADE : op->i_int_ADE;
++	FDTD_FLOAT*** c_ext = volt ? op->v_ext_ADE : op->i_ext_ADE;
++	FDTD_FLOAT*** c_lor = volt ? op->v_Lor_ADE : op->i_Lor_ADE;
++	const bool* on = volt ? op->m_volt_ADE_On : op->m_curr_ADE_On;
++	const bool* lor_on = volt ? op->m_volt_Lor_ADE_On : op->m_curr_Lor_ADE_On;
++	if (volt ? m_VoltMerged : m_CurrMerged)
++	{
++		const std::vector<int>& orders = volt ? m_VoltOrders : m_CurrOrders;
++		return BoxRuns::ForEach(m_BoxKey[orders[0]], x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
++								{PreMergedK(field, ade, lor, c_int, c_ext, c_lor, lor_on, orders, k0, k1);});
++	}
++	for (int o=0; o<m_Order; ++o)
++	{
++		if (on[o]==false) continue;
++		const bool L = lor_on[o];
++		BoxRuns::ForEach(m_BoxKey[o], x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
+ 		{
+-			for (unsigned int k=k0; k<k1; ++k)
+-			{
+-				const unsigned int i = idx[k];
+-				for (unsigned int n=0; n<3; ++n)
+-				{
+-					ade[n][i] *= i_int[n][i];
+-					ade[n][i] += i_ext[n][i] * curr[fi[3*k+n]];
+-				}
+-			}
+-		}
++			PreOrderK(field, m_SortedIdx[o].data(), m_FloatIdx[o].data(), ade[o], c_int[o], c_ext[o], L ? lor[o] : NULL,
++					  L ? c_lor[o] : NULL, k0, k1);
++		});
+ 	}
+ }
+ 
++void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_PV.on)
++		return PrePackedBox((const float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, x0, x1, y0, y1);
++	PreBox(true, x0, x1, y0, y1);
++}
++
++void Engine_Ext_LorentzMaterial::DoPreCurrentUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_PI.on)
++		return PrePackedBox((const float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, x0, x1, y0, y1);
++	PreBox(false, x0, x1, y0, y1);
++}
++
++void Engine_Ext_LorentzMaterial::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_PV.on)
++		return ApplyPackedBox((float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data(), m_PV, x0, x1, y0, y1);
++	Engine_Ext_Dispersive::Apply2VoltagesBox(x0, x1, y0, y1);
++}
++
++void Engine_Ext_LorentzMaterial::Apply2CurrentBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (m_PI.on)
++		return ApplyPackedBox((float*)((Engine_sse*)m_Eng)->f4_curr_ptr->data(), m_PI, x0, x1, y0, y1);
++	Engine_Ext_Dispersive::Apply2CurrentBox(x0, x1, y0, y1);
++}
++
+ template <typename EngType>
+ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdatesImpl(EngType* eng)
+ {
+diff --git a/FDTD/extensions/engine_ext_lorentzmaterial.h b/FDTD/extensions/engine_ext_lorentzmaterial.h
+index 9b7a4da..377ea17 100644
+--- a/FDTD/extensions/engine_ext_lorentzmaterial.h
++++ b/FDTD/extensions/engine_ext_lorentzmaterial.h
+@@ -42,6 +42,11 @@ public:
+ 	virtual void Apply2Current();
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
++	//! the box hooks: the line hooks' work for the positions with y in [y0, y1) (packed groups cut by the range lane by lane)
++	virtual void DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void DoPreCurrentUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void Apply2CurrentBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+ protected:
+ 	//! Packed groups (OPENEMS_ADE_PACKED=0: off), per side (voltages, currents) whose orders are merged
+@@ -68,10 +73,17 @@ protected:
+ 				   PackRefusal& r, uint64_t& need, uint64_t& used);
+ 	void PrePacked(const float* field, PackedSide& s, unsigned int x0, unsigned int x1);
+ 	void ApplyPacked(float* field, const PackedSide& s, unsigned int x0, unsigned int x1);
++	void PrePackedBox(const float* field, PackedSide& s, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	void ApplyPackedBox(float* field, const PackedSide& s, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	//! the Pre box hook of a side that is not packed (merged or order by order)
++	void PreBox(bool volt, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+ 	//! the merged DoPre*UpdatesLines() (see m_VoltMerged): per position the ADE update of every order
+ 	void PreMerged(const float* field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext,
+ 				   FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders, unsigned int x0, unsigned int x1);
++	//! PreMerged() for the sorted positions [k0, k1)
++	void PreMergedK(const float* field, FDTD_FLOAT*** ade, FDTD_FLOAT*** lor, FDTD_FLOAT*** c_int, FDTD_FLOAT*** c_ext,
++					FDTD_FLOAT*** c_lor, const bool* lor_on, const std::vector<int>& orders, unsigned int k0, unsigned int k1);
+ 
+ 	template <typename EngType>
+ 	void DoPreVoltageUpdatesImpl(EngType* eng);
+diff --git a/FDTD/extensions/engine_ext_mur_abc.cpp b/FDTD/extensions/engine_ext_mur_abc.cpp
+index 3a67d84..93306a5 100644
+--- a/FDTD/extensions/engine_ext_mur_abc.cpp
++++ b/FDTD/extensions/engine_ext_mur_abc.cpp
+@@ -65,6 +65,7 @@ Engine_Ext_Mur_ABC::Engine_Ext_Mur_ABC(Operator_Ext_Mur_ABC* op_ext) :
+ 
+ 	m_Fast = false;
+ 	m_FastChecked = false;
++	m_BoxOK = false;
+ 	m_OffsetNyP = m_OffsetNyPP = m_OffsetShift = 0;
+ 
+ 	SetNumberOfThreads(1);
+@@ -93,6 +94,7 @@ void Engine_Ext_Mur_ABC::SetupFast()
+ {
+ 	m_FastChecked = true;
+ 	m_Fast = false;
++	m_BoxOK = false;
+ 	if (m_Eng->GetType()!=Engine::SSE)
+ 		return;
+ 	ArrayLib::ArrayENG<f4vector>* V = ((Engine_sse*)m_Eng)->f4_volt_ptr;
+@@ -150,6 +152,13 @@ void Engine_Ext_Mur_ABC::SetupFast()
+ 	m_ScStart.assign(1, 0);
+ 	m_VecIndex.clear(); m_VecCoeffP.clear(); m_VecCoeffPP.clear();
+ 	m_ScIndex.clear(); m_ScCoeffP.clear(); m_ScCoeffPP.clear();
++	m_VecY.clear(); m_ScY.clear();
++	// the y of a face cell (i, j): pos[m_ny] = m_LineNr, pos[m_nyP] = i, pos[m_nyPP] = j
++	auto CellY = [&](unsigned int c) -> unsigned int
++	{
++		const unsigned int i = c/m_numLines[1], j = c%m_numLines[1];
++		return (m_ny==1) ? m_LineNr : ((m_nyP==1) ? i : j);
++	};
+ 	for (unsigned int x=0; x<NX; ++x)
+ 	{
+ 		std::vector<unsigned int>& cells = line[x];
+@@ -169,12 +178,15 @@ void Engine_Ext_Mur_ABC::SetupFast()
+ 				m_VecIndex.push_back(f/4);
+ 				m_VecCoeffP.push_back(p);
+ 				m_VecCoeffPP.push_back(pp);
++				// one f4vector: the four lanes are cells of one z-line, so one y
++				m_VecY.push_back(CellY(cells[n]));
+ 				n += 4;
+ 				continue;
+ 			}
+ 			m_ScIndex.push_back(f);
+ 			m_ScCoeffP.push_back(cP[cells[n]]);
+ 			m_ScCoeffPP.push_back(cPP[cells[n]]);
++			m_ScY.push_back(CellY(cells[n]));
+ 			++n;
+ 		}
+ 		m_VecStart.push_back(m_VecIndex.size());
+@@ -185,6 +197,13 @@ void Engine_Ext_Mur_ABC::SetupFast()
+ 	m_ScP.resize(m_ScIndex.size());
+ 	m_ScPP.resize(m_ScIndex.size());
+ 	m_Fast = true;
++	// box hooks: within an x-line the vectors and the cells must be in y order (the I-J-K-N layout keeps y above z)
++	m_BoxOK = true;
++	for (unsigned int x=0; x<NX; ++x)
++	{
++		m_BoxOK = m_BoxOK && std::is_sorted(m_VecY.begin()+m_VecStart[x], m_VecY.begin()+m_VecStart[x+1]);
++		m_BoxOK = m_BoxOK && std::is_sorted(m_ScY.begin()+m_ScStart[x], m_ScY.begin()+m_ScStart[x+1]);
++	}
+ }
+ 
+ namespace
+@@ -312,6 +331,91 @@ void Engine_Ext_Mur_ABC::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
+ 		d.Apply(k);
+ }
+ 
++// The box hooks: the vectors and cells of the line hooks whose y lies in [y0, y1), the same arithmetic (bit-identical).
++// A face cell reads the cell next to it along the face normal: on an x-face that is the x-line next to it (coupled
++// lines), on a z-face the same row, on a y-face the next row (coupled rows: the engine keeps both in one box).
++void Engine_Ext_Mur_ABC::BoxRange(unsigned int x, unsigned int y0, unsigned int y1, unsigned int& g0, unsigned int& g1, unsigned int& k0, unsigned int& k1) const
++{
++	const std::vector<unsigned int>::const_iterator vb = m_VecY.begin()+m_VecStart[x], ve = m_VecY.begin()+m_VecStart[x+1];
++	g0 = std::lower_bound(vb, ve, y0)-m_VecY.begin();
++	g1 = std::lower_bound(m_VecY.begin()+g0, ve, y1)-m_VecY.begin();
++	const std::vector<unsigned int>::const_iterator sb = m_ScY.begin()+m_ScStart[x], se = m_ScY.begin()+m_ScStart[x+1];
++	k0 = std::lower_bound(sb, se, y0)-m_ScY.begin();
++	k1 = std::lower_bound(m_ScY.begin()+k0, se, y1)-m_ScY.begin();
++}
++
++void Engine_Ext_Mur_ABC::DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (IsActive()==false) return;
++	if (y0>=y1) return;
++	MUR_LINE_DATA
++	const ptrdiff_t oS = m_OffsetShift/4;
++	x1 = std::min<unsigned int>(x1, m_VecStart.size()-1);
++	for (unsigned int x=x0; x<x1; ++x)
++	{
++		unsigned int g0, g1, k0, k1;
++		BoxRange(x, y0, y1, g0, g1, k0, k1);
++		for (unsigned int g=g0; g<g1; ++g)
++		{
++			const f4vector* e = E4 + m_VecIndex[g];
++			m_VecP[g].v  = e[oP+oS].v  - m_VecCoeffP[g].v  * e[oP].v;
++			m_VecPP[g].v = e[oPP+oS].v - m_VecCoeffPP[g].v * e[oPP].v;
++		}
++		for (unsigned int k=k0; k<k1; ++k)
++			d.Pre(k);
++	}
++}
++
++void Engine_Ext_Mur_ABC::DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (IsActive()==false) return;
++	if (y0>=y1) return;
++	MUR_LINE_DATA
++	const ptrdiff_t oS = m_OffsetShift/4;
++	x1 = std::min<unsigned int>(x1, m_VecStart.size()-1);
++	for (unsigned int x=x0; x<x1; ++x)
++	{
++		unsigned int g0, g1, k0, k1;
++		BoxRange(x, y0, y1, g0, g1, k0, k1);
++		for (unsigned int g=g0; g<g1; ++g)
++		{
++			const f4vector* e = E4 + m_VecIndex[g];
++			m_VecP[g].v  += m_VecCoeffP[g].v  * e[oP+oS].v;
++			m_VecPP[g].v += m_VecCoeffPP[g].v * e[oPP+oS].v;
++		}
++		for (unsigned int k=k0; k<k1; ++k)
++			d.Post(k);
++	}
++}
++
++void Engine_Ext_Mur_ABC::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	if (IsActive()==false) return;
++	if (y0>=y1) return;
++	MUR_LINE_DATA
++	x1 = std::min<unsigned int>(x1, m_VecStart.size()-1);
++	for (unsigned int x=x0; x<x1; ++x)
++	{
++		unsigned int g0, g1, k0, k1;
++		BoxRange(x, y0, y1, g0, g1, k0, k1);
++		for (unsigned int g=g0; g<g1; ++g)
++		{
++			f4vector* e = E4 + m_VecIndex[g];
++			e[oP].v  = m_VecP[g].v;
++			e[oPP].v = m_VecPP[g].v;
++		}
++		for (unsigned int k=k0; k<k1; ++k)
++			d.Apply(k);
++	}
++}
++
++void Engine_Ext_Mur_ABC::GetCoupledRows(std::vector<unsigned int>& rows) const
++{
++	// on a y-face the hooks read the row next to the face
++	if (m_ny==1)
++		rows.push_back(std::min<unsigned int>(m_LineNr, m_LineNr_Shift));
++}
++
+ void Engine_Ext_Mur_ABC::GetCoupledLines(std::vector<unsigned int>& lines) const
+ {
+ 	// on an x-face the hooks read the line next to the face
+diff --git a/FDTD/extensions/engine_ext_mur_abc.h b/FDTD/extensions/engine_ext_mur_abc.h
+index 196248a..bab915f 100644
+--- a/FDTD/extensions/engine_ext_mur_abc.h
++++ b/FDTD/extensions/engine_ext_mur_abc.h
+@@ -34,7 +34,7 @@ public:
+ 	virtual ~Engine_Ext_Mur_ABC();
+ 
+ 	virtual void SetNumberOfThreads(int nrThread);
+-	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Mur_ABC); return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS | TS_LOCAL : 0);}
++	virtual unsigned int GetUsedHooks() const {OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_Mur_ABC); return PRE_VOLT | POST_VOLT | APPLY_VOLT | (m_Fast ? LINE_HOOKS | TS_LOCAL : 0) | (m_Fast && m_BoxOK ? BOX_HOOKS : 0);}
+ 
+ 	virtual void DoPreVoltageUpdates() {Engine_Ext_Mur_ABC::DoPreVoltageUpdates(0);}
+ 	virtual void DoPreVoltageUpdates(int threadID);
+@@ -50,6 +50,11 @@ public:
+ 	virtual void DoPostVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 	virtual void GetCoupledLines(std::vector<unsigned int>& lines) const;
++	//! the box hooks: the vectors and cells of the line hooks with y in [y0, y1) (a y-face couples its row with the next)
++	virtual void DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	virtual void GetCoupledRows(std::vector<unsigned int>& rows) const;
+ 
+ protected:
+ 	template <typename EngType>
+@@ -96,6 +101,12 @@ protected:
+ 	std::vector<f4vector> m_VecCoeffP, m_VecCoeffPP, m_VecP, m_VecPP;
+ 	std::vector<unsigned int> m_ScStart, m_ScIndex;     //!< float index of component 0
+ 	std::vector<FDTD_FLOAT> m_ScCoeffP, m_ScCoeffPP, m_ScP, m_ScPP;
++	//! the y of every vector and single cell above (non-decreasing within an x-line: memory order), for the box hooks;
++	//! m_BoxOK false when they are not sorted (another field layout): no box hooks then
++	std::vector<unsigned int> m_VecY, m_ScY;
++	bool m_BoxOK;
++	//! the vectors [g0, g1) and cells [k0, k1) of the x-line x with y in [y0, y1)
++	void BoxRange(unsigned int x, unsigned int y0, unsigned int y1, unsigned int& g0, unsigned int& g1, unsigned int& k0, unsigned int& k1) const;
+ 	void SetupFast();
+ 	void DoPreVoltageUpdatesFast(int threadID);
+ 	void DoPostVoltageUpdatesFast(int threadID);
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index 0da35b6..75d8c2c 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -55,6 +55,7 @@ public:
+ 				LINE_HOOKS=128, //!< implements the *Lines() hooks below, for the fused sweep
+ 				TS_LOCAL=256,   //!< its line hooks also work while the threads are at different timesteps, see below
+ 				BOX_HOOKS=512,  //!< implements the *Box() hooks below, for the tiled sweep (see there)
++				Y_WRAP=1024,    //!< with BOX_HOOKS: a closed (periodic) y direction, row 0 is a copy of row NY-2 (see the *Box() hooks)
+ 				LEGACY_HOOKS=~0u};
+ 	//! Which of the six update hooks this extension implements (or'ed Hooks).
+ 	/*!
+@@ -114,6 +115,9 @@ public:
+ 	//! The lower line x of every pair (x, x+1) that one of the voltage line hooks couples: a hook on x that reads x+1,
+ 	//! or a hook on x+1 that reads x (e.g. a Mur ABC on an x-face). Both lines are then swept in one block by one thread.
+ 	virtual void GetCoupledLines(std::vector<unsigned int>& /*lines*/) const {}
++	//! The lower row y of every pair (y, y+1) that one of the voltage box hooks couples (BOX_HOOKS, see there): the
++	//! engine then never cuts the y direction between y and y+1.
++	virtual void GetCoupledRows(std::vector<unsigned int>& /*rows*/) const {}
+ 	//! TS_LOCAL extensions: how many timesteps its line hooks may run in one block of the tiled sweep (OPENEMS_TBLOCK),
+ 	//! where the x-lines of a block are up to that many timesteps minus one apart, whatever the thread count.
+ 	//! Unlimited by default; the steady-state detection allows one period.
+@@ -144,10 +148,18 @@ public:
+ 	    of scanning them (see engine_ext_boxruns.h).
+ 	  The box mode runs only when every extension that uses a hook declares BOX_HOOKS (one extension without them puts
+ 	  the whole sweep back on the hook stages: mixing would change the order of the extensions for some cells).
+-	  Not supported yet: hooks that couple two y lines (e.g. a Mur ABC on a y-face couples the pairs (0, 1) and
+-	  (NY-2, NY-1)). Such an extension would need the engine to keep those pairs inside one thread's y range, as
+-	  TileHookShare() does for the coupled x-lines of the hook stages; the y cuts are made in one place
+-	  (Engine_Multithread::TileYRange) for that reason.
++	  Coupled y lines: a voltage box hook may read and write the cells of the other row of a pair (r, r+1) that the
++	  extension lists in GetCoupledRows() (a Mur ABC on a y-face: (0, 1) or (NY-2, NY-1)); the engine never cuts the y
++	  direction between r and r+1, neither into y-bands nor into the threads' shares of the tiled sweep (the cut moves
++	  down by one line, or up from 1 to 2; Engine_Multithread::YCut). Current box hooks may not couple rows.
++	  Y_WRAP (a closed alpha direction of a cylindrical mesh): the voltage Post hook writes row 0 from row NY-2, the
++	  current Post hook row NY-2 from row 0, and the hook of r=0 (x-line 0) reads and writes every row of its x-line. No
++	  cut is valid for that inside a band order that runs the rows in ascending order (row 0's currents need row NY-2's
++	  final voltages, row 1's voltages the old currents of row 0), so the y-bands of such a sweep run row 0 last: the
++	  voltages and currents of row 0 (with all their hooks) belong to the last band, which always holds the rows NY-2
++	  and NY-1, and the voltage and current hooks of that band are called for both boxes extension by extension, row 0
++	  first; the block of x-line 0 runs in whole planes. These hooks write and read rows of other boxes, so the tiled
++	  sweep (whose threads run disjoint y ranges at the same time) never uses box mode with a Y_WRAP extension.
+ 	  */
+ 	virtual void DoPreVoltageUpdatesBox(unsigned int /*x0*/, unsigned int /*x1*/, unsigned int /*y0*/, unsigned int /*y1*/) {}
+ 	virtual void DoPostVoltageUpdatesBox(unsigned int /*x0*/, unsigned int /*x1*/, unsigned int /*y0*/, unsigned int /*y1*/) {}
+-- 
+2.54.0 (Apple Git-157)
+

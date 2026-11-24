@@ -26,7 +26,7 @@
 \title{\vspace{-1cm}fdtdKit: taking openEMS towards the memory ceiling of an Apple~M5\\
 \large A bit-identical speed-up of the EC-FDTD engine, and two run-length levers on the modelling side}
 \author{Angel Martinez\\ University of Texas at Austin}
-\date{Work of 2026-10-28 to 2026-11-15; draft of 2026-11-16}
+\date{Work of 2026-10-28 to 2026-11-24; draft of 2026-11-24}
 % PDF metadata: keep pdfauthor in step with the name in \author
 \hypersetup{pdftitle={fdtdKit: taking openEMS towards the memory ceiling of an Apple M5}, pdfauthor={Angel Martinez}}
 
@@ -72,7 +72,7 @@ bytes per cell, an allocation-placement valley, the boundary and dispersive-mate
 GPU's diamond tiles), and what did not work, and repeat the main measurements, as a set of their own, on a second
 machine, an M5 Pro Mac mini, where the CPU engine of cg31 runs 2.7 to 14.1$\times$ as fast as stock at stock's best thread
 count, and time three later patches (0041 to 0043) there, with a paired comparison against upstream master's new CPU engine
-(ahead at 1~million cells, level to 14\,\% ahead at 8~million on empty and PML grids (0.93$\times$ on the PML grid at 5 threads), behind on an 8-million-cell dispersive case). A third machine, an M5 Max Mac Studio, was measured as a set of its own with the build of patches 0001 to 0043, installed there on 2026-11-14: its CPU engine runs 3.1 to 16.3$\times$ as fast as stock at stock's best thread count, and the Metal engine 1.20 to 2.14$\times$ the CPU engine at 18 threads. Because on the M5 the memory bus of one machine bounds the cell rate on large grids (on the M5 Pro it held back only the largest grid
+(ahead at 1~million cells, level to 14\,\% ahead at 8~million on empty and PML grids (0.93$\times$ on the PML grid at 5 threads), behind on an 8-million-cell dispersive case). A third machine, an M5 Max Mac Studio, was measured as a set of its own with the build of patches 0001 to 0043, installed there on 2026-11-14: its CPU engine runs 3.1 to 16.3$\times$ as fast as stock at stock's best thread count, and the Metal engine 1.20 to 2.14$\times$ the CPU engine at 18 threads. On that machine, upstream's own benchmark showed the CPU engine behind upstream's new CPU engine at 30~million cells; six further patches (0044 to 0049, the fork's head, 8af6c4c, not installed) cut the y-z planes of the fused sweep into bands that stay in the cache and pack the dispersive hooks by z-vector, and lead upstream's engines on five of six cases at 30~million cells (1.32 to 1.48$\times$ its earlier master), with the dispersive case level with upstream's newest engine (Section~\ref{sec:large}). Because on the M5 the memory bus of one machine bounds the cell rate on large grids (on the M5 Pro it held back only the largest grid
 measured, 16.8~million cells), we also
 outline, without measurements, how a domain-decomposed engine (openEMS has none today) could spread one model over a
 Thunderbolt-connected cluster of Mac mini or Mac Studio machines, each adding its own unified memory and bus. The
@@ -90,6 +90,7 @@ the checks (\code{emskit fdtd}) are published at \repourl.
 \input{sec_cg31}
 \input{sec_m5pro}
 \input{sec_studio}
+\input{sec_large}
 \input{sec_positioning}
 \input{sec_closing}
 

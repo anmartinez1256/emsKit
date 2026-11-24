@@ -2,7 +2,7 @@
 
 On 2026-11-14 the work moved to a third machine, a Mac Studio with an Apple M5 Max, and on 2026-11-15 the build of
 Section~\ref{sec:cg33} was measured on it, with the same library files as on the other two machines, not rebuilt:
-cg33 is the fork's commit 13350ca (patches 0001--0043, the head; the CPU engine \code{multithreaded} and the GPU engine
+cg33 is the fork's commit 13350ca (patches 0001--0043, the head of that date, since then followed by the six patches of Section~\ref{sec:large}; the CPU engine \code{multithreaded} and the GPU engine
 \code{metal-diamond}), cg31 is ff2538a (patches 0001--0039) and stock is v0.37.0
 (\code{results/studio\_speed\_set\_2026-11-15.txt}; the scripts are in \code{scripts/studio/}). These numbers form a
 third set. They are compared only with each other: no table of this section holds a number of the M5 MacBook Air or of
@@ -238,6 +238,7 @@ identical to the fused sweep's at 6 threads. The models are those of Table~\ref{
 \end{table}
 
 \subsection*{What this set shows}
+Upstream's own benchmark was run on this machine too, at three sizes; where the build of this section fell behind and what patches 0044 to 0049 did about it is the subject of Section~\ref{sec:large}.
 On this chip the CPU engine of cg33 is faster at 18 threads than at 6 or 12 on five of six models (the patch tutorial's best is 6
 threads; the sweep of Table~\ref{tab:studiothreads} puts patch x5's best at 10) and
 runs 3.08 to 16.3$\times$ stock's best, while stock peaks at 2 to 12 threads and slows down beyond; the Metal engine is 1.20 to

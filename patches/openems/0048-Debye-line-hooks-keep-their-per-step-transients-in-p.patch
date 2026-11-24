@@ -1,0 +1,797 @@
+From f7cae412c1e11805062cff8f48cca1eca5c63a97 Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 02:13:34 -0600
+Subject: [PATCH 48/49] Debye line hooks keep their per-step transients in
+ per-thread scratch
+
+A packed Debye group stored, beside the state W of its poles, the
+pre-sum its Pre hook hands to its Post hook and the correction its Post
+hook hands to its Apply hook: 24 of 12*(P+2) floats a group that were
+written to and read back from the large block every timestep only to
+cross two calls.
+
+Engine_Extension gets RANGE_LOCAL and SetRangeLocal(): after every plan
+the multithreaded engine tells the extensions that declare it whether
+the plan calls each Pre, Post, Apply of one range (x-line block or
+x-y box) back to back on one thread, and the widest range. It does for
+the fused sweep in line blocks, its y-bands with an open y direction
+and the box mode of the tiled sweep; not for the unfused plan, the
+tiled sweep's hook stages or y-bands of a closed y direction. While
+granted, the Debye blocks hold W only (moved together inside the same
+allocation) and the two transients live in a scratch slice of the
+calling thread, 24 floats a group of the range; a check of thread,
+width and call order stops the run if the engine breaks the grant.
+Per-lane arithmetic and its order are unchanged; results stay
+bit-identical. Lorentz and Drude state is read again in the next
+timestep and is left as it was.
+
+OPENEMS_ADE_SCRATCH=0 keeps the stored layout; =alt (test) withdraws
+and grants again before every run of timesteps.
+
+Checked bit-identical against the commit before and against v0.37.0:
+501 box configurations in three variants (1 to 4 poles, lanes 4 to 1
+and a split mask, both group kinds, every driver, 1 to 6 threads,
+closed cylinder), the dispersive check at 50 k and 1 M cells, five
+models without Debye, the Debye check and the validation suite; seven
+planted faults each caught.
+
+Mac Studio (M5 Max), upstream bench.py with a source, dispersive case,
+18 threads, MC/s before -> after: 30 M cells 2969 -> 3266, 8 M cells
+2964 -> 3156, 1 M cells 3923 -> 4054. At 8 M cells and 6 threads (no
+y-bands) 1920 -> 1860. Antenna case 1.00 to 1.01, the two boards 1.00
+and 1.01 at 18 threads.
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp                  |  73 ++++++
+ FDTD/engine_multithread.h                    |  12 +
+ FDTD/extensions/engine_ext_debyematerial.cpp | 258 +++++++++++++++----
+ FDTD/extensions/engine_ext_debyematerial.h   |  35 ++-
+ FDTD/extensions/engine_ext_dispersive.cpp    |   7 +
+ FDTD/extensions/engine_ext_dispersive.h      |   7 +-
+ FDTD/extensions/engine_extension.cpp         |  13 +
+ FDTD/extensions/engine_extension.h           |  31 +++
+ 8 files changed, 388 insertions(+), 48 deletions(-)
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index b95c1d3..bd6f1c1 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -92,6 +92,8 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_TileK = m_TileW = 0;
+ 	m_TileHooksAll = false;
+ 	m_TileBox = false;
++	m_RangeLocal = m_RangeLocalOn = m_RangeLocalAlt = false;
++	m_RangeLocalLines = 0;
+ 	m_UseFlags = false;
+ 	m_FlagSpin = std::chrono::microseconds(0);
+ 	m_SweepDone = 0;
+@@ -480,6 +482,11 @@ double Engine_Multithread::RunTimesteps(unsigned int n)
+ {
+ 	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+ 	m_iterTS = n;
++	if (m_RangeLocalAlt && m_RangeLocal)   // test switch OPENEMS_ADE_SCRATCH=alt (the threads wait at the start barrier)
++	{
++		m_RangeLocalOn = !m_RangeLocalOn;
++		TellRangeLocal();
++	}
+ 	const bool flags = m_Fused && m_UseFlags && !m_Tiled;
+ 	if (flags)   // the flags count the timesteps of this call
+ 		for (unsigned int t=0; t<m_numThreads; ++t)
+@@ -686,6 +693,70 @@ void Engine_Multithread::BuildHookPlan()
+ 		m_IncNumTS_AtCurrBarrier = true;
+ 
+ 	SetupFused();
++	GrantRangeLocal();
++}
++
++void Engine_Multithread::GrantRangeLocal()
++{
++	// Which drivers call the hook triple Pre, Post, Apply of one range back to back on one thread (Engine_Extension::
++	// SetRangeLocal), by the plan SetupFused() just built:
++	//  - unfused plan (RunHooks): whole-grid hooks (on thread 0 for the dispersive extensions) -> no;
++	//  - fused sweep without y-bands (FusedTimestep, FusedTimestepFlags): per x-line block FusedHooks(0), the update,
++	//    FusedHooks(1), FusedHooks(2), then the currents of the lines behind it (FusedCurrents: Pre, update, Post, Apply of
++	//    their range, as is the line before the slab after the sweep) -> yes, ranges = the blocks;
++	//  - y-bands (FusedBands): per band and block RunBoxHooks(0), update, (1), (2) on the band's box, then the same for
++	//    the currents' box; the last block(s) of a slab in whole planes through FusedHooks -> yes; but with a closed y
++	//    direction the last band calls RunBoxHooks2 (Pre of two boxes, then Post of both, then Apply of both) -> no;
++	//  - tiled sweep in box mode (TiledRun): per task Pre, update, Post, Apply of the thread's box -> yes, ranges = tasks;
++	//  - tiled sweep with hook stages: Post and Apply of a task and Pre of the next one in other shares -> no.
++	std::string why;
++	unsigned int lines = 0;
++	if (!m_Fused)
++		why = "no fused sweep, whole-grid hooks";
++	else if (m_Tiled && !m_TileBox)
++		why = "the tiled sweep's hook stages";
++	else if (m_Tiled)
++	{
++		for (size_t d=0; d<m_TilePlan.size(); ++d)
++			for (size_t i=0; i<m_TilePlan[d].size(); ++i)
++				lines = std::max(lines, m_TilePlan[d][i].x1-m_TilePlan[d][i].x0);
++	}
++	else if (m_YBand && m_YWrap)
++		why = "y-bands of a closed y direction, two boxes per hook in the last band";
++	else
++		for (size_t b=0; b+1<m_Blocks.size(); ++b)
++			lines = std::max(lines, m_Blocks[b+1]-m_Blocks[b]);
++	if (why.empty() && (lines==0))
++		why = "no ranges";
++	m_RangeLocal = why.empty();
++	m_RangeLocalLines = m_RangeLocal ? lines : 0;
++	m_RangeLocalOn = m_RangeLocal;
++	const char* env = getenv("OPENEMS_ADE_SCRATCH");
++	m_RangeLocalAlt = env && (strcmp(env, "alt")==0);
++	bool any = false;
++	for (size_t k=0; k<m_Eng_exts.size(); ++k)
++	{
++		const unsigned int used = m_Eng_exts.at(k)->GetUsedHooks();
++		any = any || ((used!=Engine_Extension::LEGACY_HOOKS) && (used & Engine_Extension::RANGE_LOCAL));
++	}
++	const std::string msg = !any ? "" : (m_RangeLocal ? "range-local hooks granted (ranges of up to " + std::to_string(lines) + " x-lines" +
++					  (m_RangeLocalAlt ? ", withdrawn and granted again before every run: OPENEMS_ADE_SCRATCH=alt)" : ")")
++					: "range-local hooks not granted (" + why + ")");
++	if (!msg.empty() && (msg!=m_RangeLocalMsg) && (g_settings.GetVerboseLevel()>1))
++		cout << "Multithreaded engine: " << msg << endl;
++	m_RangeLocalMsg = msg;
++	TellRangeLocal();
++}
++
++void Engine_Multithread::TellRangeLocal()
++{
++	for (size_t k=0; k<m_Eng_exts.size(); ++k)
++	{
++		Engine_Extension* ext = m_Eng_exts.at(k);
++		const unsigned int used = ext->GetUsedHooks();
++		if ((used!=Engine_Extension::LEGACY_HOOKS) && (used & Engine_Extension::RANGE_LOCAL))
++			ext->SetRangeLocal(m_RangeLocalOn, m_RangeLocalOn ? m_RangeLocalLines : 0, m_numThreads);
++	}
+ }
+ 
+ void Engine_Multithread::SetupFused()
+@@ -1759,6 +1830,8 @@ void thread::operator()()
+ 
+ 	// speed up the calculation of denormal floating point values (flush-to-zero)
+ 	Denormal::Disable();
++	// the index the extensions' per-thread scratch is kept by (Engine_Extension::SetRangeLocal)
++	Engine_Extension::SetHookThread(m_threadID);
+ #ifdef __APPLE__
+ 	// engine threads at QOS_CLASS_USER_INITIATED: new threads start at QOS_CLASS_DEFAULT, which lets macOS park
+ 	// them on E-cores or deprioritise them against foreground apps. OPENEMS_QOS=0 off, 2 = user-interactive.
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index 75a0454..f9ddaf1 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -213,6 +213,18 @@ protected:
+ 	//! [s[0], s[1]) and [s[2], s[3]), the second one only when the two ranges have a gap between them
+ 	void TileHookShare(int threadID, unsigned int p0, unsigned int p1, unsigned int q0, unsigned int q1, unsigned int s[4]) const;
+ 	void BalanceTiled();
++	//! Range-local transients (Engine_Extension::RANGE_LOCAL, SetRangeLocal): after every plan (BuildHookPlan) the
++	//! extensions that declare RANGE_LOCAL learn whether the plan calls each of their hook triples Pre, Post, Apply of one
++	//! range back to back on one thread (m_RangeLocal), and the widest range in x-lines (m_RangeLocalLines)
++	bool m_RangeLocal;
++	unsigned int m_RangeLocalLines;
++	bool m_RangeLocalOn;   //!< what the extensions were told last
++	//! OPENEMS_ADE_SCRATCH=alt (test switch): a granted plan is withdrawn and granted again before every run of timesteps,
++	//! so the extensions change their storage between runs (their transients are dead there)
++	bool m_RangeLocalAlt;
++	std::string m_RangeLocalMsg;
++	void GrantRangeLocal();
++	void TellRangeLocal();
+ 	void ReportFused(const std::string& msg);
+ 	void FusedTimestep(int threadID);
+ 
+diff --git a/FDTD/extensions/engine_ext_debyematerial.cpp b/FDTD/extensions/engine_ext_debyematerial.cpp
+index 1003d60..21c7e60 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.cpp
++++ b/FDTD/extensions/engine_ext_debyematerial.cpp
+@@ -19,15 +19,22 @@
+ #include "operator_ext_debyematerial.h"
+ #include "FDTD/engine_sse.h"
+ #include "tools/global.h"
++#include <algorithm>
+ #include <cstdlib>
++#include <cstring>
+ #include <iostream>
+ #include <new>
++#include <sstream>
+ 
+ Engine_Ext_DebyeMaterial::Engine_Ext_DebyeMaterial(Operator_Ext_DebyeMaterial* op_ext_debye) : Engine_Ext_Dispersive(op_ext_debye)
+ {
+ 	m_Op_Ext_Deb = op_ext_debye;
+ 	m_Packed = false;
+ 	m_BlockStride = 0;
++	m_WStride = 0;
++	m_RangeLocal = false;
++	m_ScratchSlice = 0;
++	m_ScratchLines = m_ScratchThreads = 0;
+ 	// the base allocated volt_ADE[0], which carries the joint correction
+ 	unsigned int count = m_Op_Ext_Deb->m_LM_Count.at(0);
+ 
+@@ -152,6 +159,12 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 	m_Packed = false;
+ 	std::vector<float>().swap(m_Block);
+ 	m_Coef = CoefSets();
++	m_RangeLocal = false;
++	std::vector<float>().swap(m_Scratch);
++	std::vector<unsigned int>().swap(m_ScratchHdr);
++	m_ScratchSlice = 0;
++	m_ScratchLines = m_ScratchThreads = 0;
++	m_RangeMsg.clear();
+ #if defined(__GNUC__) || defined(__clang__)
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+ 	// Debye has voltage ADE of order 0 only; the packed hooks replace exactly those
+@@ -167,6 +180,7 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ 	}
+ 	const size_t groups = m_GroupX.size();
+ 	m_BlockStride = 12*(P+2);
++	m_WStride = m_BlockStride;   // the stored layout until the engine grants range-local hooks (SetRangeLocal)
+ 	const unsigned int cstride = 12*(2*P+1);
+ 	const uint64_t base = (uint64_t)groups*m_BlockStride*sizeof(float) + GroupBytes();
+ 	const uint64_t used = PackedBytesOfOthers();
+@@ -262,48 +276,49 @@ void Engine_Ext_DebyeMaterial::SetupPacked()
+ #if defined(__GNUC__) || defined(__clang__)
+ namespace
+ {
+-// one group of PrePacked() (state st, coefficients c, field through fl, P poles): W = v_relax*W + v_drive*V, pre += W - W_old
+-template <class FL> inline BOXRUNS_INLINE void DebPreGroup(const FL& fl, float* __restrict st, const float* __restrict c, unsigned int P)
++// one group of PrePacked() (W state w, transients tr, coefficients c, field through fl, P poles): W = v_relax*W + v_drive*V,
++// pre += W - W_old; pre[n] goes to tr + 4*n (stored layout: tr = the block + 12*P, i.e. at 4*(3P+n) as before)
++template <class FL> inline BOXRUNS_INLINE void DebPreGroup(const FL& fl, float* __restrict w, float* __restrict tr, const float* __restrict c, unsigned int P)
+ {
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+ 		const float* __restrict cn = c + 4*n*(2*P+1);
+-		float* __restrict w_ = st + 4*n*P;
++		float* __restrict w_ = w + 4*n*P;
+ 		const v4sf v = fl.Load(n);
+ 		v4sf pre = {0.0f, 0.0f, 0.0f, 0.0f};
+ 		for (unsigned int o=0; o<P; ++o)
+ 		{
+-			const v4sf w = Load4(w_+4*o);
+-			const v4sf W = Load4(cn+4*o)*w + Load4(cn+4*(P+o))*v;
+-			pre += W - w;
++			const v4sf wo = Load4(w_+4*o);
++			const v4sf W = Load4(cn+4*o)*wo + Load4(cn+4*(P+o))*v;
++			pre += W - wo;
+ 			Store4(w_+4*o, W);
+ 		}
+-		Store4(st+4*(3*P+n), pre);
++		Store4(tr+4*n, pre);
+ 	}
+ }
+ 
+-// one group of PostPacked(): V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
+-template <class FL> inline BOXRUNS_INLINE void DebPostGroup(const FL& fl, float* __restrict st, const float* __restrict c, unsigned int P)
++// one group of PostPacked(): V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V; correction[n] at tr + 4*(3+n)
++template <class FL> inline BOXRUNS_INLINE void DebPostGroup(const FL& fl, float* __restrict w, float* __restrict tr, const float* __restrict c, unsigned int P)
+ {
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+ 		const float* __restrict cn = c + 4*n*(2*P+1);
+-		float* __restrict w_ = st + 4*n*P;
++		float* __restrict w_ = w + 4*n*P;
+ 		const v4sf v_raw = fl.Load(n);
+-		const v4sf v_n = (v_raw - Load4(st+4*(3*P+n))) * Load4(cn+4*(2*P));
+-		Store4(st+4*(3*P+3+n), v_raw - v_n);
++		const v4sf v_n = (v_raw - Load4(tr+4*n)) * Load4(cn+4*(2*P));
++		Store4(tr+4*(3+n), v_raw - v_n);
+ 		for (unsigned int o=0; o<P; ++o)
+ 			Store4(w_+4*o, Load4(w_+4*o) + Load4(cn+4*(P+o))*v_n);
+ 	}
+ }
+ 
+ // one position group of ApplyPacked(): V -= correction for the lanes [l0, l1) (four lanes as a vector)
+-inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __restrict st, const unsigned int* __restrict f, unsigned int P,
+-						  unsigned int l0, unsigned int l1)
++inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __restrict tr, const unsigned int* __restrict f,
++										 unsigned int l0, unsigned int l1)
+ {
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+-		const float* c = st + 4*(3*P+3+n);
++		const float* c = tr + 4*(3+n);
+ 		const unsigned int* fn = f + 4*n;
+ 		if ((l0==0) && (l1==4))
+ 		{
+@@ -321,40 +336,74 @@ inline BOXRUNS_INLINE void DebApplyGroup(float* __restrict volt, const float* __
+ }
+ 
+ // one vector group of ApplyPacked(): the f4vector p (components cs floats apart) -= correction; lanes outside the mask keep their bits
+-inline BOXRUNS_INLINE void DebApplyVec(float* __restrict p, unsigned int cs, ade_v4i mask, const float* __restrict st, unsigned int P)
++inline BOXRUNS_INLINE void DebApplyVec(float* __restrict p, unsigned int cs, ade_v4i mask, const float* __restrict tr)
+ {
+ 	for (unsigned int n=0; n<3; ++n)
+ 	{
+ 		float* q = p + n*cs;
+ 		const v4sf old = Load4(q);
+-		const v4sf v = old - Load4(st+4*(3*P+3+n));
++		const v4sf v = old - Load4(tr+4*(3+n));
+ 		Store4(q, AdeSelect(mask, v, old));
+ 	}
+ }
++
++// a broken promise of the range-local grant (Engine_Extension::SetRangeLocal): the scratch would hand wrong transients on
++__attribute__((noinline, cold, noreturn)) void RangeFault(const std::string& name, const char* what, int hook, unsigned int t, unsigned int x0,
++														   unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	static const char* hn[3] = {"Pre", "Post", "Apply"};
++	std::cerr << name << ": range-local hooks: " << what << " (" << hn[hook] << " hook on thread " << t << ", x [" << x0 << ", " << x1
++			  << "), y [" << y0 << ", " << y1 << ")); the engine broke its grant, stopping" << std::endl;
++	std::abort();
++}
++}
++
++float* Engine_Ext_DebyeMaterial::RangeSlots(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{
++	const unsigned int t = GetHookThread();
++	if (t>=m_ScratchThreads)
++		RangeFault(GetExtensionName(), "a thread outside the grant", hook, t, x0, x1, y0, y1);
++	if ((x1<x0) || (x1-x0>m_ScratchLines))
++		RangeFault(GetExtensionName(), "a range wider than the grant", hook, t, x0, x1, y0, y1);
++	// Pre needs no open range, Post the range of the Pre before it, Apply the range of the Post before it
++	unsigned int* h = &m_ScratchHdr[(size_t)t*32];
++	if ((h[0]!=(unsigned int)hook) || ((hook>0) && ((h[1]!=x0) || (h[2]!=x1) || (h[3]!=y0) || (h[4]!=y1))))
++		RangeFault(GetExtensionName(), hook==0 ? "a Pre hook before the Apply hook of the range before" : "not the range of the Pre hook before",
++				   hook, t, x0, x1, y0, y1);
++	h[0] = (hook==2) ? 0 : (unsigned int)hook+1;
++	h[1] = x0; h[2] = x1; h[3] = y0; h[4] = y1;
++	return &m_Scratch[(size_t)t*m_ScratchSlice];
++}
++
++// the transients in the stored blocks: at 12*P in the block of every group
++Engine_Ext_DebyeMaterial::TrPtr Engine_Ext_DebyeMaterial::StoredTr()
++{
++	const TrPtr t = {m_Block.data() + 12*m_Op_Ext_Deb->m_PoleCount, m_BlockStride, 0};
++	return t;
+ }
+ 
+-// hook 0 = Pre, 1 = Post, 2 = Apply of the groups [g0, g1) (vector groups: whole groups)
+-BOXRUNS_INLINE void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned int g0, unsigned int g1)
++// hook 0 = Pre, 1 = Post, 2 = Apply of the groups [g0, g1) (vector groups: whole groups); W of group g at m_Block + g*m_WStride
++BOXRUNS_INLINE void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned int g0, unsigned int g1, const TrPtr& tr)
+ {
+ 	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+ 	const CoefPtr cp(m_Coef);
+ 	float* blk = m_Block.data();
+-	const size_t bs = m_BlockStride;
++	const size_t ws = m_WStride;
+ 	if (m_VecGroups)
+ 	{
+ 		const unsigned int cs = m_CompStride;
+ 		for (unsigned int g=g0; g<g1; ++g)
+ 		{
+ 			if (hook==2)
+-				DebApplyVec(volt + m_GroupBase[g], cs, AdeLaneMask(m_GroupMask[g]), blk + g*bs, P);
++				DebApplyVec(volt + m_GroupBase[g], cs, AdeLaneMask(m_GroupMask[g]), tr(g));
+ 			else
+ 			{
+ 				const AdeVector fl = {volt + m_GroupBase[g], cs, AdeLaneMask(m_GroupMask[g])};
+ 				if (hook==0)
+-					DebPreGroup(fl, blk + g*bs, cp(g), P);
++					DebPreGroup(fl, blk + g*ws, tr(g), cp(g), P);
+ 				else
+-					DebPostGroup(fl, blk + g*bs, cp(g), P);
++					DebPostGroup(fl, blk + g*ws, tr(g), cp(g), P);
+ 			}
+ 		}
+ 		return;
+@@ -363,59 +412,88 @@ BOXRUNS_INLINE void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned in
+ 	{
+ 		const unsigned int* f = &m_GroupFi[12*(size_t)g];
+ 		if (hook==2)
+-			DebApplyGroup(volt, blk + g*bs, f, P, 0, m_GroupLanes[g]);
++			DebApplyGroup(volt, tr(g), f, 0, m_GroupLanes[g]);
+ 		else
+ 		{
+ 			const AdeGather fl = {volt, f};
+ 			if (hook==0)
+-				DebPreGroup(fl, blk + g*bs, cp(g), P);
++				DebPreGroup(fl, blk + g*ws, tr(g), cp(g), P);
+ 			else
+-				DebPostGroup(fl, blk + g*bs, cp(g), P);
++				DebPostGroup(fl, blk + g*ws, tr(g), cp(g), P);
+ 		}
+ 	}
+ }
+ 
+-// the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
+-void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
++// the line hooks (whole-grid hooks: x [0, ~0u), never while range-local) of the groups on the x-lines [x0, x1)
++void Engine_Ext_DebyeMaterial::PackedLines(int hook, unsigned int x0, unsigned int x1)
+ {
+ 	unsigned int g0, g1;
++	if (!m_RangeLocal)
++	{
++		GroupRange(x0, x1, g0, g1);
++		return PackedGroups(hook, g0, g1, StoredTr());
++	}
++	float* s = RangeSlots(hook, x0, x1, 0, ~0u);
+ 	GroupRange(x0, x1, g0, g1);
+-	PackedGroups(0, g0, g1);
++	if (24*(size_t)(g1-g0)>m_ScratchSlice)
++		RangeFault(GetExtensionName(), "more groups than the scratch holds", hook, GetHookThread(), x0, x1, 0, ~0u);
++	const TrPtr tr = {s, 24, g0};
++	PackedGroups(hook, g0, g1, tr);
++}
++
++// the operations of DoPreVoltageUpdatesLines() per lane: W = v_relax*W + v_drive*V, pre += W - W_old
++void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1)
++{
++	PackedLines(0, x0, x1);
+ }
+ 
+ // the operations of DoPostVoltageUpdatesLines() per lane: V = (V_raw - pre)*v_solve, correction = V_raw - V, W += v_drive*V
+ void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1)
+ {
+-	unsigned int g0, g1;
+-	GroupRange(x0, x1, g0, g1);
+-	PackedGroups(1, g0, g1);
++	PackedLines(1, x0, x1);
+ }
+ 
+ // the operation of Apply2VoltagesLines() per lane: V -= correction (only the used lanes are written)
+ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1)
+ {
+-	unsigned int g0, g1;
+-	GroupRange(x0, x1, g0, g1);
+-	PackedGroups(2, g0, g1);
++	PackedLines(2, x0, x1);
+ }
+ 
+ // the box version: vector groups whole (a y range never cuts one); position groups as above, a group cut by the y range only
+-// on its lanes in the range (CutGroup on its state)
++// on its lanes in the range (CutGroup on its W, or on its whole block in the stored layout). Range-local: the groups of the
++// box take the slots of this thread's scratch in the order of the loop, the same for the Pre, Post and Apply of one box
++// (a cut group's slot holds four lanes, of which the lanes of the range are the ones written back and applied).
+ void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {
++	float* s = m_RangeLocal ? RangeSlots(hook, x0, x1, y0, y1) : NULL;
++	size_t slot = 0;
+ 	if (m_VecGroups)
+-		return ForBoxGroups(x0, x1, y0, y1, [&](unsigned int ga, unsigned int gb) {PackedGroups(hook, ga, gb);});
++		return ForBoxGroups(x0, x1, y0, y1, [&](unsigned int ga, unsigned int gb)
++		{
++			if (!s)
++				return PackedGroups(hook, ga, gb, StoredTr());
++			const TrPtr tr = {s + 24*slot, 24, ga};
++			slot += gb-ga;
++			if (24*slot>m_ScratchSlice)
++				RangeFault(GetExtensionName(), "more groups than the scratch holds", hook, GetHookThread(), x0, x1, y0, y1);
++			PackedGroups(hook, ga, gb, tr);
++		});
+ 	float* __restrict volt = (float*)((Engine_sse*)m_Eng)->f4_volt_ptr->data();
+ 	const unsigned int P = m_Op_Ext_Deb->m_PoleCount;
+ 	const CoefPtr cp(m_Coef);
++	const unsigned int ws = m_WStride;
+ 	BoxRuns::ForEach(m_BoxKey[0], x0, x1, y0, y1, [&](unsigned int ka, unsigned int kb)
+ 	{
+ 		ForGroupLanes(ka, kb, [&](unsigned int g, unsigned int l0, unsigned int l1)
+ 		{
+-			float* b = &m_Block[(size_t)g*m_BlockStride];
++			float* b = &m_Block[(size_t)g*ws];
++			// the group's transients: in its block (stored), or the next slot; in a CutGroup copy of a stored block at 12*P
++			float* trs = s ? s + 24*(slot++) : NULL;
++			if (s && (24*slot>m_ScratchSlice))
++				RangeFault(GetExtensionName(), "more groups than the scratch holds", hook, GetHookThread(), x0, x1, y0, y1);
+ 			const unsigned int* f = &m_GroupFi[12*(size_t)g];
+ 			if (hook==2)
+-				return DebApplyGroup(volt, b, f, P, l0, l1);
++				return DebApplyGroup(volt, s ? trs : b + 12*P, f, l0, l1);
+ 			const float* c = cp(g);
+ 			const bool whole = (l0==0) && (l1==m_GroupLanes[g]);
+ 			if (hook==0)
+@@ -423,32 +501,121 @@ void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int
+ 				if (whole)
+ 				{
+ 					const AdeGather fl = {volt, f};
+-					DebPreGroup(fl, b, c, P);
++					DebPreGroup(fl, b, s ? trs : b + 12*P, c, P);
+ 				}
+ 				else
+-					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {const AdeGather fl = {volt, ft}; DebPreGroup(fl, t, c, P);});
++					CutGroup(b, ws, f, l0, l1, [&](float* t, const unsigned int* ft) {const AdeGather fl = {volt, ft}; DebPreGroup(fl, t, s ? trs : t + 12*P, c, P);});
+ 			}
+ 			else
+ 			{
+ 				if (whole)
+ 				{
+ 					const AdeGather fl = {volt, f};
+-					DebPostGroup(fl, b, c, P);
++					DebPostGroup(fl, b, s ? trs : b + 12*P, c, P);
+ 				}
+ 				else
+-					CutGroup(b, m_BlockStride, f, l0, l1, [&](float* t, const unsigned int* ft) {const AdeGather fl = {volt, ft}; DebPostGroup(fl, t, c, P);});
++					CutGroup(b, ws, f, l0, l1, [&](float* t, const unsigned int* ft) {const AdeGather fl = {volt, ft}; DebPostGroup(fl, t, s ? trs : t + 12*P, c, P);});
+ 			}
+ 		});
+ 	});
+ }
++
++void Engine_Ext_DebyeMaterial::Relayout(bool rangeLocal)
++{
++	const size_t groups = m_GroupX.size();
++	const size_t bs = m_BlockStride, ws = 12*(size_t)m_Op_Ext_Deb->m_PoleCount;
++	float* blk = m_Block.data();
++	if (rangeLocal)
++		for (size_t g=0; g<groups; ++g)   // forward: a block's W moves down, never onto a block that has not moved yet
++			memmove(blk + g*ws, blk + g*bs, ws*sizeof(float));
++	else
++		for (size_t g=groups; g-->0; )    // backward; the transients are dead between two runs of timesteps: zero
++		{
++			memmove(blk + g*bs, blk + g*ws, ws*sizeof(float));
++			std::fill(blk + g*bs + ws, blk + (g+1)*bs, 0.0f);
++		}
++	m_WStride = (unsigned int)(rangeLocal ? ws : bs);
++}
++
++void Engine_Ext_DebyeMaterial::SetRangeLocal(bool granted, unsigned int lines, unsigned int threads)
++{
++	if (!m_Packed)
++		return;
++	std::string why;
++	if (ScratchOff())
++		why = "OPENEMS_ADE_SCRATCH=0";
++	else if (!granted || (lines==0) || (threads==0))
++		why = "not granted by the engine's plan";
++	const size_t groups = m_GroupX.size();
++	size_t most = 0, slice = 0;
++	if (why.empty())
++	{
++		// the most groups a range of `lines` x-lines can hold (m_GroupX ascending): every range [x0, x0+lines) holds at most
++		// the groups from its first one on that lie within `lines` x-lines of it
++		for (size_t a=0, b=0; a<groups; ++a)
++		{
++			const uint64_t end = (uint64_t)m_GroupX[a] + lines;
++			b = std::max(a, b);
++			while ((b<groups) && (m_GroupX[b]<end))
++				++b;
++			most = std::max(most, b-a);
++		}
++		slice = std::max((size_t)64, (24*most+63) & ~(size_t)63);   // floats a thread, a multiple of 256 B
++		try
++		{
++			std::vector<float>((size_t)threads*slice, 0.0f).swap(m_Scratch);
++			std::vector<unsigned int>((size_t)threads*32, 0u).swap(m_ScratchHdr);
++		}
++		catch (std::bad_alloc&)
++		{
++			why = "the scratch could not be allocated";
++		}
++	}
++	const bool on = why.empty();
++	if (on!=m_RangeLocal)
++		Relayout(on);
++	m_RangeLocal = on;
++	if (on)
++	{
++		m_ScratchSlice = slice;
++		m_ScratchLines = lines;
++		m_ScratchThreads = threads;
++	}
++	else
++	{
++		std::vector<float>().swap(m_Scratch);
++		std::vector<unsigned int>().swap(m_ScratchHdr);
++		m_ScratchSlice = 0;
++		m_ScratchLines = m_ScratchThreads = 0;
++	}
++	if (g_settings.GetVerboseLevel()>1)
++	{
++		std::ostringstream o;
++		if (on)
++			o << "range-local transients on (blocks of W only, " << m_WStride << " of " << m_BlockStride << " floats a group; pre and correction in "
++			  << "a scratch of up to " << most << " groups a thread for ranges of up to " << lines << " x-lines, " << threads << " x "
++			  << slice*sizeof(float)/1024.0 << " KiB)";
++		else
++			o << "range-local transients off (stored blocks, " << m_BlockStride << " floats a group: " << why << ")";
++		if (o.str()!=m_RangeMsg)
++			std::cout << GetExtensionName() << ": " << o.str() << std::endl;
++		m_RangeMsg = o.str();
++	}
++}
+ #else
+ // without the vector extensions SetupPacked() never packs (m_Packed stays false), so these are never called
+ void Engine_Ext_DebyeMaterial::PrePacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_DebyeMaterial::PostPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_DebyeMaterial::ApplyPacked(unsigned int x0, unsigned int x1) {UNUSED(x0); UNUSED(x1);}
++void Engine_Ext_DebyeMaterial::PackedLines(int hook, unsigned int x0, unsigned int x1) {UNUSED(hook); UNUSED(x0); UNUSED(x1);}
+ void Engine_Ext_DebyeMaterial::PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {UNUSED(hook); UNUSED(x0); UNUSED(x1); UNUSED(y0); UNUSED(y1);}
+-void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned int g0, unsigned int g1) {UNUSED(hook); UNUSED(g0); UNUSED(g1);}
++void Engine_Ext_DebyeMaterial::PackedGroups(int hook, unsigned int g0, unsigned int g1, const TrPtr& tr) {UNUSED(hook); UNUSED(g0); UNUSED(g1); UNUSED(tr);}
++float* Engine_Ext_DebyeMaterial::RangeSlots(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
++{UNUSED(hook); UNUSED(x0); UNUSED(x1); UNUSED(y0); UNUSED(y1); return NULL;}
++void Engine_Ext_DebyeMaterial::Relayout(bool rangeLocal) {UNUSED(rangeLocal);}
++Engine_Ext_DebyeMaterial::TrPtr Engine_Ext_DebyeMaterial::StoredTr() {const TrPtr t = {NULL, 0, 0}; return t;}
++void Engine_Ext_DebyeMaterial::SetRangeLocal(bool granted, unsigned int lines, unsigned int threads) {UNUSED(granted); UNUSED(lines); UNUSED(threads);}
+ #endif
+ 
+ void Engine_Ext_DebyeMaterial::DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1)
+@@ -545,5 +712,6 @@ void Engine_Ext_DebyeMaterial::Apply2VoltagesBox(unsigned int x0, unsigned int x
+ unsigned int Engine_Ext_DebyeMaterial::GetUsedHooks() const
+ {
+ 	OPENEMS_HOOKS_DECLARED_BY(Engine_Ext_DebyeMaterial);
+-	return DispersiveHooks() | PRE_VOLT | POST_VOLT;
++	// RANGE_LOCAL: the packed blocks can keep pre and correction in per-thread scratch (SetRangeLocal)
++	return DispersiveHooks() | PRE_VOLT | POST_VOLT | (m_Packed ? RANGE_LOCAL : 0);
+ }
+diff --git a/FDTD/extensions/engine_ext_debyematerial.h b/FDTD/extensions/engine_ext_debyematerial.h
+index 981a914..0c048bc 100644
+--- a/FDTD/extensions/engine_ext_debyematerial.h
++++ b/FDTD/extensions/engine_ext_debyematerial.h
+@@ -72,6 +72,9 @@ public:
+ 	virtual void DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 	virtual void DoPostVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	//! range-local transients (RANGE_LOCAL, see Engine_Extension::SetRangeLocal): pre and correction of the packed groups in
++	//! per-thread scratch while the engine grants it, the blocks then hold W only (m_RangeLocal)
++	virtual void SetRangeLocal(bool granted, unsigned int lines, unsigned int threads);
+ 
+ protected:
+ 	//! Packed groups (OPENEMS_ADE_PACKED=0: off), in the groups of Engine_Ext_Dispersive::SetupGroups (position or vector
+@@ -79,19 +82,47 @@ protected:
+ 	//! pre[n] at 4*(3P+n), correction volt_ADE[n] at 4*(3P+3+n); the coefficients apart in m_Coef (CoefSets), per component
+ 	//! n at 4*n*(2P+1): v_relax[pole] (P vectors), v_drive[pole] (P vectors), v_solve. Four lanes at a time, the same
+ 	//! operations per lane as the one-position loops. While packed, every hook (whole grid, lines or boxes) uses the blocks.
++	//! pre and correction are transients (pre: written by Pre, read by Post of the same step; correction: written by Post,
++	//! read by Apply); while the engine grants range-local hooks (SetRangeLocal) they live in this thread's scratch, 24
++	//! floats a group of the range (pre[n] at 4*n, correction[n] at 4*(3+n)), and the blocks are moved together to their
++	//! W, 12*P floats a group (m_WStride); the allocation of m_Block keeps the stored size, so a withdrawn grant moves them
++	//! back without allocating (and PackedBytes() is the same in both layouts).
+ 	virtual void SetupPacked();
+ 	virtual uint64_t PackedBytes() const {return m_Packed ? (uint64_t)m_Block.size()*sizeof(float) + m_Coef.Bytes() + GroupBytes() : 0;}
+ 	bool m_Packed;
+ 	unsigned int m_BlockStride;
++	unsigned int m_WStride;   //!< floats from one group's W to the next in m_Block: m_BlockStride (stored) or 12*P (range-local)
+ 	std::vector<float> m_Block;
+ 	CoefSets m_Coef;
++	//! range-local transients granted and in use (see SetupPacked's comment)
++	bool m_RangeLocal;
++	std::vector<float> m_Scratch;           //!< per engine thread m_ScratchSlice floats: 24 floats a group of the range
++	std::vector<unsigned int> m_ScratchHdr; //!< per engine thread 32 words: phase (0 idle, 1 after Pre, 2 after Post), x0, x1, y0, y1
++	size_t m_ScratchSlice;                  //!< floats a thread (the most groups a range of m_ScratchLines x-lines holds, times 24)
++	unsigned int m_ScratchLines, m_ScratchThreads;
++	std::string m_RangeMsg;
++	//! move the blocks to W only (rangeLocal) or back to the stored layout with zero transients
++	void Relayout(bool rangeLocal);
++	//! this thread's scratch for a hook (0 Pre, 1 Post, 2 Apply) on a range (line hooks: y0 = 0, y1 = ~0u); checks the grant's
++	//! promises (thread, width, Pre-Post-Apply of one range in order) and aborts with a message when one is broken
++	float* RangeSlots(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
++	//! where the transients of group g of a call are: tr(g) = base + (g-g0)*stride (stored: base = m_Block + 12*P, stride =
++	//! m_BlockStride, g0 = 0; range-local: base = the call's next scratch slot, stride = 24, g0 = the run's first group)
++	struct TrPtr
++	{
++		float* base; size_t stride; size_t g0;
++		float* operator()(size_t g) const {return base + (g-g0)*stride;}
++	};
++	TrPtr StoredTr();
+ 	void PrePacked(unsigned int x0, unsigned int x1);
+ 	void PostPacked(unsigned int x0, unsigned int x1);
+ 	void ApplyPacked(unsigned int x0, unsigned int x1);
++	//! the line hooks (and, on [0, ~0u), the whole-grid hooks) of the packed groups: hook 0 = Pre, 1 = Post, 2 = Apply
++	void PackedLines(int hook, unsigned int x0, unsigned int x1);
+ 	//! hook 0 = Pre, 1 = Post, 2 = Apply of the packed groups with y in [y0, y1)
+ 	void PackedBox(int hook, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+-	//! hook 0 = Pre, 1 = Post, 2 = Apply of the packed groups [g0, g1)
+-	void PackedGroups(int hook, unsigned int g0, unsigned int g1);
++	//! hook 0 = Pre, 1 = Post, 2 = Apply of the packed groups [g0, g1), their transients at tr
++	void PackedGroups(int hook, unsigned int g0, unsigned int g1, const TrPtr& tr);
+ 	//! the line hooks' loops without packing for the sorted positions [k0, k1)
+ 	void PreK(unsigned int k0, unsigned int k1);
+ 	void PostK(unsigned int k0, unsigned int k1);
+diff --git a/FDTD/extensions/engine_ext_dispersive.cpp b/FDTD/extensions/engine_ext_dispersive.cpp
+index d4ed395..4933baa 100644
+--- a/FDTD/extensions/engine_ext_dispersive.cpp
++++ b/FDTD/extensions/engine_ext_dispersive.cpp
+@@ -204,6 +204,13 @@ bool Engine_Ext_Dispersive::PackedOff()
+ 	return env && *env && (atoi(env)==0);
+ }
+ 
++bool Engine_Ext_Dispersive::ScratchOff()
++{
++	// a number that is 0 ("alt", read by the engine, is not)
++	const char* env = getenv("OPENEMS_ADE_SCRATCH");
++	return env && (*env>='0') && (*env<='9') && (atoi(env)==0);
++}
++
+ void Engine_Ext_Dispersive::ReportPackRefusal(PackRefusal r, const char* what, uint64_t need, uint64_t used) const
+ {
+ 	if ((r==PACK_OFF) && (g_settings.GetVerboseLevel()>1))
+diff --git a/FDTD/extensions/engine_ext_dispersive.h b/FDTD/extensions/engine_ext_dispersive.h
+index 362b7e1..319fdf2 100644
+--- a/FDTD/extensions/engine_ext_dispersive.h
++++ b/FDTD/extensions/engine_ext_dispersive.h
+@@ -226,8 +226,13 @@ protected:
+ 	virtual uint64_t PackedBytes() const {return 0;}
+ 	//! the bytes of the packed blocks of the other dispersive extensions of this engine
+ 	uint64_t PackedBytesOfOthers() const;
+-	//! OPENEMS_ADE_PACKED=0
++	//! OPENEMS_ADE_PACKED=0. The other switches of the packed hooks: OPENEMS_ADE_MERGED=0 (SetupLines), OPENEMS_ADE_VEC (SetupGroups),
++	//! OPENEMS_ADE_COEF (BuildCoefSets), OPENEMS_ADE_SCRATCH (ScratchOff)
+ 	static bool PackedOff();
++	//! OPENEMS_ADE_SCRATCH=0: the stored layout everywhere, range-local grants are declined (Engine_Ext_DebyeMaterial::
++	//! SetRangeLocal); =alt is a test switch of the engine (Engine_Multithread::m_RangeLocalAlt: a grant is withdrawn and given
++	//! again before every run of timesteps, so the blocks change their layout between runs)
++	static bool ScratchOff();
+ 	//! the line for packing not used: OPENEMS_ADE_PACKED=0 at verbose > 1, memory limit / failed allocation at verbose >= 1
+ 	void ReportPackRefusal(PackRefusal r, const char* what, uint64_t need, uint64_t used) const;
+ 	bool AnyVoltADE() const;
+diff --git a/FDTD/extensions/engine_extension.cpp b/FDTD/extensions/engine_extension.cpp
+index 6bc282d..0cfad18 100644
+--- a/FDTD/extensions/engine_extension.cpp
++++ b/FDTD/extensions/engine_extension.cpp
+@@ -32,6 +32,19 @@ Engine_Extension::~Engine_Extension()
+ {
+ }
+ 
++//! the engine thread index of the calling thread (see SetRangeLocal)
++static thread_local unsigned int t_HookThread = 0;
++
++unsigned int Engine_Extension::GetHookThread()
++{
++	return t_HookThread;
++}
++
++void Engine_Extension::SetHookThread(unsigned int t)
++{
++	t_HookThread = t;
++}
++
+ void Engine_Extension::SetNumberOfThreads(int nrThread)
+ {
+ 	if (nrThread<1)
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index 75d8c2c..a6f3e9d 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -56,6 +56,7 @@ public:
+ 				TS_LOCAL=256,   //!< its line hooks also work while the threads are at different timesteps, see below
+ 				BOX_HOOKS=512,  //!< implements the *Box() hooks below, for the tiled sweep (see there)
+ 				Y_WRAP=1024,    //!< with BOX_HOOKS: a closed (periodic) y direction, row 0 is a copy of row NY-2 (see the *Box() hooks)
++				RANGE_LOCAL=2048, //!< can keep its range-local transients in per-thread scratch when the engine grants it (SetRangeLocal)
+ 				LEGACY_HOOKS=~0u};
+ 	//! Which of the six update hooks this extension implements (or'ed Hooks).
+ 	/*!
+@@ -168,6 +169,36 @@ public:
+ 	virtual void DoPostCurrentUpdatesBox(unsigned int /*x0*/, unsigned int /*x1*/, unsigned int /*y0*/, unsigned int /*y1*/) {}
+ 	virtual void Apply2CurrentBox(unsigned int /*x0*/, unsigned int /*x1*/, unsigned int /*y0*/, unsigned int /*y1*/) {}
+ 
++	//! Range-local transients (extensions with RANGE_LOCAL, which also have LINE_HOOKS).
++	/*!
++	  A transient is a value that an extension's Pre hook of one side (voltages or currents) passes to its Post hook, or its
++	  Post hook to its Apply hook, of the same cells in the same timestep, and that nothing reads afterwards (e.g. the Debye
++	  material's pre-sum and correction). Stored per cell it costs memory traffic every timestep; it can live in a small
++	  per-thread scratch instead, reused for every range, when the engine guarantees for the plan it runs:
++	  - the extension's hooks are called as line hooks (*Lines) or box hooks (*Box) only, never the whole-grid hooks;
++	  - per side, every call of its Pre hook on a range R (the x-lines [x0, x1), or the box [x0, x1) x [y0, y1)) is followed
++	    ON THE SAME THREAD by its Post hook on exactly R and then its Apply hook on exactly R (the same kind of call with the
++	    same arguments), before that thread calls any other hook of that side of this extension; the update and the hooks
++	    of other extensions may run in between (they cannot reach the extension's scratch), and another thread never calls
++	    a hook of this extension on the cells of R in between (the disjointness rules of the line and box hooks);
++	  - no range is wider than `lines` x-lines;
++	  - the calls come from the engine threads 0 .. threads-1, and GetHookThread() returns the calling thread's index.
++	  The engine calls SetRangeLocal() after every plan it builds (true with those bounds when the plan gives the guarantee,
++	  false otherwise), while its threads wait between two runs of timesteps; every timestep is complete then, so no
++	  transient is alive and the extension may change its storage there. A grant lasts until the next call. An extension
++	  ignores calls it cannot use (and declares RANGE_LOCAL only while it can use them). Engines that never call it run
++	  every extension in its stored layout.
++	  Plans that give the guarantee (Engine_Multithread::GrantRangeLocal): the fused sweep in x-line blocks (any
++	  OPENEMS_FUSED_BLOCK, neighbour flags or barriers), its y-bands unless the y direction is closed (Y_WRAP: the last band
++	  calls two boxes per hook), and the box mode of the tiled sweep. Not: the unfused plan (whole-grid hooks), the hook
++	  stages of the tiled sweep (Post and Apply of a task and Pre of the next are cut into other shares), other engines.
++	  */
++	virtual void SetRangeLocal(bool /*granted*/, unsigned int /*lines*/, unsigned int /*threads*/) {}
++	//! the index of the engine thread that runs the caller (0 .. threads-1), set by the multithreaded engine on each of its
++	//! threads (SetHookThread); 0 on every other thread
++	static unsigned int GetHookThread();
++	static void SetHookThread(unsigned int t);
++
+ 	//! Set the Engine to this extension. This will usually done automatically by Engine::AddExtension
+ 	virtual void SetEngine(Engine* eng) {m_Eng=eng;}
+ 
+-- 
+2.54.0 (Apple Git-157)
+

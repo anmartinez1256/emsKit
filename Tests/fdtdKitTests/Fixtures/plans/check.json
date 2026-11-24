@@ -60,7 +60,7 @@
             "files" : [
               {
                 "name" : "libopenEMS.0.dylib",
-                "sha256" : "8b2e2b506ad5a6a6e506e0bee826d4839c281837e618018246b759b9cca69640",
+                "sha256" : "7478fa2de0414da779dfc157b3bc71c35314007da60f09381a118069ffac5191",
                 "uuid" : "40BC8CFF-0000-4000-8000-000000000001"
               },
               {
@@ -88,7 +88,7 @@
             "files" : [
               {
                 "name" : "libopenEMS.0.dylib",
-                "sha256" : "0f98650f211763a0fbfc9f898387f7d77cf25ac18477a7c9b9611813aba4ae8b",
+                "sha256" : "ef72f71f59a299ecdd8a4cede08afb6dd9c78f6064a30eab8e32e725c3ea33bd",
                 "uuid" : "4127E1E0-0000-4000-8000-000000000001"
               },
               {

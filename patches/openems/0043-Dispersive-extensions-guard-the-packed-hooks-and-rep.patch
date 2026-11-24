@@ -1,7 +1,7 @@
 From 13350cacc15ad32b667536fef3b101f26b3b35f7 Mon Sep 17 00:00:00 2001
 From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 03:16:10 -0600
-Subject: [PATCH 43/43] Dispersive extensions: guard the packed hooks and
+Subject: [PATCH 43/49] Dispersive extensions: guard the packed hooks and
  report a refused packing
 
 The packed hooks use GCC/clang vector extensions: they are now under

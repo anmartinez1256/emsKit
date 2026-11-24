@@ -14,8 +14,9 @@ the 27 patches into an empty prefix, and that build passed the checks of section
 39 patches then in `patches/openems/` and `git apply` of the regenerated cumulative diff both gave tree dc4a352, the
 tree of ff2538a (snapshot cg31). That evening patch 0040 was added: `git am` of the 40 patches then in
 `patches/openems/` and `git apply` of the cumulative diff both gave tree d7b66f1, the tree of 0ef186b. On 2026-11-13,
-with patches 0041 to 0043, `git am` of the 43 patches now in `patches/openems/` and `git apply` of the regenerated
-cumulative diff both give tree 211a3de, the tree of the fork's head (13350ca). The build from a fresh clone was not
+with patches 0041 to 0043, `git am` of the 43 patches then in `patches/openems/` and `git apply` of the regenerated
+cumulative diff both gave tree 211a3de, the tree of 13350ca. On 2026-11-24, with patches 0044 to 0049, `git am` of the 49
+patches now in `patches/openems/` and `git apply` of the regenerated cumulative diff both give tree 08098d9 (08098d913ef47d24e5c2c18d5cf63e3f24b69251), the tree of the fork's head (8af6c4c). The build from a fresh clone was not
 repeated with the patches after 0027.
 Snapshot cg18 (0001 to 0006) reports `v0.37.0-24-g087ce9e`, passed the check of section 9 on 2026-11-03
 (`results/*_cg18.txt`) and was the build installed on the author's Mac from 2026-11-04 to 2026-11-06; snapshot cg29
@@ -27,7 +28,7 @@ affects SAR, not FDTD runs or nf2ff). Snapshot cg31 (0001 to 0039) reports `v0.3
 build from 2026-11-11 to 2026-11-14 (`results/metal_engine_cg31_2026-11-11.txt`). Section 9 lists the checks that passed from the
 two installs. Patch 0040 (0ef186b, snapshot cg32d) was never installed on its own: it adds only the opt-in tiled
 sweep of section 7, and with its switch unset the engine runs the fused sweep as before
-(`results/tiled_sweep_cg32_2026-11-11.txt`). Patches 0041 to 0043 (the fork's head 13350ca, snapshots cg33a to cg33d, and
+(`results/tiled_sweep_cg32_2026-11-11.txt`). Patches 0041 to 0043 (13350ca, snapshots cg33a to cg33d, and
 cg33 rebuilt from the commit, `v0.37.0-61-g13350ca`) change the engine's defaults (the start of the thread search,
 the packed Debye, Lorentz and Drude line hooks), with results identical to stock in every check
 (`results/cpu_items_cg33_2026-11-13.txt`). They were not installed when they were measured on the M5 Pro; cg33, patches
@@ -46,7 +47,7 @@ to Apple's Accelerate; other builds keep the original loop), the opt-in flush-to
 What the fork is built on:
 
 - **openEMS:** commit 7bb294f of upstream's `gpu-engine` branch (2026-10-12, `patches/openems/BASE_origin_gpu-engine.txt`),
-  that is v0.37.0 plus 18 upstream commits, plus the 43 fdtdKit patches: 0001 to 0006 (snapshot cg18 after 0006, the
+  that is v0.37.0 plus 18 upstream commits, plus the 49 fdtdKit patches: 0001 to 0006 (snapshot cg18 after 0006, the
   build installed on the author's Mac from 2026-11-04 to 2026-11-06), 0007 to 0016 (the Metal diamond engine,
   snapshots cg19 to cg28), 0017 to 0027 (the CPU items of snapshot cg29: commit 78fe656, `git describe --tags`
   v0.37.0-45-g78fe656, the build installed there from 2026-11-06 to 2026-11-11), 0028 to 0039 (2026-11-11: 0028
@@ -57,8 +58,9 @@ What the fork is built on:
   engine, sections 7 and 9; snapshot cg32d: commit 0ef186b, `git describe --tags` v0.37.0-58-g0ef186b, not installed on its own)
   and 0041 to 0043 (written on 2026-11-12 and 2026-11-13, committed on 2026-11-13: 0041 starts the thread search at every non-efficiency core, 0042 packs the
   Debye, Lorentz and Drude line hooks, 0043 puts that code under the compiler guard and adds the refusal line; snapshots
-  cg33a to cg33d; the fork's head 13350ca, `git describe --tags` v0.37.0-61-g13350ca, installed on the author's Mac Studio since 2026-11-14; sections 7 and 9).
-  The 39 patches up to 0039 made the build installed until 2026-11-14, all 43 are the fork's head and the build installed since. Upstream has since
+  cg33a to cg33d; commit 13350ca, the fork's head until 2026-11-22, `git describe --tags` v0.37.0-61-g13350ca, installed on the author's Mac Studio since 2026-11-14; sections 7 and 9).
+  0044 to 0046 (2026-11-21 and 2026-11-22: box hooks, the y-banded fused sweep for large grids, box hooks for Mur, the dispersive extensions and the closed cylinder; snapshots cg34a to cg34c, cg34 = commit 8d513ba) and 0047 to 0049 (2026-11-23 and 2026-11-24: the dispersive pass, vector groups, Debye transients in per-thread scratch, setup on the setup threads; snapshots cg35a to cg35c, cg35 = the fork's head 8af6c4c, `git describe --tags` v0.37.0-67-g8af6c4c, not installed; sections 7 and 9).
+  The 39 patches up to 0039 made the build installed until 2026-11-14, the 43 up to 0043 the build installed since (cg33), all 49 are the fork's head. Upstream has since
   merged a reworked GPU engine into master (c3a956b) and deleted the branch, so section 4 fetches the base commit by its
   hash. The patches apply to this base only; master has restructured the engines since (c0816a2).
 - **CSXCAD:** v0.7.0 plus one patch. The openEMS patches call the `FindPropertyByCoordPriority` it adds, so they do not
@@ -91,7 +93,7 @@ cd openEMS-Project
 The commands below run in `openEMS-Project`. Its submodules are now at stock openEMS v0.37.0 and CSXCAD v0.7.0.
 
 The fork is also kept as two git branches with the same changes as commits:
-https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu (the 43 commits of `patches/openems/` on 7bb294f) and
+https://github.com/anmartinez1256/openEMS/tree/speed-m5-gpu (the 49 commits of `patches/openems/` on 7bb294f) and
 https://github.com/anmartinez1256/CSXCAD/tree/speed-m5 (the one commit of `patches/csxcad/` on v0.7.0). The steps
 below use the patch files of this repository.
 
@@ -140,16 +142,16 @@ git -C openEMS fetch origin "$BASE" && git -C openEMS checkout -b speed-m5-gpu "
 git -C openEMS am "$EMSKIT"/patches/openems/0*.patch
 ```
 No upstream branch holds the base any more; GitHub serves it by its hash. If that fetch fails, the fork's branch
-`speed-m5-gpu` has the base: it is the parent of patch 0001, the first of the 43 commits that the branch adds to it.
+`speed-m5-gpu` has the base: it is the parent of patch 0001, the first of the 49 commits that the branch adds to it.
 Fetch the branch and go on as above (if the `git am` line ran already, run `git -C openEMS am --abort` first):
 ```sh
 git -C openEMS fetch https://github.com/anmartinez1256/openEMS.git speed-m5-gpu
 git -C openEMS checkout -b speed-m5-gpu "$BASE"
 git -C openEMS am "$EMSKIT"/patches/openems/0*.patch
 ```
-`git am` needs a git identity (`git config user.name` and `user.email`). With the 43 openEMS patches
-`git -C openEMS rev-parse 'HEAD^{tree}'` prints 211a3de8300454a37bda032ecf7514db1514579b, the tree of the fork's head
-(13350ca, snapshot cg33). How many patches to apply: all 43 for the fork's head, 0001 to 0040 for the tiled sweep alone
+`git am` needs a git identity (`git config user.name` and `user.email`). With the 49 openEMS patches
+`git -C openEMS rev-parse 'HEAD^{tree}'` prints 08098d913ef47d24e5c2c18d5cf63e3f24b69251, the tree of the fork's head
+(8af6c4c, snapshot cg35). How many patches to apply: all 49 for the fork's head, 0001 to 0043 for the build installed on the author's Mac since 2026-11-14 (cg33; tree 211a3de8300454a37bda032ecf7514db1514579b, that of 13350ca), 0001 to 0040 for the tiled sweep alone
 (tree d7b66f1066672597c3a37e79bac0950469a93830, that of 0ef186b, snapshot cg32d), or 0001 to 0039 for the build
 installed on the author's Mac from 2026-11-11 to 2026-11-14 (cg31). The three builds differ only by the opt-in tiled sweep of the multithreaded
 engine (patch 0040; section 7; with its switch unset the engine runs the fused sweep as before) and by patches 0041 to
@@ -162,7 +164,7 @@ build installed there from 2026-11-06 to 2026-11-11 (tree 90f8c01f2724cee04437d1
 78fe656), and `000[1-6]-*.patch` stops at snapshot cg18, the build installed there from 2026-11-04 to 2026-11-06 (tree
 f67bc0f1bcf8482cc00f6c8bf027c443836ba864, that of cb168f7). The commit hashes differ from the
 fork's, because `git am` makes new commits. The `cumulative_vs_*.patch` files hold the same changes as one diff each,
-for `git apply` or reading (applied to the base, the openEMS one gives the same tree as the 43 patches).
+for `git apply` or reading (applied to the base, the openEMS one gives the same tree as the 49 patches).
 The changes made in this project to the author's simulation toolkit (rfsim) are not published, since the toolkit itself
 is private; the paper's section "The modelling side" and `CHANGELOG.md` describe them.
 
@@ -193,8 +195,8 @@ through TinyXML's include directory. On macOS with CMake 3.16 or newer `ENABLE_M
 Metal backend of the base's GPU engine and the fork's Metal diamond engine (`--engine=metal-diamond`, section 7),
 defines `OPENEMS_WITH_METAL` and links the Metal and Foundation frameworks. `-DENABLE_METAL=OFF` builds neither, and
 other systems never have them.
-The library reports `git describe --tags --always` of the openEMS tree as its version (`v0.37.0-61-g...` with the 43
-patches, `v0.37.0-58-g...` with 0001 to 0040, `v0.37.0-57-g...` with 0001 to 0039, `v0.37.0-45-g...` with 0001 to 0027, `v0.37.0-24-g...` with 0001 to
+The library reports `git describe --tags --always` of the openEMS tree as its version (`v0.37.0-67-g...` with the 49
+patches, `v0.37.0-61-g...` with 0001 to 0043, `v0.37.0-58-g...` with 0001 to 0040, `v0.37.0-57-g...` with 0001 to 0039, `v0.37.0-45-g...` with 0001 to 0027, `v0.37.0-24-g...` with 0001 to
 0006, the hash of your own `git am` commit; a clone without tags gives the bare
 hash), taken when cmake configures: configure after applying the patches, and configure again after changing the tree.
 The author's development build directories were not configured again at every commit, so the later snapshots'
@@ -205,9 +207,9 @@ too from 2026-11-06 to 2026-11-11). cg31, the installed build from 2026-11-11 to
 v0.37.0-57-gff2538a; cg33, installed since, reports v0.37.0-61-g13350ca. Snapshot cg32d (patch 0040, 0ef186b) was built in the folder configured for
 cg31, so it reports cg31's string too; a build configured at 0ef186b reports v0.37.0-58-g0ef186b, which is also the string
 of snapshots cg33a to cg33d (patches 0041 to 0043, built in that folder before the three commits were made). Snapshot cg33,
-the build of the fork's head 13350ca after `cmake .` in that folder, reports v0.37.0-61-g13350ca, its own commit. The
+the build of 13350ca after `cmake .` in that folder, reports v0.37.0-61-g13350ca, its own commit; snapshot cg35, the build of the fork's head 8af6c4c, reports v0.37.0-67-g8af6c4c (the builds in between, cg34a to cg35c, were made in folders configured earlier and report older strings). The
 libraries differ in their bytes and in their knob names (cg32d has the three `OPENEMS_TBLOCK` names of section 7, cg33 also
-`OPENEMS_TUNE_START` and `OPENEMS_ADE_PACKED`).
+`OPENEMS_TUNE_START` and `OPENEMS_ADE_PACKED`, cg35 also the seven names of patches 0044 to 0049: 49 knob names in `libopenEMS` and one in `libnf2ff`).
 The libraries now in the author's cg19 and cg20 snapshot folders were replaced after those tables
 were made and report their own commits instead, v0.37.0-25-g315acee and v0.37.0-26-gcd80d8c
 (`Docs/fdtdKit/PLAN.md`, F7), which `emskit fdtd info` prints. The file name of a table, not that string, names its
@@ -244,16 +246,16 @@ FDTD runs and nf2ff are not affected.
 All optimisations of the CPU engines are on by default, some of them chosen by the model or the thread count (the
 coefficient layout, the neighbour flags and their spin; see their rows); the probe end criterion, the tiled sweep of
 the multithreaded engine (`OPENEMS_TBLOCK`, patch 0040) and the Metal diamond engine (all three below) are opt-in
-(patches 0041 and 0042 are on by default, each with a switch that turns it off).
+(patches 0041 and 0042 are on by default, each with a switch that turns it off; so are the y bands of patch 0045 and the dispersive changes of patches 0047 and 0048, each with a switch that turns it off (patch 0049 has only the pool size), below).
 The switches written `=1` below act when set to any value other than empty or `0` (since
 patch 0006; up to patch 0005 any value, `0` included, switched them). `OPENEMS_FUSED`, `OPENEMS_BALANCE`,
-`OPENEMS_QOS`, `OPENEMS_FLAGS`, `OPENEMS_PML_YVEC`, `OPENEMS_ADE_MERGED`, `OPENEMS_ADE_PACKED` (patch 0042) and
-`OPENEMS_TBLOCK_HOOKS` read their value as a number (`OPENEMS_ADE_PACKED` turns the packing off only at 0), and so do the seven Metal diamond switches written `=0` (`OPENEMS_DIAMOND_MERGE`, `_MURMERGE`, `_EVEN`,
+`OPENEMS_QOS`, `OPENEMS_FLAGS`, `OPENEMS_PML_YVEC`, `OPENEMS_ADE_MERGED`, `OPENEMS_ADE_PACKED` (patch 0042), `OPENEMS_TBLOCK_HOOKS`, `OPENEMS_TBLOCK_BOX` (patch 0044), `OPENEMS_ADE_VEC` (patch 0047), `OPENEMS_YBAND_CACHE` and
+`OPENEMS_SETUP_THREADS` (patch 0049) read their value as a number (`OPENEMS_ADE_PACKED` turns the packing off only at 0), and so do the seven Metal diamond switches written `=0` (`OPENEMS_DIAMOND_MERGE`, `_MURMERGE`, `_EVEN`,
 `_FASTIDX`, `_TGFLAG`, `_PML4` and `_PML3`: on unless the number is 0);
 `OPENEMS_COEF` and `OPENEMS_DIAMOND_COEF` read a word, and so does `OPENEMS_TUNE_START` (patch 0041): the word `p` selects
 the old start of the thread search, any other value, the empty one included, the new rule. `OPENEMS_TBLOCK` reads the word `auto` or a number, the depth
 k (`0`, or any other value that is not a number above 0, leaves the tiled sweep off), and `OPENEMS_TBLOCK_W` a number
-above 0 (any other value means the default width). For every `OPENEMS_*` variable that the fork's own code reads
+above 0 (any other value means the default width). `OPENEMS_YBAND` (patch 0045) reads the word `auto` or a number (`0` off, a number above 0 the band height H; unset is `auto`; any other word counts as 0, and an H of the y line count or more also means off), `OPENEMS_ADE_COEF` (patch 0047) a word (`group`, `table` or `table32`), and `OPENEMS_ADE_SCRATCH` (patch 0048) the number `0` (off) or the word `alt`; their rows say what each value does. For every `OPENEMS_*` variable that the fork's own code reads
 (the knobs below), an empty value is the same as an unset one (since patch 0006; before, an empty `OPENEMS_FUSED`,
 `OPENEMS_BALANCE`, `OPENEMS_QOS`, `OPENEMS_TUNE_WINDOW_MS` or `OPENEMS_BARRIER_SPIN_US` read as 0). The rule does not
 apply to the harness's `OPENEMS_BENCH_*` variables of section 9, nor to the `OPENEMS_HIP_*` variables of the base's
@@ -276,9 +278,12 @@ end criterion"), nor have two of the Metal diamond engine's changes of 2026-11-1
 | `OPENEMS_FLAGS_SPIN_US=us` | how long a wait for a neighbour flag spins before the thread sleeps, for any thread count (patch 0027). Unset: no spin when the threads outnumber the performance cores of an Apple CPU (4 on the M5: some threads then run on efficiency cores, the waits for them are long, and a spinning thread takes a core from the others); up to that count, and on other CPUs, the spin time of `OPENEMS_BARRIER_SPIN_US` |
 | `OPENEMS_FUSED_STAT=1` | print the time split of the fused sweep per thread (the sweep, the two waits and the line before the slab, in ms, with the share of the waits) when the thread count changes and when the engine stops (patch 0024; a diagnostic) |
 | `OPENEMS_BALANCE=0` | no slab re-balancing between threads; in the tiled sweep (`OPENEMS_TBLOCK`) every thread keeps an equal share of the y lines, and of the x-lines of a hook stage, instead of a share that follows its measured speed |
+| `OPENEMS_YBAND=H` | the y-banded fused sweep of the multithreaded engine (patch 0045): inside a thread's x-slab the fused sweep runs in bands of H y lines, so the planes it reuses stay in the thread's cache on grids whose y-z planes pass it. Unset or `auto`: bands when four y-z planes of the voltages and currents exceed a thread's share of its L2 cache, H = half that share (at least 4 lines), no bands when 2H reaches the y line count; `0` off; a number sets H. Bands need every extension with hooks to have box hooks (patches 0044 and 0046: all of the fork's have); results are bit-identical with and without |
+| `OPENEMS_YBAND_CACHE=MiB` | the cache share of one thread, in MiB, that the `auto` rule of `OPENEMS_YBAND` works with, instead of the machine's value (the smallest L2 size per core over the performance levels the threads occupy) |
 | `OPENEMS_TBLOCK=k` | the tiled sweep of the multithreaded engine (patch 0040; opt-in): k timesteps on one tile of x-lines, shared by all threads, before the next tile, so a tile comes from memory once per k timesteps. `auto` takes the deepest k up to 8 whose tile of 2k+1 x-lines fits the cache the threads share, and keeps the fused sweep when the fields fit that cache or two timesteps of a tile do not. Unset or `0`: the fused sweep. Results are identical. On the M5, at 4 threads, it was ahead of the fused sweep's best setting on two of six models, large grids with little extension work, and behind on the other four; at 8 or 10 threads it was behind the fused sweep at 8 threads on every model but a 16.8 M-cell box (`results/tiled_sweep_cg32_2026-11-11.txt`). On an M5 Pro (5 + 10 cores, at 5, 10 and 15 threads) it was ahead only on that box and behind on the other five (`results/m5pro_tiled_sweep_2026-11-12.txt`). Refused with a message when an extension cannot be blocked or the grid has fewer x-lines than two tiles |
 | `OPENEMS_TBLOCK_W=n` | the tiled sweep's tile width in x-lines, at least 2k+1. Default: 2k+1 with a set k; with `auto` wide enough for a tile of at least 200000 cells, within the cache size and half of the x-lines |
 | `OPENEMS_TBLOCK_HOOKS=0` | the tiled sweep runs the extensions' line hooks on one thread instead of all (a diagnostic; slower) |
+| `OPENEMS_TBLOCK_BOX=0` | the tiled sweep runs the extensions in hook stages between the updates, as up to patch 0043, instead of inside each task on every thread's own y lines (the box hooks of patches 0044 and 0046; a diagnostic) |
 | `OPENEMS_NO_STAGGER=1` | page-aligned field arrays (the allocation-placement valley comes back) |
 | `OPENEMS_OP_INDEX_PER_CELL=1` | the operator index with one entry per cell, as before patch 0017, instead of one per f4vector (four cells); on meshes of up to 42 z lines the unused entries shared the cache lines of the used ones, so the engines streamed 4 B of index per cell instead of 1 B (kept to compare) |
 | `OPENEMS_NO_PACKED_COEFF=1` | the operator's 12 SoA coefficient tables instead of the packed or geometry tables of `OPENEMS_COEF`; the IJKN loops and the fused sweep need one of these, so this also brings back the generic loops and the unfused sweep (an "old engine" switch). Otherwise one of the two is always built (patch 0006 removed the size test of 0005); only a failed allocation of the packed tables leaves none, with a message that the generic loops run and the multithreaded engine does not fuse its sweep |
@@ -290,10 +295,14 @@ end criterion"), nor have two of the Metal diamond engine's changes of 2026-11-1
 | `OPENEMS_PML_YVEC=0` | the scalar SSE path of the UPML (boxes that are not full-z slabs, such as the SMA launch's) row by row instead of four y-rows at a time (patch 0019) |
 | `OPENEMS_ADE_MERGED=0` | the line hooks of the dispersive materials run their orders one after the other instead of back to back per position, four positions at a time (patch 0018). The merged form applies when every order with voltage (or current) ADEs has the same positions, already in x order, as the two orders of a conducting sheet have, and lists each position once (a check that follows the strict-order check of upstream PR #245 by Roel Budé); `verbose>1` prints the merged orders |
 | `OPENEMS_ADE_PACKED=0` | the Debye, Lorentz and Drude line hooks of the multithreaded engine run one position at a time over their separate arrays instead of the packed groups of patch 0042 (up to four positions of one x-line, their state and coefficients in one block per group; the same operations per position). Without the switch the packing is also left out, with one line at verbose 1 or above, when the blocks of all dispersive extensions of an engine would need more than twice the field memory or cannot be allocated |
+| `OPENEMS_ADE_VEC=0` or `2` | the group kind of the packed dispersive hooks (patch 0047): `0` keeps the position groups of patch 0042 (up to four positions of one x-line), `2` forces vector groups (the positions of one f4vector, a base offset and a lane mask) even for thin structures. Unset or `1`: vector groups when a hook has at least 2.5 positions a group on average (a test switch) |
+| `OPENEMS_ADE_COEF=group`, `table` or `table32` | where the packed dispersive hooks keep their coefficients (patch 0047): `group` a record per group, `table` a table of the distinct sets with an index per group, `table32` that table with 32-bit indices. Unset: the table when it has at most a quarter as many sets as there are groups (a test switch) |
+| `OPENEMS_ADE_SCRATCH=0` | the packed Debye hooks keep their two per-step transients in the stored blocks, as up to patch 0047, instead of in per-thread scratch (patch 0048); `alt` withdraws and grants the scratch again before every run of timesteps (a test switch) |
 | `OPENEMS_QOS=0`, `1` or `2` | engine thread QoS on macOS: 0 leaves the default class, 1 user-initiated (the default), 2 user-interactive |
 | `OPENEMS_FTZ=1` | flush subnormals to zero (arm64 only). It sets FPCR.FZ wherever the engine runs its subnormal setup: on the thread that creates an engine of the SSE family (sse, sse-compressed, multithreaded, cylindrical, metal-diamond) and in the multithreaded workers; the basic engine never flushes. Results then match a GPU that flushes subnormals and are no longer bit-identical to stock (notch tutorial, 3000 steps: the multithreaded engine at 2 threads and the sse-compressed engine with it gave the base's GPU engine's probes and S11 bit for bit, `results/notch_s1_n3000_ftzgpu.txt`; the Metal diamond engine below is bit-identical to the multithreaded engine run with it). Since patch 0006 the creating thread (Python's, for example) gets its previous state back when the engine is destroyed there. On x86 the engines set MXCSR FZ and DAZ as stock v0.37.0 does, whatever this variable says, and do not restore them, so after a run the Python thread's own float arithmetic and a later basic-engine run in the same process flush too (CMake `-DENABLE_FLUSH_TO_ZERO=OFF` turns it off; upstream's later fix 367a63f is not in the fork) |
 | `OPENEMS_NF2FF_LEGACY=1` | the original nf2ff loop; builds without Apple's Accelerate always use it |
-| `OPENEMS_SETUP_TIMING=1` | print operator-setup phase times |
+| `OPENEMS_SETUP_THREADS=n` | the number of threads of the operator setup (patch 0049), instead of every available core; the operator arrays are the same at any value |
+| `OPENEMS_SETUP_TIMING=1` | print operator-setup phase times (since patch 0049 also the phases of the dispersive extensions) |
 | `OPENEMS_EXPORT_OPERATOR=dir`, `OPENEMS_EXPORT_FIELDS=dir` | write the compressed operator (just before the engine is created) or the engine's final fields (after the run) as raw little-endian files plus JSON, for swift_engine/ and the field comparison of `scripts/checks/diamond_check.sh`; the operator export needs the compressed operator (sse-compressed, multithreaded or metal-diamond engine); `dir` must exist; one grid only, and only the voltage excitation entries; since patch 0006 every failed write is reported, and an empty value exports nothing |
 | `OPENEMS_PROBE_END_DB=-60`, `OPENEMS_PROBE_END_HOLD=1` | probe end criterion, see below |
 | `OPENEMS_DIAMOND_K=k` | metal-diamond (see below): timesteps per diamond block (default 4, at least 1). When it or `OPENEMS_DIAMOND_TILE` is set, one tiling runs and the tuner is off; without a tile the mountains and valleys are then 2k cells wide |
@@ -365,6 +374,27 @@ tiled sweep peaked at 10, so the tiled sweep's best was 0.41 to 0.97 times the f
 the PEC box of 16.8 M cells, where the fused sweep stays nearly flat from 5 to 15 threads (2986 to 3326 MC/s), the
 tiled sweep ran 4752 at 15 threads, 1.43 times the fused sweep's best (`results/m5pro_tiled_sweep_2026-11-12.txt`).
 The verdict there is the same: opt-in.
+
+**The y-banded sweep.** Patch 0045 (with the box hooks of patches 0044 and 0046; in the head 8af6c4c, not in the installed cg33)
+cuts the fused sweep into bands on large grids. The fused sweep walks a thread's x-slab one x-line block at a time over whole
+y-z planes, and it reuses the planes of the block behind it; when four such planes of the voltages and currents no longer fit a
+thread's share of its L2 cache, the reuse comes from memory. With bands, every block of the slab except the slab's last one is
+cut into bands of H y lines: the voltages of the block on the band's rows, then the currents of the lines behind on the rows one
+back in y, so the planes stay in the cache; the last block and the line before the slab stay whole, so the neighbour flags are
+unchanged. Every extension hook of the band runs on the band's y rows (the box hooks), which is why all of the fork's extensions
+(UPML, excitation, lumped RLC, steady state, Mur, the dispersive materials, the closed cylinder) have them; an extension
+without box hooks keeps whole planes. With `OPENEMS_YBAND` unset the rule is `auto`: the share is the smallest L2 size per
+core over the performance levels the threads occupy (`OPENEMS_YBAND_CACHE` replaces it), bands are used when four planes
+exceed it, H is half the share over four lines of f4vectors (at least 4), and bands are off when 2H reaches the y line count. On
+the M5 Max (macOS 27.0) that gave 93-line bands on 311 lines at 6 threads and 46-line bands at 12 and 18 threads, bands at 12 and
+18 threads (71 lines) on 201 lines, none on 101 lines. Results are bit-identical to the unbanded sweep's (every band height from
+1 to NY-1 was tested). Speed (M5 Max, upstream's `bench.py` with a source in every case, 18 threads, best over threads; cg33 -> head
+of 2026-11-22; `results/large_grid_cg34_2026-11-22.txt`): 30 M cells 3755 -> 5719 MC/s on the ideal case and 2702 -> 4149 on the PML
+case (1.5 times), 8 M cells 4758 -> 6092 and 2991 -> 3669, 1 M cells unchanged (bands off); at 6 threads, where the Super cores are
+not held back by the bus, bands change little (0.96 to 1.03). The two boards are below the rule's threshold and gain nothing. The
+tiled sweep's box mode (`OPENEMS_TBLOCK_BOX`) gains on a PML at 30 M cells but is unsteady at 18 threads, so the tiled sweep stays
+opt-in. The dispersive materials' changes of patches 0047 to 0049 are described in their rows above and in
+`results/dispersive_cg35_2026-11-23.txt`.
 
 **The Metal diamond engine.** Patches 0007 to 0016 (snapshots cg19 to cg28) add `--engine=metal-diamond`
 (`FDTD.Run(sim_path, engine='metal-diamond')` from Python; `FDTD/engine_metal_diamond.h`,
@@ -612,8 +642,8 @@ with 0 differences (`results/cpu_items_cg33_2026-11-13.txt`, section 1). On 2026
 installed build cg31 and then cg33 each passed `check --lite` (18 of 18 rows identical to stock on the six models), the Debye check,
 `diamond-check` (72 of 72), the validation suite (15 of 15, also on `metal-diamond`) and both boards end to end with the stop steps
 of the other machines (34300 and 50320), and the same again from the install of cg33 (`results/studio_speed_set_2026-11-15.txt`,
-header). The
-build from a fresh clone was not repeated with the 39, the 40 or the 43 patches. `scripts/README.md` lists the scripts.
+header). On 2026-11-21 to 2026-11-24, on the Mac Studio (the machine loaded by other programs, so only the verdicts count), the snapshots of patches 0044 to 0049 (cg34a to cg35c) were checked before every timed slot. For patches 0044 to 0046: `check --lite`, 18 of 18 rows identical to stock on the six models, the Debye check, the validation suite (15 of 15), raw fields and probes on 17 kinds of model with band heights from 1 to NY-1 and 1 to 6 threads (1388 of 1388 identical), the closed cylinder (116 of 116), the steady-state stop step with Mur and with PML, and `bench.py`'s six cases at XS with bands of 5, 2 and 1 lines (`results/large_grid_cg34_2026-11-22.txt`). For patches 0047 to 0049: 630, 501 and 470 box configurations (0047, 0048, 0049), the dispersive check (`ade_check`) against stock at 50 k and 1 M cells, the closed cylinder, the six harness models, the Debye check and the validation suite (15 of 15); a setup check that the operator arrays are equal by hash at different pool sizes (`results/dispersive_cg35_2026-11-23.txt`). In the final benchmark of patches 0044 to 0046 the probes were identical to cg33's on 54 of 54 rows. On the head's rebuild from its commit (snapshot cg35, v0.37.0-67-g8af6c4c) the Debye check, the six-model check (`--lite`, 18 of 18 rows identical to stock) and the validation suite (15 of 15) passed on 2026-11-24; the full check of this section was not run on it. The
+build from a fresh clone was not repeated with the 39, the 40, the 43 or the 49 patches. `scripts/README.md` lists the scripts.
 
 Harness knobs: `OPENEMS_BENCH_RUNS=dir` puts the run directories (probe files, dumps, logs) somewhere other than
 `/tmp/openems_bench_runs` (`check.sh` and `step1.sh` export it); `OPENEMS_BENCH_SNAPS=dir` is the folder of named

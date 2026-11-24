@@ -10,7 +10,7 @@ cumulative diff against the base 7bb294f (upstream branch `gpu-engine`) as it st
 `patches/csxcad/0001` against CSXCAD v0.7.0. Totals through patch 0005:
 openEMS 43 files, +3098/−179 lines; CSXCAD 3 files, +9/−0. Every line count below is from that
 cumulative diff; patch 0006 (snapshot cg18, section "Final review fixes") changes some of them, and the file
-`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0043 (68 files, +7685/−265). Patch 0001 holds
+`patches/openems/cumulative_vs_gpu-engine.patch` now covers patches 0001–0049 (76 files, +10771/−520). Patch 0001 holds
 steps 2 and 3 (items A–E, Field_Gather_SSE, the Mur line hooks; snapshots ABCDEG to cg8), 0002 cg9,
 0003 cg10–cg15, 0004 cg16 and 0005 cg17. Through patch 0006 the GPU engine sources (`FDTD/engine_gpu*`,
 `gpu_backend*`, `FDTD/metal`, `FDTD/hip`, `operator_gpu*`) are **not touched** by the fork, and every
@@ -22,7 +22,7 @@ engine (`--engine=metal-diamond`, in the new files `FDTD/engine_metal_diamond.h`
 cg18); patches 0017–0027 (snapshot cg29) are CPU items. These notes describe
 patches 0001–0006 and, in the sections "Tiled sweep of the multithreaded engine" and "Thread search start, packed
 dispersive hooks and guard", patch 0040 (snapshot cg32d) and patches 0041–0043 (snapshots cg33a, cg33c, cg33d; the
-fork's head is 13350ca; none of the four is in the installed build, which is cg31 = patches 0001–0039). They do not
+fork's head was 13350ca at the time; none of the four was in the installed build, which was cg31 = patches 0001–0039 then; since 2026-11-14 the installed build is cg33 = 13350ca). Patches 0044–0049 (snapshots cg34a to cg35c, the fork's head 8af6c4c, not installed) are described in the last sections of this file, from their commits. They do not
 describe the patches between:
 0028–0039 (the build cg31) are described in the `CHANGELOG.md` entry of 2026-11-11 and in the
 paper's Section "After publication"; 0007–0027 are described in the `CHANGELOG.md` entries of 2026-11-04 and 2026-11-05, in
@@ -1360,6 +1360,148 @@ the limit or by a failed allocation (`std::bad_alloc`, after which the block is 
 bytes already packed ("… ADE packing not used … would need N bytes, limit L …"); `OPENEMS_ADE_PACKED=0` is
 reported at `verbose>1`. The two refusal paths were exercised by the `refuse` case of `ade_check2.py` (a Debye
 block above the limit). No arithmetic line changed: the results are identical to those of the commit before.
+
+## Large grids and dispersive materials (cg34 and cg35, patches 0044–0049, 2026-11-22 to 2026-11-24)
+
+Written from the six commits' diffs and messages (d918386, e05d419, 8d513ba, d3374c9, f7cae41, 8af6c4c on 13350ca); the file
+counts are `git show --stat` of each commit. The measurements are on the M5 Max only
+(`results/large_grid_cg34_2026-11-22.txt`, `results/dispersive_cg35_2026-11-23.txt`; paper Section "Large grids and
+dispersive materials on the M5 Max"). All six are checked bit-identical to the commit before and to stock v0.37.0. None
+is in the installed build (cg33).
+
+### Patch 0044: box hooks (d918386)
+
+**Files.** `FDTD/engine_multithread.cpp` (+109/−), `.h` (+7); `FDTD/extensions/engine_ext_excitation.cpp` (+36) and `.h` (+7),
+`engine_ext_lumpedRLC.cpp` (+44) and `.h`, `engine_ext_steadystate.cpp` (+51) and `.h` (+6), `engine_ext_upml.cpp` (+168) and
+`.h` (+15), `engine_extension.h` (+31). 11 files, +471/−11.
+
+**What.** `Engine_Extension` gets the flag `BOX_HOOKS` and six hooks that take an x range and a y range
+(`Do{Pre,Post}{Voltage,Current}UpdatesBox` and `Apply2{Voltages,Current}Box`). When every extension of an engine with a hook
+declares them, a task of the tiled sweep runs Pre box hooks, the update, Post and Apply box hooks on the thread's own y lines
+behind one barrier; otherwise the old hook stages stay (the log line says which and why). `OPENEMS_TBLOCK_BOX=0` keeps the
+stages. Box hooks exist for the UPML (f4vector rows, scalar rows and y-vector groups; a group cut by the y range runs its own
+lanes), the excitation and the lumped RLC (index lists filtered by the box) and the steady-state detection (row copies; the last
+thread evaluates).
+
+**Why.** With tiles of 5 to 15 x-lines and 12 to 18 threads, one to five threads did all the extension work of a task while the
+others waited: at 30 M cells with a PML the tiled sweep ran at 0.26 to 0.79 of the fused sweep.
+
+**Check.** Raw fields, probes and the steady-state stop step identical to the hook stages and to the fused sweep; 38 of 38 hot
+functions have the same machine code as before. At 30 M cells with a PML and 18 threads the tiled sweep with box hooks ran at 1.15
+to 1.28 times the fused sweep (hook stages: 0.32); it stays opt-in.
+
+### Patch 0045: the y-banded fused sweep (e05d419)
+
+**Files.** `FDTD/engine_multithread.cpp` (+222/−), `.h` (+15); new `FDTD/extensions/engine_ext_boxruns.h` (+62);
+`engine_ext_excitation.cpp` and `.h`, `engine_ext_lumpedRLC.cpp` and `.h`, `engine_ext_steadystate.cpp` and `.h`,
+`engine_extension.h` (+7). 10 files, +335/−88.
+
+**What.** `Engine_Multithread::FusedBands` cuts every block of a thread's x-slab, except the slab's last block, into bands of H y
+lines: per band the voltage box hooks and the voltage update of the block, then the currents of the lines behind, on the rows one line
+back in y (row 0 joins the first band, the last band runs to the end of y). The slab's last block and the line before the slab keep
+whole planes, so the neighbour-flag scheme between threads is unchanged. In band mode every hook runs as a box hook. The excitation,
+RLC and steady-state box hooks find their points by binary search over (x, y) keys (`engine_ext_boxruns.h`).
+`OPENEMS_YBAND` = `0` | H | `auto` (default when unset); `OPENEMS_YBAND_CACHE` = MiB a thread. Auto: a thread's share of the
+cache is the smallest `hw.perflevelN.l2cachesize / cpusperl2` of the levels the threads occupy; bands when four y-z planes exceed it,
+H = half the share over four lines (at least 4), off when two bands would not fit; all or nothing (an extension with hooks but
+without box hooks keeps whole planes); the tiled sweep, when asked for, takes precedence.
+
+**Why.** Once four planes of voltages and currents no longer fit a thread's cache share, the line behind that the sweep reuses has
+left the cache: the plain box fell from 7477 MC/s at 2 M cells to 3778 at 30 M (18 threads).
+
+**Check.** H from 1 to NY−1, 1 to 6 threads, flags off, wider blocks: raw fields and probes identical to the unbanded sweep; at
+8 M and 30 M cells at 6, 12 and 18 threads too. 30 M cells, 18 threads: ideal 3726 to 5682, pml 2701 to 4132; 1 M cells unchanged
+(bands off).
+
+### Patch 0046: box hooks for the other extensions (8d513ba)
+
+**Files.** `engine_multithread.cpp` (+192/−) and `.h` (+16); `engine_ext_boxruns.h` (+8); `engine_ext_cylinder.cpp` (+112) and `.h`
+(+10); `engine_ext_debyematerial.cpp` (+185/−) and `.h`; `engine_ext_dispersive.cpp` (+87/−) and `.h` (+50);
+`engine_ext_lorentzmaterial.cpp` (+321/−) and `.h`; `engine_ext_mur_abc.cpp` (+104) and `.h`; `engine_extension.h`. 14 files,
++921/−218.
+
+**What.** Mur: the face cells are sorted by y per x-line, and `GetCoupledRows` names the lower row of every coupled pair so that no
+band edge or thread share falls between them (`SetupYCuts`, `m_BandEdges`); the slow path and unsorted layouts keep the line hooks.
+Conducting sheets, Lorentz, Drude and Debye: the packed groups are found by key range; a group cut by the y range runs the same group
+function on a thread-local copy whose outside lanes repeat an inside lane, and only the inside lanes are written back; the unpacked and merged
+paths have box loops with the same per-position arithmetic. Closed cylinder: the extension declares `Y_WRAP`; the last band runs
+row 0 as a box of its own first, the first band starts at row 1, and the block of x-line 0 (r = 0 reads every row) runs in whole
+planes; the tiled sweep keeps its hook stages on such a mesh.
+
+**Why.** Every extension of the six benchmark cases and of the boards then has box hooks, so the bands and the tiled sweep's box mode
+cover them.
+
+**Check.** Raw fields and probes on 17 kinds of model, H from 1 to NY−1, 1 to 6 threads, closed cylinder with and without the axis,
+steady-state stop step with Mur; the six benchmark cases with bands of 5, 2 and 1 lines and at 8 M cells with bands of 24. At 30 M cells
+and 18 threads: antenna 2537 to 3936, cylindrical 3901 to 5797, dispersive 1320 to 2121.
+
+### Patch 0047: dispersive line hooks a z-vector at a time (d3374c9)
+
+**Files.** `engine_ext_debyematerial.cpp` (+232/−) and `.h`, `engine_ext_dispersive.cpp` (+113) and `.h` (+186/−),
+`engine_ext_lorentzmaterial.cpp` (+230/−) and `.h`. 6 files, +666/−133.
+
+**What.** A packed group is the positions of one f4vector (a base offset and a lane mask; masked lanes keep their field bits)
+wherever a hook has at least 2.5 positions a group on average; thin structures (conducting sheets) keep the position groups. The
+coefficients are in a table of distinct sets with a 16- or 32-bit index a group (or a record a group when nearly every group
+differs), apart from the state that is written; the per-position arrays are freed after packing. Per-lane arithmetic unchanged.
+`OPENEMS_ADE_VEC=0` keeps the position groups, `2` forces vector groups; `OPENEMS_ADE_COEF=group|table|table32` picks the
+coefficient layout (both for tests).
+
+**Why.** The old groups held four consecutive positions of an x-line, in a filled block four f4vectors with one lane each: scalar
+gathers through twelve indices a group, and a block that held coefficients and state together and was read and written back whole
+(about 132 bytes a Lorentz cell and 156 a Debye cell per step, against 49 for a plain cell).
+
+**Check.** 630 box configurations (lanes 4, 3, 2, 1 and a split mask, both group kinds, every coefficient layout, bands, tiled box
+mode, 1 to 6 threads), the dispersive check against stock at 50 k and 1 M cells, the closed cylinder, the six harness models, the
+Debye check, the validation suite. Dispersive case at 18 threads: 30 M cells 2108 to 2962, 8 M 2068 to 2976, 1 M 2777 to 3942;
+memory at 30 M 6580 to 5857 MiB; antenna 0.99 to 1.02, the two boards 1.005.
+
+### Patch 0048: Debye transients in per-thread scratch (f7cae41)
+
+**Files.** `engine_multithread.cpp` (+73) and `.h` (+12); `engine_ext_debyematerial.cpp` (+258/−) and `.h` (+35/−);
+`engine_ext_dispersive.cpp` (+7) and `.h`; `engine_extension.cpp` (+13) and `.h` (+31). 8 files, +388/−48.
+
+**What.** `Engine_Extension` gets `RANGE_LOCAL` and `SetRangeLocal()`: after every plan the multithreaded engine tells the extensions
+that declare it whether the plan calls Pre, Post and Apply of one range (an x-line block or an x-y box) back to back on one thread,
+and the widest range. It does for the fused sweep in line blocks, its y-bands with an open y direction and the box mode of the tiled
+sweep; not for the unfused plan, the tiled sweep's hook stages or bands of a closed y direction. While the grant holds, the Debye
+blocks hold the pole state only (moved together inside the same allocation) and the pre-sum and the correction (24 of
+12(P+2) floats a group) live in a scratch slice of the calling thread; a check of thread, width and call order stops the run if
+the engine breaks the grant. Lorentz and Drude state is read again in the next step and is left as it was.
+`OPENEMS_ADE_SCRATCH=0` keeps the stored layout; `alt` withdraws and grants again before every run of steps (test).
+
+**Why.** A packed Debye group stored the two values only to carry them across two calls: 144 to 48 bytes written a group and
+step at one pole.
+
+**Check.** 501 box configurations in three variants (1 to 4 poles, lanes 4 to 1 and a split mask, both group kinds, every driver, 1 to 6
+threads, closed cylinder), the dispersive check at 50 k and 1 M cells, five models without Debye, the Debye check, the validation
+suite; seven planted faults caught. 30 M cells 2969 to 3266, 8 M 2964 to 3156, 1 M 3923 to 4054 (18 threads); at 8 M cells and
+6 threads 1920 to 1860 (no bands there).
+
+### Patch 0049: dispersive operator setup on the setup threads (8af6c4c)
+
+**Files.** 19 files, +836/−288: `FDTD/engine.cpp`, `engine_multithread.cpp`, `engine_sse.cpp`, `engine_sse_compressed.cpp`,
+`extensions/engine_ext_{debyematerial,dispersive,lorentzmaterial}.cpp/.h`, `extensions/operator_ext_debyematerial.cpp` (+193/−),
+`operator_ext_dispersive.cpp` (+43) and `.h` (+64), `operator_ext_lorentzmaterial.cpp` (+443/−), `FDTD/operator.cpp` (+67/−) and `.h`,
+`operator_multithread.cpp`, `operator_sse_compressed.cpp`, `openems.cpp` (+21), and the new `tools/setup_memory.h` (+63) and
+`tools/setup_timing.h` (+132).
+
+**What.** The Lorentz/Drude and Debye `BuildExtension` scans run per x-line on the operator's setup pool: each thread collects its
+lines' entries in blocks, the blocks are merged in x order (the serial order, so every array is the same byte for byte at any pool
+size), and columns that hold no wanted, unmarked primitive are skipped. `Operator::GetMaterial` remembers the cast per thread and
+setup generation. The EC arrays and the scan blocks come from `SetupAlloc` / `SetupFree` (`tools/setup_memory.h`: `mmap` on macOS,
+`malloc` elsewhere), so freed setup memory leaves the process. The engine's `SetupLines` skips its stable sort when the positions
+are already sorted by x and tests first-component uniqueness with a bitmap. `OPENEMS_SETUP_THREADS=n` sets the pool size;
+`OPENEMS_SETUP_TIMING=1` prints the phases. No per-timestep function changes.
+
+**Why.** At 30 M cells with half the cells dispersive the setup took 13 s where the rest of the operator takes 2 s, and the freed
+setup arrays stayed in the process (5.9 GiB resident).
+
+**Check.** Operator arrays by hash at pool sizes 1, 2, 3, 6 and default on 22 models, 470 box configurations, the dispersive check
+at 50 k and 1 M cells and on the closed cylinder, five models without dispersion, the Debye check, six models at three thread
+settings, the validation suite; six of eight planted faults caught (the two others need an index pattern no test model has).
+Dispersive case, 30 M cells: setup 13.25 to 4.90 s, resident 5857 to 3737 MiB; 8 M cells 3.63 to 1.55 s, 1742 to 1069 MiB; rates
+0.98 to 1.01 of before on ten points.
 
 ## Numbers checked against the code
 

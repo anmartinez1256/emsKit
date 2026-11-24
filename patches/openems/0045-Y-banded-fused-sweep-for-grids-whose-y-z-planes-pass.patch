@@ -1,0 +1,747 @@
+From e05d4197dc30a5b47d82ae3006f438113831520a Mon Sep 17 00:00:00 2001
+From: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 22:23:48 -0600
+Subject: [PATCH 45/49] Y-banded fused sweep for grids whose y-z planes pass
+ the cache
+
+The fused sweep walks each thread's x-slab in whole y-z planes. Once four
+planes of voltages and currents no longer fit a thread's share of the L2
+cache, the "line behind" that the sweep reuses has left the cache and
+the rate falls: on a Mac Studio (M5 Max, 18 threads) the plain box went
+from 7477 MC/s at 2 M cells to 3778 at 30 M.
+
+Engine_Multithread::FusedBands cuts every block of a slab, except the
+slab's last block, into bands of H y lines: per band the voltage box
+hooks and UpdateVoltagesY of the block, then the currents of the lines
+behind on the rows one line back in y (row 0 joins the first band, the
+last band runs to NY). The slab's last block and the line before the slab
+keep whole planes, so the neighbour-flag scheme between threads is as it
+was. In band mode every hook runs as a box hook (extensions that count
+copies, such as the steady-state detection, see one kind of call).
+
+OPENEMS_YBAND = 0 (off) | H (force) | auto (default when unset).
+auto: the share of a thread is the smallest L2 size per core of the
+performance levels the threads occupy (sysctl hw.perflevelN.l2cachesize /
+cpusperl2; else the shared cache over the threads; OPENEMS_YBAND_CACHE
+gives MiB a thread). Bands when four planes exceed the share; H = half the
+share over four lines, at least 4; off when two bands would not fit NY.
+All or nothing: an extension with hooks but without box hooks keeps
+whole planes. The tiled sweep, when asked for, takes precedence.
+
+Excitation, lumped RLC and steady-state box hooks find their points by
+binary search over (x, y) keys (extensions/engine_ext_boxruns.h).
+
+Bit-identical to the unbanded sweep in every configuration tested (raw
+fields and probes: H from 1 to NY-1, 1 to 6 threads, flags off, wider
+blocks; at 8 M and 30 M cells at 6, 12 and 18 threads). Mac Studio,
+upstream bench.py with a source, 18 threads, MC/s before -> after:
+30 M ideal 3726 -> 5682, 30 M pml 2701 -> 4132, 8 M ideal 4753 -> 6045,
+8 M pml 2990 -> 3670; 1 M unchanged (bands stay off).
+
+Generated-by: Claude Opus 5.5 (Anthropic)
+Signed-off-by: Angel Martinez <110217098+anmartinez1256@users.noreply.github.com>
+---
+ FDTD/engine_multithread.cpp                | 222 +++++++++++++++++++--
+ FDTD/engine_multithread.h                  |  15 ++
+ FDTD/extensions/engine_ext_boxruns.h       |  62 ++++++
+ FDTD/extensions/engine_ext_excitation.cpp  |  37 +---
+ FDTD/extensions/engine_ext_excitation.h    |  11 +-
+ FDTD/extensions/engine_ext_lumpedRLC.cpp   |  35 +---
+ FDTD/extensions/engine_ext_lumpedRLC.h     |  11 +-
+ FDTD/extensions/engine_ext_steadystate.cpp |  20 +-
+ FDTD/extensions/engine_ext_steadystate.h   |   3 +
+ FDTD/extensions/engine_extension.h         |   7 +
+ 10 files changed, 335 insertions(+), 88 deletions(-)
+ create mode 100644 FDTD/extensions/engine_ext_boxruns.h
+
+diff --git a/FDTD/engine_multithread.cpp b/FDTD/engine_multithread.cpp
+index 3827336..5fd3e83 100644
+--- a/FDTD/engine_multithread.cpp
++++ b/FDTD/engine_multithread.cpp
+@@ -86,6 +86,7 @@ Engine_Multithread::Engine_Multithread(const Operator_Multithread* op) : Engine_
+ 	m_opt_speed = false;
+ 	m_auto_threads = false;
+ 	m_Fused = false;
++	m_YBand = 0;
+ 	m_Tiled = false;
+ 	m_TileK = m_TileW = 0;
+ 	m_TileHooksAll = false;
+@@ -189,6 +190,63 @@ static size_t TileCacheBytes()
+ 	return 0;
+ }
+ 
++//! The automatic rule of the y-bands of the fused sweep (OPENEMS_YBAND unset or "auto"), all its constants in one place:
++//! - a thread reuses about four y-z planes of one field (three float components each): the voltages and currents of the
++//!   line it updates and of the line before it;
++//! - bands are used only when those four planes do not fit the thread's share of its L2 cache (YBandCacheShare);
++//! - a band then holds the y lines whose four band-planes take about half of that share (the rest is left for the
++//!   coefficient tables, the operator indices and the extensions' data), at least YBAND_MIN_LINES;
++//! - and none when such bands would be half the y lines or more (two bands per plane gain nothing).
++static const unsigned int YBAND_PLANES = 4;
++static const double YBAND_CACHE_FRACTION = 0.5;
++static const unsigned int YBAND_MIN_LINES = 4;
++
++//! A thread's share of its L2 cache for the y-bands (bytes; 0 when unknown): OPENEMS_YBAND_CACHE=<MiB per thread>; on Apple
++//! the L2 cache of a cluster divided by the cores sharing it (hw.perflevelN.l2cachesize / hw.perflevelN.cpusperl2), the
++//! smallest one of the performance levels the threads occupy (level 0 first, then 1, ..: level 0 alone when the threads
++//! fit its cores); elsewhere (or when those are unknown) the cache of TileCacheBytes() divided by the threads.
++static double YBandCacheShare(unsigned int numThreads)
++{
++	const char* env = getenv("OPENEMS_YBAND_CACHE");
++	if (env && *env && (atof(env)>0))
++		return atof(env)*1048576.0;
++	numThreads = std::max(1u, numThreads);
++#ifdef __APPLE__
++	int levels = 0;
++	size_t len = sizeof(levels);
++	if ((sysctlbyname("hw.nperflevels", &levels, &len, NULL, 0)==0) && (levels>=1))
++	{
++		double share = 0;
++		unsigned int cores = 0;
++		bool ok = true;
++		for (int k=0; (k<levels) && ((k==0) || (cores<numThreads)); ++k)
++		{
++			char key[64];
++			int64_t l2 = 0;   // the kernel fills 4 or 8 of these bytes
++			int per = 0, phys = 0;
++			snprintf(key, sizeof(key), "hw.perflevel%d.l2cachesize", k);
++			len = sizeof(l2);
++			ok = ok && (sysctlbyname(key, &l2, &len, NULL, 0)==0) && (l2>0);
++			snprintf(key, sizeof(key), "hw.perflevel%d.cpusperl2", k);
++			len = sizeof(per);
++			ok = ok && (sysctlbyname(key, &per, &len, NULL, 0)==0) && (per>0);
++			snprintf(key, sizeof(key), "hw.perflevel%d.physicalcpu", k);
++			len = sizeof(phys);
++			ok = ok && (sysctlbyname(key, &phys, &len, NULL, 0)==0) && (phys>0);
++			if (!ok)
++				break;
++			const double s = (double)l2/per;
++			share = (k==0) ? s : std::min(share, s);
++			cores += phys;
++		}
++		if (ok && (share>0))
++			return share;
++	}
++#endif
++	const size_t cache = TileCacheBytes();
++	return (cache>0) ? (double)cache/numThreads : 0;
++}
++
+ //! How long a wait for a neighbour flag spins before it sleeps (StepFlag::WaitFor): OPENEMS_FLAGS_SPIN_US for any
+ //! thread count; else none when the threads outnumber the performance cores of an Apple CPU (some of them run on the
+ //! efficiency cores, the waits for them are long, and a spinning thread only takes power and a core from the others),
+@@ -633,6 +691,7 @@ void Engine_Multithread::SetupFused()
+ {
+ 	m_Fused = false;
+ 	m_Tiled = false;
++	m_YBand = 0;
+ 	for (int g=0; g<6; ++g)
+ 		m_LineHooks[g].clear();
+ 	const char* env = getenv("OPENEMS_FUSED");
+@@ -757,9 +816,82 @@ void Engine_Multithread::SetupFused()
+ 	std::string flagMsg = ", neighbour flags";
+ 	if (g_settings.GetVerboseLevel()>1)
+ 		flagMsg += " (wait spin " + std::to_string(m_FlagSpin.count()) + " us)";
+-	ReportFused("fused sweep, " + std::to_string(nb) + " blocks of x-lines" +
+-				(m_UseFlags ? flagMsg : (nonlocal.empty() ? "" : ", barriers (the extension \"" + nonlocal + "\" is not TS_LOCAL)")));
++
++	// y-bands (see m_YBand): OPENEMS_YBAND unset or "auto" = the automatic rule, 0 = off, H = bands of H y lines
++	std::string bandMsg;
++	{
++		const char* yenv = getenv("OPENEMS_YBAND");
++		const bool set = yenv && *yenv;   // an empty value is the same as unset
++		const bool autoH = !set || (strcmp(yenv, "auto")==0);
++		const unsigned int NY = numLines[1];
++		const double line = numVectors*4*12.0;   // bytes of one y line of a y-z plane: three float components
++		unsigned int H = 0;
++		std::string why;
++		double share = 0;
++		if (!autoH)
++		{
++			const long v = atol(yenv);
++			H = (v>0) ? (unsigned int)std::min<long>(v, 0x7fffffffL) : 0;
++			if ((H>0) && (H>=NY))
++			{
++				why = "bands of " + std::to_string(H) + " lines for " + std::to_string(NY) + " y-lines";
++				H = 0;
++			}
++		}
++		else
++		{
++			share = YBandCacheShare(m_numThreads);
++			if (share<=0)
++				why = "the cache size is not known";
++			else if (YBAND_PLANES*NY*line<=share)
++				why = "the y-z planes fit a thread's cache share";
++			else
++			{
++				H = std::max(YBAND_MIN_LINES, (unsigned int)std::floor(YBAND_CACHE_FRACTION*share/(YBAND_PLANES*line)));
++				if ((uint64_t)2*H>=NY)
++				{
++					why = "bands of " + std::to_string(H) + " lines would be half of the " + std::to_string(NY) + " y-lines or more";
++					H = 0;
++				}
++			}
++		}
++		if (H>0)
++		{
++			why = NoBoxHooks();
++			if (!why.empty())
++				H = 0;
++		}
++		m_YBand = H;
++		if (H>0)
++			bandMsg = ", y-bands of " + std::to_string(H) + " lines (" +
++					  (autoH ? std::to_string((long long)std::llround(share/1024)) + " KiB a thread" : std::string("OPENEMS_YBAND")) + ")";
++		else if (set && !why.empty())
++			bandMsg = ", no y-bands (" + why + ")";
++	}
++	// the tiled sweep, when it runs, takes precedence over the y-bands
+ 	SetupTiled(coupled);
++	if (m_Tiled)
++	{
++		m_YBand = 0;
++		bandMsg.clear();
++	}
++	ReportFused("fused sweep, " + std::to_string(nb) + " blocks of x-lines" +
++				(m_UseFlags ? flagMsg : (nonlocal.empty() ? "" : ", barriers (the extension \"" + nonlocal + "\" is not TS_LOCAL)")) + bandMsg);
++}
++
++std::string Engine_Multithread::NoBoxHooks() const
++{
++	// all or none (see Engine_Extension's *Box() hooks): one extension without them would change the order of the
++	// extensions for some cells
++	const unsigned int anyHook = Engine_Extension::PRE_VOLT | Engine_Extension::POST_VOLT | Engine_Extension::APPLY_VOLT |
++								 Engine_Extension::PRE_CURR | Engine_Extension::POST_CURR | Engine_Extension::APPLY_CURR;
++	for (size_t k=0; k<m_Eng_exts.size(); ++k)
++	{
++		const unsigned int used = m_Eng_exts.at(k)->GetUsedHooks();
++		if ((used & anyHook) && !(used & Engine_Extension::BOX_HOOKS))
++			return "the extension \"" + m_Eng_exts.at(k)->GetExtensionName() + "\" has no box hooks";
++	}
++	return "";
+ }
+ 
+ void Engine_Multithread::SetupTiled(const std::vector<unsigned int>& coupled)
+@@ -874,9 +1006,7 @@ void Engine_Multithread::SetupTiled(const std::vector<unsigned int>& coupled)
+ 		const char* henv = getenv("OPENEMS_TBLOCK_HOOKS");
+ 		const bool hooksOne = henv && *henv && (atoi(henv)==0);
+ 		m_TileHooksAll = (m_numThreads>1) && !hooksOne;
+-		// box mode: every extension that uses a hook has box hooks (all or none, see Engine_Extension's *Box() hooks)
+-		const unsigned int anyHook = Engine_Extension::PRE_VOLT | Engine_Extension::POST_VOLT | Engine_Extension::APPLY_VOLT |
+-									 Engine_Extension::PRE_CURR | Engine_Extension::POST_CURR | Engine_Extension::APPLY_CURR;
++		// box mode: every extension that uses a hook has box hooks (all or none, see NoBoxHooks)
+ 		std::string stageWhy;
+ 		const char* benv = getenv("OPENEMS_TBLOCK_BOX");
+ 		if (benv && *benv && (atoi(benv)==0))
+@@ -884,12 +1014,7 @@ void Engine_Multithread::SetupTiled(const std::vector<unsigned int>& coupled)
+ 		else if (hooksOne)
+ 			stageWhy = "OPENEMS_TBLOCK_HOOKS=0";
+ 		else
+-			for (int k=0; (k<N) && stageWhy.empty(); ++k)
+-			{
+-				const unsigned int used = m_Eng_exts.at(k)->GetUsedHooks();
+-				if ((used & anyHook) && !(used & Engine_Extension::BOX_HOOKS))
+-					stageWhy = "the extension \"" + m_Eng_exts.at(k)->GetExtensionName() + "\" has no box hooks";
+-			}
++			stageWhy = NoBoxHooks();
+ 		m_TileBox = stageWhy.empty();
+ 		msg = "tiled sweep, " + std::to_string(edge.size()-1) + " tiles of " + std::to_string(W) + " x-lines, " +
+ 			  std::to_string(K) + " timesteps per block" +
+@@ -1187,14 +1312,59 @@ void Engine_Multithread::RunLineHooks(int group, unsigned int x0, unsigned int x
+ 	}
+ }
+ 
++void Engine_Multithread::FusedHooks(int group, unsigned int x0, unsigned int x1)
++{
++	if (m_YBand)
++		RunBoxHooks(group, x0, x1, 0, numLines[1]);
++	else
++		RunLineHooks(group, x0, x1);
++}
++
+ void Engine_Multithread::FusedCurrents(unsigned int x0, unsigned int x1)
+ {
+ 	if (x0>=x1)
+ 		return;
+-	RunLineHooks(3, x0, x1);
++	FusedHooks(3, x0, x1);
+ 	UpdateCurrents(x0, x1-x0);
+-	RunLineHooks(4, x0, x1);
+-	RunLineHooks(5, x0, x1);
++	FusedHooks(4, x0, x1);
++	FusedHooks(5, x0, x1);
++}
++
++void Engine_Multithread::FusedBands(unsigned int b0, unsigned int bl, unsigned int start)
++{
++	// The order of the fused sweep with the y direction cut into bands: the voltages of a cell (x, y) need the old currents
++	// of (x, y), (x-1, y) and (x, y-1), the currents of (x, y) the final voltages of (x, y), (x+1, y) and (x, y+1). The
++	// voltages of the band [y0, y1) on the block [x0, x1) are followed by the currents of the lines behind the block,
++	// [x0-1, x1-1) (from x0 at the start of the slab), on the rows behind the band, [y0-1, y1-1) (from 0 in the first band,
++	// up to NY in the last one, whose last row the update leaves alone, as in whole planes). In the order (band, block,
++	// voltages before currents) the currents of (x, y) belong to (band of y+1, block of x+1): after the final voltages of
++	// (x, y), (x+1, y) and (x, y+1), which are also the only voltages that read the old currents of (x, y). So every cell
++	// gets the operands of the unfused update; the z direction stays inside a row. After the last band the currents of the
++	// lines [start, m_Blocks[bl]-1) are done on all rows, exactly what the sweep in whole planes leaves when it reaches the
++	// block bl. All hooks touch their own cells only (box hooks), in the order Pre, update, Post, Apply of every cell.
++	const unsigned int NY = numLines[1], H = m_YBand;
++	for (unsigned int y0=0; y0<NY; y0+=H)
++	{
++		const unsigned int y1 = std::min(NY, y0+H);   // H < NY: no wrap-around
++		const unsigned int yc0 = (y0==0) ? 0 : y0-1;
++		const unsigned int yc1 = (y1==NY) ? NY : y1-1;
++		for (unsigned int b=b0; b<bl; ++b)
++		{
++			const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
++			RunBoxHooks(0, x0, x1, y0, y1);
++			UpdateVoltagesY(x0, x1-x0, y0, y1);
++			RunBoxHooks(1, x0, x1, y0, y1);
++			RunBoxHooks(2, x0, x1, y0, y1);
++			const unsigned int xc0 = (x0==start) ? x0 : x0-1, xc1 = x1-1;
++			if ((xc0<xc1) && (yc0<yc1))
++			{
++				RunBoxHooks(3, xc0, xc1, yc0, yc1);
++				UpdateCurrentsY(xc0, xc1-xc0, yc0, yc1);
++				RunBoxHooks(4, xc0, xc1, yc0, yc1);
++				RunBoxHooks(5, xc0, xc1, yc0, yc1);
++			}
++		}
++	}
+ }
+ 
+ void Engine_Multithread::FusedTimestep(int threadID)
+@@ -1204,16 +1374,20 @@ void Engine_Multithread::FusedTimestep(int threadID)
+ 	// of a block are done, the currents of the line before the block and of the block but its last line
+ 	// are updated: every cell sees the same operands as in the unfused update (bit-identical).
+ 	// The line before the slab belongs to the previous thread's slab: it waits for the first barrier.
++	// y-bands: the blocks but the last one of the slab in bands (FusedBands), the last one in whole planes.
+ 	const unsigned int b0 = m_SlabBlocks[threadID], b1 = m_SlabBlocks[threadID+1];
+ 	const unsigned int start = m_Blocks[b0];
+ 	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+-	for (unsigned int b=b0; b<b1; ++b)
++	const unsigned int bl = (m_YBand && (b1>b0+1)) ? b1-1 : b0;
++	if (bl>b0)
++		FusedBands(b0, bl, start);
++	for (unsigned int b=bl; b<b1; ++b)
+ 	{
+ 		const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
+-		RunLineHooks(0, x0, x1);
++		FusedHooks(0, x0, x1);
+ 		UpdateVoltages(x0, x1-x0);
+-		RunLineHooks(1, x0, x1);
+-		RunLineHooks(2, x0, x1);
++		FusedHooks(1, x0, x1);
++		FusedHooks(2, x0, x1);
+ 		FusedCurrents((x0==start) ? x0 : x0-1, x1-1);
+ 	}
+ 	FusedStat& stat = m_FusedStat[threadID];
+@@ -1294,15 +1468,19 @@ void Engine_Multithread::FusedTimestepFlags(int threadID, unsigned int step)
+ 	const bool last = ((unsigned int)threadID+1==m_numThreads);
+ 	const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+ 	std::chrono::steady_clock::duration waited = std::chrono::steady_clock::duration::zero();
+-	for (unsigned int b=b0; b<b1; ++b)
++	// y-bands: the blocks but the last one in bands (they touch no line of a neighbour), the last one as before
++	const unsigned int bl = (m_YBand && (b1>b0+1)) ? b1-1 : b0;
++	if (bl>b0)
++		FusedBands(b0, bl, start);
++	for (unsigned int b=bl; b<b1; ++b)
+ 	{
+ 		if ((b+1==b1) && !last)
+ 			waited += m_BoundaryDone[threadID+1].WaitFor(step, m_FlagSpin);
+ 		const unsigned int x0 = m_Blocks[b], x1 = m_Blocks[b+1];
+-		RunLineHooks(0, x0, x1);
++		FusedHooks(0, x0, x1);
+ 		UpdateVoltages(x0, x1-x0);
+-		RunLineHooks(1, x0, x1);
+-		RunLineHooks(2, x0, x1);
++		FusedHooks(1, x0, x1);
++		FusedHooks(2, x0, x1);
+ 		FusedCurrents((x0==start) ? x0 : x0-1, x1-1);
+ 	}
+ 	m_SweepDone[threadID].Publish(step+1);
+diff --git a/FDTD/engine_multithread.h b/FDTD/engine_multithread.h
+index b46f698..7709945 100644
+--- a/FDTD/engine_multithread.h
++++ b/FDTD/engine_multithread.h
+@@ -142,6 +142,21 @@ protected:
+ 	std::vector<Engine_Extension*> m_LineHooks[6]; //!< per hook group: the extensions to call, in order
+ 	void SetupFused();
+ 	std::string m_FusedMsg; //!< the last fused-sweep line printed (verbose>0), see ReportFused()
++	//! y-bands of the fused sweep (OPENEMS_YBAND; 0 = whole y-z planes, the sweep as before). With H>0 a thread sweeps
++	//! all blocks of its slab but the last one band by band: for the y lines [y0, y0+H), every block's voltages (and
++	//! their box hooks) on those lines, then the currents of the lines behind it on the y lines [y0-1, y0+H-1) (the first
++	//! band from 0, the last one up to NY): the currents are one row behind in y as they are one line behind in x, so
++	//! every cell gets the operands of the unfused update (bit-identical), and the planes of a band stay in the cache
++	//! when a plane of the grid is larger than a thread's share of it. The last block of the slab and the line before it
++	//! run in whole planes (the neighbour flags and barriers are unchanged); in band mode all hooks are box hooks (the
++	//! last block's with the whole y range), so every extension that uses a hook must declare BOX_HOOKS.
++	unsigned int m_YBand;
++	//! the reason why the box hooks cannot run (an extension with hooks but without BOX_HOOKS); empty when they can
++	std::string NoBoxHooks() const;
++	//! the blocks [b0, bl) of a slab that starts at the x-line start, in y-bands of m_YBand lines
++	void FusedBands(unsigned int b0, unsigned int bl, unsigned int start);
++	//! the hooks of a group for the x-lines [x0, x1) in the fused sweep: the line hooks, in band mode the box hooks of all y
++	void FusedHooks(int group, unsigned int x0, unsigned int x1);
+ 
+ 	//! The tiled sweep (OPENEMS_TBLOCK=k, with the fused sweep's conditions): temporal blocking with ONE tile of
+ 	//! x-lines for all threads, as upstream master's cpu engine does it. A block of k timesteps on a tile [a, b):
+diff --git a/FDTD/extensions/engine_ext_boxruns.h b/FDTD/extensions/engine_ext_boxruns.h
+new file mode 100644
+index 0000000..33bd737
+--- /dev/null
++++ b/FDTD/extensions/engine_ext_boxruns.h
+@@ -0,0 +1,62 @@
++/*
++*	This program is free software: you can redistribute it and/or modify
++*	it under the terms of the GNU General Public License as published by
++*	the Free Software Foundation, either version 3 of the License, or
++*	(at your option) any later version.
++*
++*	This program is distributed in the hope that it will be useful,
++*	but WITHOUT ANY WARRANTY; without even the implied warranty of
++*	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++*	GNU General Public License for more details.
++*
++*	You should have received a copy of the GNU General Public License
++*	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#ifndef ENGINE_EXT_BOXRUNS_H
++#define ENGINE_EXT_BOXRUNS_H
++
++#include <algorithm>
++#include <cstdint>
++#include <vector>
++
++//! The box hooks of extensions with a list of points (excitation, lumped elements): the points sorted by (x, y) once, so that
++//! a call for the box [x0, x1) x [y0, y1) finds its points by binary search and costs what lies in the box, not the list.
++namespace BoxRuns
++{
++	inline uint64_t Key(unsigned int x, unsigned int y) {return ((uint64_t)x<<32) | y;}
++
++	//! order = the points 0 .. count-1 sorted by (x[n], y[n]), stable (points on one cell keep their order), key = their keys
++	inline void Build(const unsigned int* x, const unsigned int* y, unsigned int count, std::vector<unsigned int>& order, std::vector<uint64_t>& key)
++	{
++		order.resize(count);
++		for (unsigned int n=0; n<count; ++n)
++			order[n] = n;
++		std::stable_sort(order.begin(), order.end(), [x, y](unsigned int a, unsigned int b) {return Key(x[a], y[a])<Key(x[b], y[b]);});
++		key.resize(count);
++		for (unsigned int n=0; n<count; ++n)
++			key[n] = Key(x[order[n]], y[order[n]]);
++	}
++
++	//! f(k0, k1) for every x-line of the box that has points with y in [y0, y1): the positions [k0, k1) of the sorted list,
++	//! in ascending x (one call per x-line: the points of one cell are always in one call, in their order)
++	template <class F>
++	void ForEach(const std::vector<uint64_t>& key, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1, F f)
++	{
++		if ((x0>=x1) || (y0>=y1))
++			return;
++		std::vector<uint64_t>::const_iterator it = std::lower_bound(key.begin(), key.end(), Key(x0, 0));
++		const std::vector<uint64_t>::const_iterator end = std::lower_bound(it, key.end(), Key(x1, 0));
++		while (it<end)
++		{
++			const unsigned int x = (unsigned int)((*it)>>32);
++			const std::vector<uint64_t>::const_iterator a = std::lower_bound(it, end, Key(x, y0));
++			const std::vector<uint64_t>::const_iterator b = std::lower_bound(a, end, Key(x, y1));
++			if (a<b)
++				f((unsigned int)(a-key.begin()), (unsigned int)(b-key.begin()));
++			it = std::lower_bound(b, end, Key(x+1, 0));
++		}
++	}
++}
++
++#endif // ENGINE_EXT_BOXRUNS_H
+diff --git a/FDTD/extensions/engine_ext_excitation.cpp b/FDTD/extensions/engine_ext_excitation.cpp
+index bcf8bb4..7509c06 100644
+--- a/FDTD/extensions/engine_ext_excitation.cpp
++++ b/FDTD/extensions/engine_ext_excitation.cpp
+@@ -18,6 +18,7 @@
+ #include "engine_ext_excitation.h"
+ #include "operator_ext_excitation.h"
+ #include "FDTD/engine_sse.h"
++#include "engine_ext_boxruns.h"
+ #include <algorithm>
+ 
+ // APPLY_CURR only when there are current excitations (a soft/hard voltage excitation has none): saves a barrier per
+@@ -34,6 +35,8 @@ Engine_Ext_Excitation::Engine_Ext_Excitation(Operator_Ext_Excitation* op_ext) :
+ 	m_Priority = ENG_EXT_PRIO_EXCITATION;
+ 	SortByLine(m_Op_Exc->Volt_index[0], m_Op_Exc->Volt_Count, m_VoltOrder, m_VoltX);
+ 	SortByLine(m_Op_Exc->Curr_index[0], m_Op_Exc->Curr_Count, m_CurrOrder, m_CurrX);
++	BoxRuns::Build(m_Op_Exc->Volt_index[0], m_Op_Exc->Volt_index[1], m_Op_Exc->Volt_Count, m_VoltBoxOrder, m_VoltBoxKey);
++	BoxRuns::Build(m_Op_Exc->Curr_index[0], m_Op_Exc->Curr_index[1], m_Op_Exc->Curr_Count, m_CurrBoxOrder, m_CurrBoxKey);
+ }
+ 
+ void Engine_Ext_Excitation::SortByLine(const unsigned int* x, unsigned int count, std::vector<unsigned int>& order, std::vector<unsigned int>& sorted_x)
+@@ -139,36 +142,18 @@ void Engine_Ext_Excitation::Apply2CurrentLines(unsigned int x0, unsigned int x1)
+ 		Apply2CurrentImpl<Engine_sse>((Engine_sse*)m_Eng, m_CurrOrder.data(), n0, n1);
+ }
+ 
+-const std::vector<unsigned int>& Engine_Ext_Excitation::BoxOrder(const unsigned int* order, unsigned int n0, unsigned int n1, const unsigned int* y_index,
+-																 unsigned int y0, unsigned int y1)
+-{
+-	// one list per thread: the threads of a task call the box hooks at the same time
+-	static thread_local std::vector<unsigned int> list;
+-	list.clear();
+-	for (unsigned int k=n0; k<n1; ++k)
+-		if ((y_index[order[k]]>=y0) && (y_index[order[k]]<y1))
+-			list.push_back(order[k]);
+-	return list;
+-}
+-
+ void Engine_Ext_Excitation::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {
+-	const unsigned int n0 = std::lower_bound(m_VoltX.begin(), m_VoltX.end(), x0) - m_VoltX.begin();
+-	const unsigned int n1 = std::lower_bound(m_VoltX.begin(), m_VoltX.end(), x1) - m_VoltX.begin();
+-	if ((n0>=n1) || (y0>=y1))
+-		return;
+-	const std::vector<unsigned int>& list = BoxOrder(m_VoltOrder.data(), n0, n1, m_Op_Exc->Volt_index[1], y0, y1);
+-	if (!list.empty())
+-		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, list.data(), 0, list.size());
++	BoxRuns::ForEach(m_VoltBoxKey, x0, x1, y0, y1, [this](unsigned int k0, unsigned int k1)
++	{
++		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, m_VoltBoxOrder.data(), k0, k1);
++	});
+ }
+ 
+ void Engine_Ext_Excitation::Apply2CurrentBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {
+-	const unsigned int n0 = std::lower_bound(m_CurrX.begin(), m_CurrX.end(), x0) - m_CurrX.begin();
+-	const unsigned int n1 = std::lower_bound(m_CurrX.begin(), m_CurrX.end(), x1) - m_CurrX.begin();
+-	if ((n0>=n1) || (y0>=y1))
+-		return;
+-	const std::vector<unsigned int>& list = BoxOrder(m_CurrOrder.data(), n0, n1, m_Op_Exc->Curr_index[1], y0, y1);
+-	if (!list.empty())
+-		Apply2CurrentImpl<Engine_sse>((Engine_sse*)m_Eng, list.data(), 0, list.size());
++	BoxRuns::ForEach(m_CurrBoxKey, x0, x1, y0, y1, [this](unsigned int k0, unsigned int k1)
++	{
++		Apply2CurrentImpl<Engine_sse>((Engine_sse*)m_Eng, m_CurrBoxOrder.data(), k0, k1);
++	});
+ }
+diff --git a/FDTD/extensions/engine_ext_excitation.h b/FDTD/extensions/engine_ext_excitation.h
+index fb76b28..63f5431 100644
+--- a/FDTD/extensions/engine_ext_excitation.h
++++ b/FDTD/extensions/engine_ext_excitation.h
+@@ -22,6 +22,7 @@
+ #include "FDTD/engine.h"
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
++#include <cstdint>
+ 
+ class Operator_Ext_Excitation;
+ 
+@@ -38,8 +39,8 @@ public:
+ 
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+ 	virtual void Apply2CurrentLines(unsigned int x0, unsigned int x1);
+-	//! box hooks (tiled sweep): the points of the line hooks whose cell has y in [y0, y1), in the same order, through the same
+-	//! code (a point touches its own cell only; the points of one cell keep their order)
++	//! box hooks (tiled sweep, y-bands of the fused sweep): the points of the line hooks whose cell has y in [y0, y1), x-line by
++	//! x-line, through the same code (a point touches its own cell only; the points of one cell keep their order)
+ 	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 	virtual void Apply2CurrentBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+@@ -57,9 +58,9 @@ protected:
+ 	std::vector<unsigned int> m_VoltOrder, m_VoltX;
+ 	std::vector<unsigned int> m_CurrOrder, m_CurrX;
+ 	static void SortByLine(const unsigned int* x, unsigned int count, std::vector<unsigned int>& order, std::vector<unsigned int>& sorted_x);
+-	//! the entries order[n0..n1) whose y (y_index) is in [y0, y1), in this thread's scratch list (kept between calls)
+-	static const std::vector<unsigned int>& BoxOrder(const unsigned int* order, unsigned int n0, unsigned int n1, const unsigned int* y_index,
+-													 unsigned int y0, unsigned int y1);
++	//! the excitation points sorted by (x, y) (stable), with their keys, for the box hooks (see BoxRuns)
++	std::vector<unsigned int> m_VoltBoxOrder, m_CurrBoxOrder;
++	std::vector<uint64_t> m_VoltBoxKey, m_CurrBoxKey;
+ };
+ 
+ #endif // ENGINE_EXT_EXCITATION_H
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.cpp b/FDTD/extensions/engine_ext_lumpedRLC.cpp
+index 0610197..d062c4f 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.cpp
++++ b/FDTD/extensions/engine_ext_lumpedRLC.cpp
+@@ -21,6 +21,7 @@
+ #include "operator_ext_lumpedRLC.h"
+ 
+ #include "FDTD/engine_sse.h"
++#include "engine_ext_boxruns.h"
+ #include <algorithm>
+ 
+ Engine_Ext_LumpedRLC::Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC* op_ext_RLC) : Engine_Extension(op_ext_RLC)
+@@ -46,6 +47,7 @@ Engine_Ext_LumpedRLC::Engine_Ext_LumpedRLC(Operator_Ext_LumpedRLC* op_ext_RLC) :
+ 	m_X.resize(m_Order.size());
+ 	for (unsigned int n=0; n<m_Order.size(); ++n)
+ 		m_X[n] = x[m_Order[n]];
++	BoxRuns::Build(x, m_Op_Ext_RLC->v_RLC_pos[1], m_Op_Ext_RLC->RLC_count, m_BoxOrder, m_BoxKey);
+ 
+ 	// Initialize ADE containers for currents and voltages
+ 	v_Il		= new FDTD_FLOAT[m_Op_Ext_RLC->RLC_count];
+@@ -211,30 +213,16 @@ void Engine_Ext_LumpedRLC::Apply2VoltagesLines(unsigned int x0, unsigned int x1)
+ 		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, vd, j, m_Order.data(), n0, n1);
+ }
+ 
+-const std::vector<unsigned int>& Engine_Ext_LumpedRLC::BoxOrder(unsigned int n0, unsigned int n1, unsigned int y0, unsigned int y1) const
+-{
+-	// one list per thread: the threads of a task call the box hooks at the same time
+-	static thread_local std::vector<unsigned int> list;
+-	list.clear();
+-	const unsigned int* y = m_Op_Ext_RLC->v_RLC_pos[1];
+-	for (unsigned int k=n0; k<n1; ++k)
+-		if ((y[m_Order[k]]>=y0) && (y[m_Order[k]]<y1))
+-			list.push_back(m_Order[k]);
+-	return list;
+-}
+-
+ void Engine_Ext_LumpedRLC::DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {
+ 	if (!m_Op_Ext_RLC->RLC_count || (y0>=y1))
+ 		return;
+ 	FDTD_FLOAT* vd[3];
+ 	SetSlots(vd, m_VdBase, m_Eng->GetNumberOfTimesteps());
+-	unsigned int n0, n1;
+-	LineRange(x0, x1, n0, n1);
+-	if (n0>=n1)
+-		return;
+-	const std::vector<unsigned int>& list = BoxOrder(n0, n1, y0, y1);
+-	UpdateInductorCurrents(vd[1], list.data(), 0, list.size());
++	BoxRuns::ForEach(m_BoxKey, x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
++	{
++		UpdateInductorCurrents(vd[1], m_BoxOrder.data(), k0, k1);
++	});
+ }
+ 
+ void Engine_Ext_LumpedRLC::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+@@ -246,11 +234,8 @@ void Engine_Ext_LumpedRLC::Apply2VoltagesBox(unsigned int x0, unsigned int x1, u
+ 	FDTD_FLOAT* j[3];
+ 	SetSlots(vd, m_VdBase, ts);
+ 	SetSlots(j, m_JBase, ts);
+-	unsigned int n0, n1;
+-	LineRange(x0, x1, n0, n1);
+-	if (n0>=n1)
+-		return;
+-	const std::vector<unsigned int>& list = BoxOrder(n0, n1, y0, y1);
+-	if (!list.empty())
+-		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, vd, j, list.data(), 0, list.size());
++	BoxRuns::ForEach(m_BoxKey, x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
++	{
++		Apply2VoltagesImpl<Engine_sse>((Engine_sse*)m_Eng, vd, j, m_BoxOrder.data(), k0, k1);
++	});
+ }
+diff --git a/FDTD/extensions/engine_ext_lumpedRLC.h b/FDTD/extensions/engine_ext_lumpedRLC.h
+index d4753b1..7b1fa32 100644
+--- a/FDTD/extensions/engine_ext_lumpedRLC.h
++++ b/FDTD/extensions/engine_ext_lumpedRLC.h
+@@ -24,6 +24,7 @@
+ #include "FDTD/operator.h"
+ #include "engine_extension_dispatcher.h"
+ #include <vector>
++#include <cstdint>
+ 
+ class Operator_Ext_LumpedRLC;
+ 
+@@ -46,8 +47,9 @@ public:
+ 
+ 	virtual void DoPreVoltageUpdatesLines(unsigned int x0, unsigned int x1);
+ 	virtual void Apply2VoltagesLines(unsigned int x0, unsigned int x1);
+-	//! box hooks (tiled sweep): the elements of the line hooks whose cell has y in [y0, y1), in the same order, through the
+-	//! same code (an element's state and its field value belong to its own cell; all elements of a cell have its y)
++	//! box hooks (tiled sweep, y-bands of the fused sweep): the elements of the line hooks whose cell has y in [y0, y1), x-line
++	//! by x-line, through the same code (an element's state and its field value belong to its own cell; all elements of a cell
++	//! have its x and y, so they are in one call, in their order)
+ 	virtual void DoPreVoltageUpdatesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 	virtual void Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1);
+ 
+@@ -68,8 +70,9 @@ protected:
+ 	std::vector<unsigned int> m_Order, m_X;
+ 	//! elements [n0, n1) of m_Order are on the x-lines [x0, x1)
+ 	void LineRange(unsigned int x0, unsigned int x1, unsigned int& n0, unsigned int& n1) const;
+-	//! the elements m_Order[n0..n1) whose y is in [y0, y1), in this thread's scratch list (kept between calls)
+-	const std::vector<unsigned int>& BoxOrder(unsigned int n0, unsigned int n1, unsigned int y0, unsigned int y1) const;
++	//! the elements sorted by (x, y) (stable), with their keys, for the box hooks (see BoxRuns)
++	std::vector<unsigned int> m_BoxOrder;
++	std::vector<uint64_t> m_BoxKey;
+ 
+ 	Operator_Ext_LumpedRLC* m_Op_Ext_RLC;
+ 
+diff --git a/FDTD/extensions/engine_ext_steadystate.cpp b/FDTD/extensions/engine_ext_steadystate.cpp
+index 43b3ae5..b6dc314 100644
+--- a/FDTD/extensions/engine_ext_steadystate.cpp
++++ b/FDTD/extensions/engine_ext_steadystate.cpp
+@@ -24,6 +24,7 @@
+ #include <limits>
+ #include <cstdio>
+ #include "tools/global.h"
++#include "engine_ext_boxruns.h"
+ 
+ Engine_Ext_SteadyState::Engine_Ext_SteadyState(Operator_Ext_SteadyState* op_ext): Engine_Extension(op_ext)
+ {
+@@ -80,6 +81,8 @@ void Engine_Ext_SteadyState::SetupLines()
+ 		if ((A->stride(0)!=1) || (A->stride(3)!=3) || (A->stride(2)!=3*A->extent(3)) || (A->stride(1)!=A->stride(2)*A->extent(2)))
+ 			return;
+ 	m_NX = V->extent(1);
++	BoxRuns::Build(m_Op_SS->m_E_probe_pos[0].data(), m_Op_SS->m_E_probe_pos[1].data(), m_Op_SS->m_E_probe_pos[0].size(),
++				   m_ProbeBoxOrder, m_ProbeBoxKey);
+ 	m_Lines = true;
+ }
+ 
+@@ -148,14 +151,19 @@ void Engine_Ext_SteadyState::Apply2VoltagesLines(unsigned int x0, unsigned int x
+ 
+ void Engine_Ext_SteadyState::RecordProbesBox(unsigned int TS, unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+ {
+-	// as RecordProbes, for the probes on the cells with y in [y0, y1) only
++	// as RecordProbes, for the probes on the cells with y in [y0, y1) only (found through the sorted list: a call costs the
++	// probes in the box, not all of them)
+ 	const unsigned int rel_pos = TS%(3*m_Op_SS->m_TS_period);
+-	for (size_t n=0;n<m_E_records.size();++n)
++	BoxRuns::ForEach(m_ProbeBoxKey, x0, x1, y0, y1, [&](unsigned int k0, unsigned int k1)
+ 	{
+-		const unsigned int x = m_Op_SS->m_E_probe_pos[0].at(n), y = m_Op_SS->m_E_probe_pos[1].at(n);
+-		if ((x>=x0) && (x<x1) && (y>=y0) && (y<y1))
+-			m_E_records.at(n)[rel_pos] = m_Eng->GetVolt(m_Op_SS->m_E_probe_dir.at(n), x, y, m_Op_SS->m_E_probe_pos[2].at(n));
+-	}
++		for (unsigned int k=k0; k<k1; ++k)
++		{
++			const unsigned int n = m_ProbeBoxOrder[k];
++			if (n<m_E_records.size())
++				m_E_records.at(n)[rel_pos] = m_Eng->GetVolt(m_Op_SS->m_E_probe_dir.at(n), m_Op_SS->m_E_probe_pos[0].at(n),
++															m_Op_SS->m_E_probe_pos[1].at(n), m_Op_SS->m_E_probe_pos[2].at(n));
++		}
++	});
+ }
+ 
+ void Engine_Ext_SteadyState::Apply2VoltagesBox(unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1)
+diff --git a/FDTD/extensions/engine_ext_steadystate.h b/FDTD/extensions/engine_ext_steadystate.h
+index 25924f3..eec2c29 100644
+--- a/FDTD/extensions/engine_ext_steadystate.h
++++ b/FDTD/extensions/engine_ext_steadystate.h
+@@ -79,6 +79,9 @@ protected:
+ 	std::once_flag m_SnapOnce;
+ 	std::atomic<unsigned int> m_SnapLines; //!< x-lines copied in this evaluation step
+ 	std::atomic<uint64_t> m_SnapRows; //!< box mode: (x, y) rows copied in this evaluation step
++	//! the probes sorted by (x, y), with their keys, for the box hook (see BoxRuns; set up in SetupLines)
++	std::vector<unsigned int> m_ProbeBoxOrder;
++	std::vector<uint64_t> m_ProbeBoxKey;
+ 	unsigned int m_NX;
+ 
+ 	Operator_Ext_SteadyState* m_Op_SS;
+diff --git a/FDTD/extensions/engine_extension.h b/FDTD/extensions/engine_extension.h
+index c9232ae..0da35b6 100644
+--- a/FDTD/extensions/engine_extension.h
++++ b/FDTD/extensions/engine_extension.h
+@@ -135,6 +135,13 @@ public:
+ 	    fused-multiply-add contractions (the tiled sweep is bit-identical to the fused sweep);
+ 	  - the y ranges are the threads' shares of [0, NY) (the last one ends at NY, so the current hooks also see y = NY-1,
+ 	    whose currents the update never changes, exactly as the line hooks do); a range may be empty.
++	  The y-bands of the fused sweep (OPENEMS_YBAND, see Engine_Multithread::m_YBand) call the same hooks on ONE thread
++	  for the bands of an x-line one after another, the voltage hooks on [y0, y1), the current hooks on [y0-1, y1-1) (from
++	  0 in the first band, to NY in the last), and the rest of the sweep with the whole y range [0, NY); the cells of one
++	  x-line are then updated at different moments, with other cells updated in between. So in addition:
++	  - a hook must give each cell the same result whatever way the y lines of its x-line are cut into calls;
++	  - a call should cost what lies in its box (it runs bands x blocks times per timestep): index lists by (x, y) instead
++	    of scanning them (see engine_ext_boxruns.h).
+ 	  The box mode runs only when every extension that uses a hook declares BOX_HOOKS (one extension without them puts
+ 	  the whole sweep back on the hook stages: mixing would change the order of the extensions for some cells).
+ 	  Not supported yet: hooks that couple two y lines (e.g. a Mur ABC on a y-face couples the pairs (0, 1) and
+-- 
+2.54.0 (Apple Git-157)
+

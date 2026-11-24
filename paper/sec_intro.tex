@@ -52,10 +52,11 @@ fdtdKit is the FDTD kit of EMSKit, a family of electromagnetic solvers for Apple
   six models. An opt-in tiled sweep (patch 0040 of 2026-11-11, part of the build installed on 2026-11-14) runs
   several time steps on one cache-sized tile that all threads share; at 4 threads it is ahead of the fused sweep at
   its best on two large grids (1.08 and 1.23$\times$) and behind on four other models (0.71--0.92$\times$;
-  Section~\ref{sec:tiled}). Three further patches (0041 to 0043, written on 2026-11-12 and 2026-11-13, the fork's head, 13350ca,
+  Section~\ref{sec:tiled}). Three further patches (0041 to 0043, written on 2026-11-12 and 2026-11-13, then the fork's head, 13350ca,
   installed on 2026-11-14) start the automatic thread search at every core outside the efficiency class and pack the state of Debye,
   Lorentz and Drude cells for the line hooks: on the M5 Pro the search then runs at 0.97--1.00 of a fixed 15 threads where cg31's
   ran at 0.81--0.96, and upstream's dispersive case ran 1.9$\times$ as fast at 1\,M cells (Section~\ref{sec:cg33}).
+\item Large grids and dispersive materials (patches 0044 to 0049 of 2026-11-22 to 2026-11-24, the fork's head, 8af6c4c, not installed; Section~\ref{sec:large}). On the M5 Max, upstream's own benchmark at 30\,M cells found the fork's CPU engine (cg33) at 0.83--0.99 of upstream master's \code{cpu} engine on five cases and at 0.48 on the dispersive one. The fused sweep now cuts each block into bands of y lines that stay in the cache (a box-hook interface for the extensions, 0044--0046), and the dispersive hooks work a z-vector at a time with their Debye transients in per-thread scratch and a threaded setup (0047--0049). At 30\,M cells the fork is then 1.32--1.48$\times$ that master and 1.11--1.22$\times$ upstream's newest engine on five cases, with 1\,M cells unchanged; the dispersive case, 0.48 of master with cg33 (0.75 after the bands), is 1.20$\times$ master and 0.97$\times$ the newest engine. All of it bit-identical to v0.37.0.
 \item Setup and post-processing: a threaded operator construction (4.1\,s to 0.9\,s on the 7.9-million-cell patch
   model), a far-field transform written as complex matrix products, one per plane and block of directions (17.9\,s to
   1.0\,s on the same model; this path needs Apple's Accelerate, other builds keep the original loop), and two small

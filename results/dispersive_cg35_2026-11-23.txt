@@ -1,0 +1,397 @@
+The fork's CPU engine on dispersive materials: line hooks a z-vector at a time (cg35a), Apple M5 Max, 2026-11-23
+====================================================================================================
+MACHINE: Mac Studio (Mac17,14), Apple M5 Max, 6 "Super" + 12 "Performance" cores, 36 GB. A set of its own ("studio");
+compared only with numbers of this machine, never with the M5 MacBook Air or M5 Pro tables.
+
+Why: after the y-banded fused sweep (cg34, results/large_grid_cg34_2026-11-22.txt) the dispersive case of upstream's
+benchmark/bench.py was the one case of six still behind upstream master's `cpu` engine at 8 M and 30 M cells (0.75 of
+1d710c2 and 0.64 to 0.66 of upstream's head ccb4472). About half of that case's cells are dispersive (a Lorentz block and a
+Debye block). The packed hooks grouped four consecutive positions of an x-line, in a filled block four f4vectors with one
+lane each: scalar gathers through twelve indices a group, and coefficients and state in one block that was read and written
+back whole (about 132 bytes a Lorentz cell-step, 156 a Debye one, against 49 for a plain cell).
+
+Code: one commit on the fork's branch speed-m5-gpu on top of 8d513ba (cg34): d3374c9, local at the date of this record (not
+pushed, not installed). A group is the positions of one f4vector (base offset + lane mask) when a hook has at least 2.5
+positions a group on average, else the position groups as before (conducting sheets); coefficients in a table of distinct
+sets apart from the written state. OPENEMS_ADE_VEC=0 keeps position groups (2 forces vector groups), OPENEMS_ADE_COEF=
+group|table|table32 picks the coefficient layout; both are test switches. Per-lane arithmetic unchanged.
+
+Rule set before the run: keep only if the dispersive case at 30 M cells and 18 threads reaches 1.30 times cg34 and nothing
+else (antenna case, the two boards, 1 M cells) loses more than 2 %. Result: 1.41 times; antenna 0.99 to 1.02; boards 1.005
+at 18 threads (GCPW 4980 -> 5018, SMA 5432 -> 5445 MC/s, 4 paired rounds each). Kept.
+Against upstream at 18 threads: 0.98 of 1d710c2 and 0.89 of ccb4472 at 30 M; 1.06 and 0.94 at 8 M; 2.14 and 1.78 at 1 M.
+Still open: setup time of the dispersive extensions (13.2 s against 2.0 to 2.2 s at 30 M) and memory (5857 MiB against 3969
+and 2697).
+
+How it ran: the six bench.py parts 06:34-06:55, labels interleaved run for run, 3 runs of 3 s a point, others' CPU median
+0.05 core. A pause of the machine for another job then froze the slot; the two board parts ran 20:05-20:08 the same day
+(others 0.01 to 0.05 core). Identity checks of the build before the timing: 630 box configurations, the dispersive check
+against stock at 50 k and 1 M cells, closed cylinder, the six harness models, Debye check, validation suite 15 of 15.
+
+Summary as written by the slot's script (vec0 = cg35a with OPENEMS_ADE_VEC=0):
+
+Slot disp1: kill test of the vector-group dispersive hooks. Upstream bench.py with a source in every case.
+cg34 = fork 8d513ba, cg35a = cg34 + vector groups and coefficient tables apart from the state (uncommitted),
+vec0 = cg35a with OPENEMS_ADE_VEC=0 (old position groups, new coefficient tables), master = upstream 1d710c2,
+master22 = upstream ccb4472. cpu engines at 6, 12, 18 threads, interleaved run for run inside a part.
+
+BEST RATE OVER THE THREAD COUNTS, MC/s (median of the runs), threads in brackets
+case              MCells           cg34          cg35a           vec0         master       master22   cg35a/cg34 cg35a/vec0 cg35a/master cg35a/master22
+dispersive     L   30.08      2108 (18)      2962 (18)      2769 (18)      3032 (18)      3325 (18)         1.41       1.07         0.98           0.89
+antenna        L   30.08      3932 (18)      3972 (18)              -              -              -         1.01          -            -              -
+
+dispersive     M    8.12      2068 (18)      2976 (18)      2672 (18)      2800 (18)      3157 (18)         1.44       1.11         1.06           0.94
+antenna        M    8.12      3427 (18)      3468 (18)              -              -              -         1.01          -            -              -
+
+dispersive     S    1.03      2777 (18)      3942 (18)      3751 (18)      1841 (18)      2217 (18)         1.42       1.05         2.14           1.78
+antenna        S    1.03      3605 (18)      3658 (18)              -              -              -         1.01          -            -              -
+
+AT EQUAL THREAD COUNTS (cpu engines), MC/s median [min-max]; ratios of cg35a to the other columns; the sweep cg35a ran
+== dispersive L
+  t6        cg34   1346 [1345-1378]     cg35a   1771 [1767-1787]      vec0   1452 [1443-1455]    master   1948 [1900-1961]  master22   1903 [1900-1908]  | x1.32 x1.22 x0.91 x0.93  | y-bands of 93 lines (2731 KiB a thread)
+  t12       cg34   2065 [1825-2068]     cg35a   2521 [2521-2531]      vec0   2255 [2223-2273]    master   2516 [2458-2530]  master22   2698 [2694-2704]  | x1.22 x1.12 x1.00 x0.93  | y-bands of 46 lines (1365 KiB a thread)
+  t18       cg34   2108 [2095-2113]     cg35a   2962 [2955-2971]      vec0   2769 [2766-2782]    master   3032 [3017-3046]  master22   3325 [3306-3339]  | x1.41 x1.07 x0.98 x0.89  | y-bands of 46 lines (1365 KiB a thread)
+== antenna L
+  t6        cg34   2153 [2150-2178]     cg35a   2138 [2134-2139]      vec0 -                        master -                      master22 -                      | x0.99   -     -     -    | y-bands of 93 lines (2731 KiB a thread)
+  t12       cg34   3319 [3314-3319]     cg35a   3326 [3324-3327]      vec0 -                        master -                      master22 -                      | x1.00   -     -     -    | y-bands of 46 lines (1365 KiB a thread)
+  t18       cg34   3932 [3888-3974]     cg35a   3972 [3950-3998]      vec0 -                        master -                      master22 -                      | x1.01   -     -     -    | y-bands of 46 lines (1365 KiB a thread)
+
+== dispersive M
+  t6        cg34   1560 [1559-1564]     cg35a   1924 [1920-1925]      vec0   1795 [1772-1807]    master   2117 [2109-2126]  master22   1743 [1731-1744]  | x1.23 x1.07 x0.91 x1.10  | fused sweep, 199 blocks of x-lines, neighbour flags
+  t12       cg34   2052 [2043-2075]     cg35a   2855 [2845-2860]      vec0   2229 [2229-2232]    master   2510 [2463-2531]  master22   2448 [2434-2460]  | x1.39 x1.28 x1.14 x1.17  | y-bands of 71 lines (1365 KiB a thread)
+  t18       cg34   2068 [2052-2068]     cg35a   2976 [2971-2983]      vec0   2672 [2663-2672]    master   2800 [2751-2831]  master22   3157 [3152-3170]  | x1.44 x1.11 x1.06 x0.94  | y-bands of 71 lines (1365 KiB a thread)
+== antenna M
+  t6        cg34   1719 [1711-1721]     cg35a   1750 [1749-1751]      vec0 -                        master -                      master22 -                      | x1.02   -     -     -    | fused sweep, 201 blocks of x-lines, neighbour flags
+  t12       cg34   2876 [2871-2882]     cg35a   2905 [2899-2908]      vec0 -                        master -                      master22 -                      | x1.01   -     -     -    | y-bands of 71 lines (1365 KiB a thread)
+  t18       cg34   3427 [3424-3435]     cg35a   3468 [3462-3473]      vec0 -                        master -                      master22 -                      | x1.01   -     -     -    | y-bands of 71 lines (1365 KiB a thread)
+
+== dispersive S
+  t6        cg34   1547 [1539-1551]     cg35a   2084 [2071-2095]      vec0   1955 [1940-1956]    master   1689 [1648-1699]  master22   1496 [1485-1497]  | x1.35 x1.07 x1.23 x1.39  | fused sweep, 99 blocks of x-lines, neighbour flags
+  t12       cg34   2735 [2706-2772]     cg35a   3147 [3147-3151]      vec0   2999 [2991-3006]    master   1738 [1729-1770]  master22   1657 [1648-1658]  | x1.15 x1.05 x1.81 x1.90  | fused sweep, 99 blocks of x-lines, neighbour flags
+  t18       cg34   2777 [2773-2779]     cg35a   3942 [3936-3946]      vec0   3751 [3751-3751]    master   1841 [1806-1849]  master22   2217 [2184-2232]  | x1.42 x1.05 x2.14 x1.78  | fused sweep, 99 blocks of x-lines, neighbour flags
+== antenna S
+  t6        cg34   1830 [1822-1841]     cg35a   1851 [1845-1855]      vec0 -                        master -                      master22 -                      | x1.01   -     -     -    | fused sweep, 101 blocks of x-lines, neighbour flags
+  t12       cg34   2827 [2826-2837]     cg35a   2842 [2833-2844]      vec0 -                        master -                      master22 -                      | x1.01   -     -     -    | fused sweep, 101 blocks of x-lines, neighbour flags
+  t18       cg34   3605 [3601-3627]     cg35a   3658 [3645-3673]      vec0 -                        master -                      master22 -                      | x1.01   -     -     -    | fused sweep, 101 blocks of x-lines, neighbour flags
+
+SETUP TIME (s) AND MEMORY (RSS, MiB) at the largest thread count run
+dispersive     L          cg34 13.02 s  6580        cg35a 13.23 s  5857         vec0 13.11 s  5955       master  1.99 s  3969     master22  2.19 s  2697
+antenna        L          cg34  4.10 s  4617        cg35a  4.08 s  4598           vec0 -                        master -                      master22 -               
+
+dispersive     M          cg34  3.36 s  1961        cg35a  3.51 s  1742         vec0  3.60 s  1777       master  0.57 s  1232     master22  0.62 s   929
+antenna        M          cg34  1.29 s  1404        cg35a  1.29 s  1391           vec0 -                        master -                      master22 -               
+
+dispersive     S          cg34  0.50 s   249        cg35a  0.51 s   236         vec0  0.50 s   234       master  0.10 s   161     master22  0.10 s   116
+antenna        S          cg34  0.28 s   250        cg35a  0.28 s   250           vec0 -                        master -                      master22 -               
+
+PROBES (bench.py compare: every label against the part's first one; "identical" = bit-identical probe files)
+  a_L     cg35a against cg34: 3 of 3 rows identical
+  a_M     cg35a against cg34: 3 of 3 rows identical
+  a_S     cg35a against cg34: 3 of 3 rows identical
+  d_L     cg35a against cg34: 3 of 3 rows identical
+  d_L     vec0 against cg34: 3 of 3 rows identical
+  d_L     master against cg34: 0 of 3 rows identical; the others differ by 3.7e-06 to 4.1e-06 (relative)
+  d_L     master22 against cg34: 0 of 3 rows identical; the others differ by 5.2e-06 to 6.2e-06 (relative)
+  d_M     cg35a against cg34: 3 of 3 rows identical
+  d_M     vec0 against cg34: 3 of 3 rows identical
+  d_M     master against cg34: 0 of 3 rows identical; the others differ by 4.5e-06 to 4.7e-06 (relative)
+  d_M     master22 against cg34: 0 of 3 rows identical; the others differ by 5.8e-06 to 7.1e-06 (relative)
+  d_S     cg35a against cg34: 3 of 3 rows identical
+  d_S     vec0 against cg34: 3 of 3 rows identical
+  d_S     master against cg34: 0 of 3 rows identical; the others differ by 2.9e-05 to 2.9e-05 (relative)
+  d_S     master22 against cg34: 0 of 3 rows identical; the others differ by 1.6e-05 to 1.6e-05 (relative)
+
+LOAD BESIDE THE NUMBERS: others' CPU per part (5 s samples, % of one core; every process but this benchmark) and whole-GPU utilisation
+  smoke              4 samples  CPU median   18  p90   22  max   41   GPU median   0 %
+  whole run         32 samples  CPU median   14  p90   47  max 1364
+
+BOARD kgcpw (harness A/B, paired rounds; MC/s, others' load in the line)
+  r0 c1   5030.5 MC/s  others cpu    7% gpu   0%  identical
+  r0 c2   4814.7 MC/s  others cpu    0% gpu   0%  identical
+  r0 c3   4818.2 MC/s  others cpu    6% gpu   0%  identical
+  r1 c0   4964.1 MC/s  others cpu    2% gpu   0%  identical
+  r1 c1   5022.3 MC/s  others cpu    3% gpu   0%  identical
+  r1 c2   4823.2 MC/s  others cpu    1% gpu   0%  identical
+  r1 c3   4853.0 MC/s  others cpu    3% gpu   0%  identical
+  r2 c0   4981.8 MC/s  others cpu    5% gpu   0%  identical
+  r2 c1   4977.0 MC/s  others cpu    6% gpu   0%  identical
+  r2 c2   4805.4 MC/s  others cpu    1% gpu   0%  identical
+  r2 c3   4828.1 MC/s  others cpu    0% gpu   0%  identical
+  r3 c0   5010.9 MC/s  others cpu    1% gpu   0%  identical
+  r3 c1   5013.1 MC/s  others cpu    1% gpu   0%  identical
+  r3 c2   4807.0 MC/s  others cpu   11% gpu   0%  identical
+  r3 c3   4822.4 MC/s  others cpu    2% gpu   0%  identical
+  # summary kgcpw_s1_n15000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg34@multithreaded:18                                          4980.1 [4964-5011]  x1.000 [1.000-1.000]  others 3%/0%  identical,reference
+  c1 cg35a@multithreaded:18                                         5017.7 [4977-5031]  x1.005 [0.999-1.012]  others 5%/0%  identical
+  c2 cg34@multithreaded:0                                           4810.9 [4805-4823]  x0.966 [0.959-0.972]  others 1%/0%  identical
+  c3 cg35a@multithreaded:0                                          4825.3 [4818-4853]  x0.968 [0.962-0.978]  others 2%/0%  identical
+
+BOARD ksma (harness A/B, paired rounds; MC/s, others' load in the line)
+  r0 c1   5429.5 MC/s  others cpu    4% gpu   0%  identical
+  r0 c2   5132.7 MC/s  others cpu    1% gpu   0%  identical
+  r0 c3   5232.8 MC/s  others cpu    1% gpu   0%  identical
+  r1 c0   5430.2 MC/s  others cpu    2% gpu   0%  identical
+  r1 c1   5439.4 MC/s  others cpu    4% gpu   0%  identical
+  r1 c2   5146.7 MC/s  others cpu   13% gpu   1%  identical
+  r1 c3   5195.8 MC/s  others cpu   39% gpu   2%  identical
+  r2 c0   5396.7 MC/s  others cpu    7% gpu   0%  identical
+  r2 c1   5451.3 MC/s  others cpu    4% gpu   0%  identical
+  r2 c2   5146.0 MC/s  others cpu    4% gpu   0%  identical
+  r2 c3   5171.3 MC/s  others cpu    2% gpu   0%  identical
+  r3 c0   5433.8 MC/s  others cpu    2% gpu   0%  identical
+  r3 c1   5477.1 MC/s  others cpu    3% gpu   0%  identical
+  r3 c2   5136.2 MC/s  others cpu    3% gpu   0%  identical
+  r3 c3   5213.2 MC/s  others cpu    1% gpu   0%  identical
+  # summary ksma_s1_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg34@multithreaded:18                                          5432.0 [5397-5439]  x1.000 [1.000-1.000]  others 4%/0%  identical,reference
+  c1 cg35a@multithreaded:18                                         5445.4 [5429-5477]  x1.005 [0.998-1.010]  others 4%/0%  identical
+  c2 cg34@multithreaded:0                                           5141.1 [5133-5147]  x0.947 [0.944-0.954]  others 3%/0%  identical
+  c3 cg35a@multithreaded:0                                          5204.5 [5171-5233]  x0.959 [0.957-0.962]  others 2%/0%  identical
+
+
+====================================================================================================
+SECOND STEP, 2026-11-24: the Debye hooks' per-step transients in per-thread scratch (cg35b = fork commit f7cae41, local)
+====================================================================================================
+Code: one more local commit on speed-m5-gpu on top of d3374c9. A packed Debye group stored its pre-sum (Pre -> Post) and its
+correction (Post -> Apply) in the large block: 24 of 12*(P+2) floats a group. The engine now tells an extension after every plan
+whether Pre, Post and Apply of one range run back to back on one thread (Engine_Extension::RANGE_LOCAL, SetRangeLocal); while that
+holds (fused sweep, its y-bands with an open y direction, tiled box mode) the two values live in a per-thread scratch and the
+blocks hold the pole state only (144 -> 48 bytes written a group and step at one pole). OPENEMS_ADE_SCRATCH=0 keeps the stored
+layout. Resident memory is unchanged (the allocation is kept so a withdrawn grant needs none).
+
+Rule set before the run: keep only if the dispersive case at 30 M cells and 18 threads reaches 1.08 times cg35a and nothing else
+(antenna case, the two boards, 1 M cells) loses more than 2 %. Result: 1.10 times (2969 -> 3266 MC/s); antenna 1.00 to 1.01
+(one loaded 6-thread point at 1 M: 1.08); boards 0.996 (GCPW) and 1.014 (SMA) at 18 threads; 1 M cells 1.01 to 1.03. Kept.
+One point loses: dispersive at 8 M cells and 6 threads (no y-bands there) 1920 -> 1860 (0.97); the build with the stored layout
+(scr0) runs 1864 there, so the cost is in the changed hook code, not in the scratch; scr0 is 1 to 2 % below cg35a at most points.
+Against upstream at 18 threads: 1.13 of 1d710c2 and 0.97 of ccb4472 at 30 M; 1.13 and 1.00 at 8 M; 2.20 and 1.84 at 1 M. At 6
+threads upstream 1d710c2 still leads at 30 M (0.96) and 8 M (0.90). Setup time (13.2 s against 2.0 to 2.2 s) and memory (5857 MiB
+against 3955 and 2701) are unchanged and remain open.
+
+How it ran: 2026-11-24 01:49-02:13, labels interleaved run for run, 3 runs of 3 s a point, others' CPU median 0.16 to 0.21 core in
+the bench.py parts (about 1.2 cores beside the GCPW rounds and half of the SMA rounds; one loaded part: antenna at 1 M). Identity
+before the timing: 501 box configurations in three variants, the dispersive check at 50 k and 1 M cells, five models without Debye,
+seven planted faults caught, Debye check, six-model check, validation suite 15 of 15.
+
+Summary as written by the slot's script:
+
+Slot disp2: kill test of the range-local transients of the packed Debye hooks. Upstream bench.py with a source in every case.
+cg35a = fork d3374c9, cg35b = cg35a + Debye pre and correction in per-thread scratch (uncommitted),
+scr0 = cg35b with OPENEMS_ADE_SCRATCH=0 (stored layout), master = upstream 1d710c2,
+master22 = upstream ccb4472. cpu engines at 6, 12, 18 threads, interleaved run for run inside a part.
+
+BEST RATE OVER THE THREAD COUNTS, MC/s (median of the runs), threads in brackets
+case              MCells          cg35a          cg35b           scr0         master       master22   cg35b/cg35a cg35b/scr0 cg35b/master cg35b/master22
+dispersive     L   30.08      2969 (18)      3266 (18)      2925 (18)      2883 (18)      3355 (18)          1.10       1.12         1.13           0.97
+antenna        L   30.08      3982 (18)      4011 (18)              -              -              -          1.01          -            -              -
+
+dispersive     M    8.12      2964 (18)      3156 (18)      2945 (18)      2803 (18)      3159 (18)          1.06       1.07         1.13           1.00
+antenna        M    8.12      3462 (18)      3476 (18)              -              -              -          1.00          -            -              -
+
+dispersive     S    1.03      3923 (18)      4054 (18)      3856 (18)      1844 (18)      2200 (18)          1.03       1.05         2.20           1.84
+antenna        S    1.03      3636 (18)      3632 (18)              -              -              -          1.00          -            -              -
+
+AT EQUAL THREAD COUNTS (cpu engines), MC/s median [min-max]; ratios of cg35b to the other columns; the sweep cg35b ran
+== dispersive L
+  t6       cg35a   1759 [1748-1768]     cg35b   1811 [1803-1813]      scr0   1720 [1718-1741]    master   1890 [1875-1967]  master22   1918 [1914-1933]  | x1.03 x1.05 x0.96 x0.94  | y-bands of 93 lines (2731 KiB a thread)
+  t12      cg35a   2532 [2513-2538]     cg35b   2718 [2716-2722]      scr0   2688 [2493-2690]    master   2517 [2514-2519]  master22   2729 [2728-2731]  | x1.07 x1.01 x1.08 x1.00  | y-bands of 46 lines (1365 KiB a thread)
+  t18      cg35a   2969 [2950-2986]     cg35b   3266 [3224-3270]      scr0   2925 [2904-2953]    master   2883 [2862-2890]  master22   3355 [3305-3362]  | x1.10 x1.12 x1.13 x0.97  | y-bands of 46 lines (1365 KiB a thread)
+== antenna L
+  t6       cg35a   2140 [2139-2141]     cg35b   2146 [2140-2149]      scr0 -                        master -                      master22 -                      | x1.00   -     -     -    | y-bands of 93 lines (2731 KiB a thread)
+  t12      cg35a   3329 [3327-3345]     cg35b   3348 [3338-3357]      scr0 -                        master -                      master22 -                      | x1.01   -     -     -    | y-bands of 46 lines (1365 KiB a thread)
+  t18      cg35a   3982 [3966-3992]     cg35b   4011 [3963-4058]      scr0 -                        master -                      master22 -                      | x1.01   -     -     -    | y-bands of 46 lines (1365 KiB a thread)
+
+== dispersive M
+  t6       cg35a   1920 [1914-1927]     cg35b   1860 [1858-1893]      scr0   1864 [1847-1868]    master   2069 [2042-2071]  master22   1699 [1690-1722]  | x0.97 x1.00 x0.90 x1.09  | fused sweep, 199 blocks of x-lines, neighbour flags
+  t12      cg35a   2610 [2600-2707]     cg35b   2660 [2644-2849]      scr0   2693 [2490-2699]    master   2489 [2485-2495]  master22   2382 [2364-2386]  | x1.02 x0.99 x1.07 x1.12  | y-bands of 71 lines (1365 KiB a thread)
+  t18      cg35a   2964 [2955-2985]     cg35b   3156 [3146-3168]      scr0   2945 [2912-2955]    master   2803 [2640-2812]  master22   3159 [3125-3169]  | x1.06 x1.07 x1.13 x1.00  | y-bands of 71 lines (1365 KiB a thread)
+== antenna M
+  t6       cg35a   1755 [1753-1755]     cg35b   1754 [1754-1760]      scr0 -                        master -                      master22 -                      | x1.00   -     -     -    | fused sweep, 201 blocks of x-lines, neighbour flags
+  t12      cg35a   2871 [2870-2878]     cg35b   2884 [2883-2891]      scr0 -                        master -                      master22 -                      | x1.00   -     -     -    | y-bands of 71 lines (1365 KiB a thread)
+  t18      cg35a   3462 [3430-3476]     cg35b   3476 [3456-3478]      scr0 -                        master -                      master22 -                      | x1.00   -     -     -    | y-bands of 71 lines (1365 KiB a thread)
+
+== dispersive S
+  t6       cg35a   2046 [2037-2059]     cg35b   2082 [2067-2097]      scr0   2006 [1988-2013]    master   1649 [1642-1679]  master22   1479 [1467-1480]  | x1.02 x1.04 x1.26 x1.41  | fused sweep, 99 blocks of x-lines, neighbour flags
+  t12      cg35a   3157 [3149-3163]     cg35b   3204 [3194-3204]      scr0   3103 [3090-3106]    master   1756 [1750-1758]  master22   1629 [1629-1643]  | x1.01 x1.03 x1.82 x1.97  | fused sweep, 99 blocks of x-lines, neighbour flags
+  t18      cg35a   3923 [3921-3929]     cg35b   4054 [4036-4056]      scr0   3856 [3851-3866]    master   1844 [1837-1856]  master22   2200 [2168-2205]  | x1.03 x1.05 x2.20 x1.84  | fused sweep, 99 blocks of x-lines, neighbour flags
+== antenna S
+  t6       cg35a   1607 [1491-1748]     cg35b   1741 [1425-1758]      scr0 -                        master -                      master22 -                      | x1.08   -     -     -    | fused sweep, 101 blocks of x-lines, neighbour flags
+  t12      cg35a   2776 [2596-2834]     cg35b   2797 [2728-2826]      scr0 -                        master -                      master22 -                      | x1.01   -     -     -    | fused sweep, 101 blocks of x-lines, neighbour flags
+  t18      cg35a   3636 [3635-3649]     cg35b   3632 [3626-3647]      scr0 -                        master -                      master22 -                      | x1.00   -     -     -    | fused sweep, 101 blocks of x-lines, neighbour flags
+
+SETUP TIME (s) AND MEMORY (RSS, MiB) at the largest thread count run
+dispersive     L         cg35a 13.94 s  5857        cg35b 13.23 s  5857         scr0 13.95 s  5857       master  2.01 s  3955     master22  2.18 s  2701
+antenna        L         cg35a  4.06 s  4598        cg35b  4.08 s  4600           scr0 -                        master -                      master22 -               
+
+dispersive     M         cg35a  3.46 s  1742        cg35b  3.56 s  1742         scr0  3.42 s  1742       master  0.57 s  1234     master22  0.64 s   930
+antenna        M         cg35a  1.29 s  1391        cg35b  1.29 s  1392           scr0 -                        master -                      master22 -               
+
+dispersive     S         cg35a  0.49 s   236        cg35b  0.50 s   243         scr0  0.49 s   236       master  0.10 s   159     master22  0.10 s   116
+antenna        S         cg35a  0.30 s   251        cg35b  0.30 s   251           scr0 -                        master -                      master22 -               
+
+PROBES (bench.py compare: every label against the part's first one; "identical" = bit-identical probe files)
+  a_L     cg35b against cg35a: 3 of 3 rows identical
+  a_M     cg35b against cg35a: 3 of 3 rows identical
+  a_S     cg35b against cg35a: 3 of 3 rows identical
+  d_L     cg35b against cg35a: 3 of 3 rows identical
+  d_L     scr0 against cg35a: 3 of 3 rows identical
+  d_L     master against cg35a: 0 of 3 rows identical; the others differ by 3.3e-06 to 4.7e-06 (relative)
+  d_L     master22 against cg35a: 0 of 3 rows identical; the others differ by 5.3e-06 to 6.9e-06 (relative)
+  d_M     cg35b against cg35a: 3 of 3 rows identical
+  d_M     scr0 against cg35a: 3 of 3 rows identical
+  d_M     master against cg35a: 0 of 3 rows identical; the others differ by 4.5e-06 to 6.0e-06 (relative)
+  d_M     master22 against cg35a: 0 of 3 rows identical; the others differ by 6.5e-06 to 1.2e-05 (relative)
+  d_S     cg35b against cg35a: 3 of 3 rows identical
+  d_S     scr0 against cg35a: 3 of 3 rows identical
+  d_S     master against cg35a: 0 of 3 rows identical; the others differ by 2.9e-05 to 2.9e-05 (relative)
+  d_S     master22 against cg35a: 0 of 3 rows identical; the others differ by 1.6e-05 to 1.6e-05 (relative)
+
+LOAD BESIDE THE NUMBERS: others' CPU per part (5 s samples, % of one core; every process but this benchmark) and whole-GPU utilisation
+  smoke              4 samples  CPU median   34  p90   38  max   40   GPU median   0 %
+  d_L              112 samples  CPU median   16  p90   31  max  130   GPU median   0 %
+  a_L               27 samples  CPU median   21  p90   39  max   60   GPU median   0 %
+  d_M               50 samples  CPU median   17  p90   29  max   51   GPU median   0 %
+  a_M               17 samples  CPU median   21  p90   39  max  149   GPU median   0 %
+  d_S               32 samples  CPU median   17  p90   30  max   75   GPU median   0 %
+  a_S               12 samples  CPU median   86  p90  195  max  519   GPU median   0 %
+  whole run        282 samples  CPU median   20  p90   63  max 1498
+
+BOARD kgcpw (harness A/B, paired rounds; MC/s, others' load in the line)
+  r0 c1   4803.3 MC/s  others cpu  116% gpu   3%  identical
+  r0 c2   4518.2 MC/s  others cpu  118% gpu   3%  identical
+  r0 c3   4677.4 MC/s  others cpu  119% gpu   3%  identical
+  r1 c0   4828.9 MC/s  others cpu  127% gpu   3%  identical
+  r1 c1   4891.2 MC/s  others cpu  123% gpu   3%  identical
+  r1 c2   4683.6 MC/s  others cpu  127% gpu   3%  identical
+  r1 c3   4700.0 MC/s  others cpu  116% gpu   3%  identical
+  r2 c0   4948.7 MC/s  others cpu   18% gpu   3%  identical
+  r2 c1   4821.0 MC/s  others cpu  115% gpu   3%  identical
+  r2 c2   4695.2 MC/s  others cpu  127% gpu   3%  identical
+  r2 c3   4619.6 MC/s  others cpu  135% gpu   3%  identical
+  r3 c0   4864.1 MC/s  others cpu  107% gpu   3%  identical
+  r3 c1   4866.3 MC/s  others cpu  114% gpu   3%  identical
+  r3 c2   4729.1 MC/s  others cpu  115% gpu   3%  identical
+  r3 c3   4706.3 MC/s  others cpu  114% gpu   3%  identical
+  # summary kgcpw_s1_n15000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg35a@multithreaded:18                                         4853.2 [4829-4949]  x1.000 [1.000-1.000]  others 113%/3%  identical,reference
+  c1 cg35b@multithreaded:18                                         4843.6 [4803-4891]  x0.996 [0.974-1.013]  others 116%/3%  identical
+  c2 cg35a@multithreaded:0                                          4689.4 [4518-4729]  x0.959 [0.933-0.972]  others 122%/3%  identical
+  c3 cg35b@multithreaded:0                                          4688.7 [4620-4706]  x0.967 [0.934-0.973]  others 118%/3%  identical
+
+BOARD ksma (harness A/B, paired rounds; MC/s, others' load in the line)
+  r0 c1   5449.1 MC/s  others cpu  126% gpu   3%  identical
+  r0 c2   5085.0 MC/s  others cpu  126% gpu   3%  identical
+  r0 c3   5120.7 MC/s  others cpu  116% gpu   3%  identical
+  r1 c0   5342.3 MC/s  others cpu  130% gpu   3%  identical
+  r1 c1   5415.4 MC/s  others cpu  120% gpu   3%  identical
+  r1 c2   5152.5 MC/s  others cpu   17% gpu   3%  identical
+  r1 c3   5118.2 MC/s  others cpu   44% gpu   3%  identical
+  r2 c0   5367.3 MC/s  others cpu   21% gpu   3%  identical
+  r2 c1   5443.4 MC/s  others cpu   29% gpu   3%  identical
+  r2 c2   5129.9 MC/s  others cpu   30% gpu   3%  identical
+  r2 c3   5118.0 MC/s  others cpu   19% gpu   2%  identical
+  r3 c0   5455.9 MC/s  others cpu   18% gpu   3%  identical
+  r3 c1   5445.9 MC/s  others cpu   21% gpu   3%  identical
+  r3 c2   5125.2 MC/s  others cpu   17% gpu   2%  identical
+  r3 c3   5149.9 MC/s  others cpu   21% gpu   3%  identical
+  # summary ksma_s1_n6000: median MC/s [min-max], median paired ratio to c0 [min-max], others cpu/gpu median, result
+  c0 cg35a@multithreaded:18                                         5354.8 [5320-5456]  x1.000 [1.000-1.000]  others 75%/3%  identical,reference
+  c1 cg35b@multithreaded:18                                         5444.7 [5415-5449]  x1.014 [0.998-1.024]  others 74%/3%  identical
+  c2 cg35a@multithreaded:0                                          5127.5 [5085-5152]  x0.956 [0.939-0.964]  others 24%/3%  identical
+  c3 cg35b@multithreaded:0                                          5119.4 [5118-5150]  x0.956 [0.944-0.963]  others 32%/3%  identical
+
+====================================================================================================
+THIRD STEP, 2026-11-24: setup time and memory of the dispersive extensions (cg35c = fork commit 8af6c4c, local)
+====================================================================================================
+Code: one more local commit on speed-m5-gpu on top of f7cae41. The Lorentz / Drude and Debye operator extensions scan the grid
+per x-line on the operator's setup threads (per-thread blocks merged in x order = the serial order; arrays equal byte for byte
+at every pool size), skip columns without a wanted primitive, and the material lookup remembers its cast per thread. Setup
+arrays come from mmap on macOS, so freed setup memory leaves the process. OPENEMS_SETUP_THREADS=n sets the pool size,
+OPENEMS_SETUP_TIMING=1 prints the phases. No per-timestep function changes.
+
+Rule set before the run: keep if setup of the dispersive case at 30 M cells falls by 25 % or memory by 10 %, and no rate falls
+more than 2 %. Result: setup 13.25 -> 4.90 s (-63 %), memory 5857 -> 3737 MiB (-36 %); rates 0.98 to 1.01 of cg35b on ten
+points (lowest: dispersive at 30 M and 6 threads 1815 -> 1782, ranges overlap). Kept. All fork probe rows identical.
+Upstream still sets up faster (2.1 to 2.3 s at 30 M) and its head uses less memory (2680 MiB).
+Master 1d710c2 ran the dispersive case slower in this slot than in the second step's (30 M 2700 against 2883, 8 M 2284 against
+2803; its runs spread 2073 to 2884), so its ratios below are less sure than the 1.13 above.
+Slot: Mac Studio, 2026-11-24 08:39-08:45, 18 threads (one part at 6), 3 runs of 2 s, interleaved; others' CPU median 0.16 core.
+
+Slot disp3: setup time and memory of the dispersive pass (P3). Upstream bench.py with a source in every case.
+cg35b = fork f7cae41, cg35c = cg35b + threaded dispersive scans, setup arrays returned to the OS (uncommitted),
+master = upstream 1d710c2, master22 = upstream ccb4472. cpu engines, interleaved run for run inside a part.
+
+BEST RATE OVER THE THREAD COUNTS, MC/s (median of the runs), threads in brackets
+case              MCells          cg35b          cg35c         master       master22   cg35c/cg35b cg35c/master cg35c/master22
+dispersive     L   30.08      3218 (18)      3233 (18)      2700 (18)      3343 (18)          1.00         1.20           0.97
+antenna        L   30.08      3937 (18)      3953 (18)              -              -          1.00            -              -
+ideal          L   30.08      5740 (18)      5736 (18)              -              -          1.00            -              -
+pml            L   30.08      4136 (18)      4161 (18)              -              -          1.01            -              -
+
+dispersive     M    8.12      3148 (18)      3172 (18)      2284 (18)      3048 (18)          1.01         1.39           1.04
+antenna        M    8.12      3474 (18)      3472 (18)              -              -          1.00            -              -
+ideal          M    8.12      6111 (18)      6051 (18)              -              -          0.99            -              -
+pml            M    8.12      3638 (18)      3652 (18)              -              -          1.00            -              -
+
+dispersive     S    1.03      4074 (18)      4074 (18)      1895 (18)      2248 (18)          1.00         2.15           1.81
+
+AT EQUAL THREAD COUNTS (cpu engines), MC/s median [min-max]; ratios of cg35c to the other columns; the sweep cg35c ran
+== dispersive L
+  t6       cg35b   1815 [1784-1816]     cg35c   1782 [1772-1820]    master -                      master22 -                      | x0.98   -     -    | y-bands of 93 lines (2731 KiB a thread)
+  t18      cg35b   3218 [3209-3249]     cg35c   3233 [3221-3241]    master   2700 [2647-2884]  master22   3343 [3335-3359]  | x1.00 x1.20 x0.97  | y-bands of 46 lines (1365 KiB a thread)
+== antenna L
+  t18      cg35b   3937 [3908-3939]     cg35c   3953 [3934-3965]    master -                      master22 -                      | x1.00   -     -    | y-bands of 46 lines (1365 KiB a thread)
+== ideal L
+  t18      cg35b   5740 [5649-5792]     cg35c   5736 [5678-5764]    master -                      master22 -                      | x1.00   -     -    | y-bands of 46 lines (1365 KiB a thread)
+== pml L
+  t18      cg35b   4136 [4112-4140]     cg35c   4161 [4149-4166]    master -                      master22 -                      | x1.01   -     -    | y-bands of 46 lines (1365 KiB a thread)
+
+== dispersive M
+  t18      cg35b   3148 [3139-3156]     cg35c   3172 [3171-3179]    master   2284 [2073-2852]  master22   3048 [2993-3099]  | x1.01 x1.39 x1.04  | y-bands of 71 lines (1365 KiB a thread)
+== antenna M
+  t18      cg35b   3474 [3455-3488]     cg35c   3472 [3465-3482]    master -                      master22 -                      | x1.00   -     -    | y-bands of 71 lines (1365 KiB a thread)
+== ideal M
+  t18      cg35b   6111 [6107-6116]     cg35c   6051 [6037-6115]    master -                      master22 -                      | x0.99   -     -    | y-bands of 71 lines (1365 KiB a thread)
+== pml M
+  t18      cg35b   3638 [3609-3664]     cg35c   3652 [3648-3671]    master -                      master22 -                      | x1.00   -     -    | y-bands of 71 lines (1365 KiB a thread)
+
+== dispersive S
+  t18      cg35b   4074 [4047-4074]     cg35c   4074 [4070-4078]    master   1895 [1708-1935]  master22   2248 [2243-2250]  | x1.00 x2.15 x1.81  | fused sweep, 99 blocks of x-lines, neighbour flags
+
+SETUP TIME (s) AND MEMORY (RSS, MiB) at the largest thread count run
+dispersive     L         cg35b 13.25 s  5857        cg35c  4.90 s  3737       master  2.08 s  3961     master22  2.26 s  2680
+antenna        L         cg35b  4.09 s  4600        cg35c  2.87 s  3872         master -                      master22 -               
+ideal          L         cg35b  1.70 s  2816        cg35c  1.67 s  2815         master -                      master22 -               
+pml            L         cg35b  2.39 s  3872        cg35c  2.34 s  3154         master -                      master22 -               
+
+dispersive     M         cg35b  3.63 s  1742        cg35c  1.55 s  1069       master  0.58 s  1231     master22  0.64 s   921
+antenna        M         cg35b  1.31 s  1392        cg35c  0.93 s  1120         master -                      master22 -               
+ideal          M         cg35b  0.48 s   880        cg35c  0.49 s   784         master -                      master22 -               
+pml            M         cg35b  0.74 s  1268        cg35c  0.78 s   922         master -                      master22 -               
+
+dispersive     S         cg35b  0.47 s   243        cg35c  0.25 s   164       master  0.10 s   158     master22  0.10 s   117
+
+PROBES (bench.py compare: every label against the part's first one; "identical" = bit-identical probe files)
+  d_L     cg35c against cg35b: 1 of 1 rows identical
+  d_L     master against cg35b: 0 of 1 rows identical; the others differ by 4.1e-06 to 4.1e-06 (relative)
+  d_L     master22 against cg35b: 0 of 1 rows identical; the others differ by 6.2e-06 to 6.2e-06 (relative)
+  d_M     cg35c against cg35b: 1 of 1 rows identical
+  d_M     master against cg35b: 0 of 1 rows identical; the others differ by 4.5e-06 to 4.5e-06 (relative)
+  d_M     master22 against cg35b: 0 of 1 rows identical; the others differ by 8.3e-06 to 8.3e-06 (relative)
+  d_S     cg35c against cg35b: 1 of 1 rows identical
+  d_S     master against cg35b: 0 of 1 rows identical; the others differ by 2.3e-05 to 2.3e-05 (relative)
+  d_S     master22 against cg35b: 0 of 1 rows identical; the others differ by 1.6e-05 to 1.6e-05 (relative)
+  o_L     cg35c against cg35b: 3 of 3 rows identical
+  o_M     cg35c against cg35b: 3 of 3 rows identical
+  t6_L    cg35c against cg35b: 1 of 1 rows identical
+
+LOAD BESIDE THE NUMBERS: others' CPU per part (5 s samples, % of one core; every process but this benchmark) and whole-GPU utilisation
+  smoke              2 samples  CPU median   26  p90   17  max   35   GPU median   0 %
+  d_L               19 samples  CPU median   16  p90   31  max  128   GPU median   0 %
+  o_L               17 samples  CPU median   19  p90   39  max   49   GPU median   0 %
+  d_M               10 samples  CPU median   16  p90   30  max   82   GPU median   0 %
+  o_M               11 samples  CPU median   21  p90   43  max   82   GPU median   0 %
+  d_S                6 samples  CPU median   13  p90   28  max  177   GPU median   0 %
+  t6_L              14 samples  CPU median   12  p90   44  max  278   GPU median   0 %
+  whole run         78 samples  CPU median   16  p90   44  max  278

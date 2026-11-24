@@ -122,7 +122,7 @@ Patch 0040, the opt-in tiled sweep (snapshot cg32d; part of cg33, installed on 2
 its switch unset the reduced check is identical to stock on all six models (18 of 18 rows), and with it set the
 probes of six models and the raw fields of a closed cylinder and of a steady-state run equal those of the fused
 sweep (Section~\ref{sec:tiled}, \code{results/tiled\_sweep\_cg32\_2026-11-11.txt}).
-Patches 0041 to 0043, the fork's head (snapshots cg33a to cg33d and cg33; cg33 was installed on 2026-11-14), were checked on the M5 Pro on
+Patches 0041 to 0043, the fork's head until 2026-11-22 (snapshots cg33a to cg33d and cg33; cg33 was installed on 2026-11-14), were checked on the M5 Pro on
 2026-11-13: the reduced check, the Debye check, the diamond check, the validation suite, six models in eight configurations
 and the cylindrical multigrid example are identical to stock as before, and a new script, \code{scripts/ade\_check/ade\_check2.py},
 compares the dispersive cases (the packed hooks of patch 0042 against stock, cg31, the unpacked paths and the other engines,
@@ -220,7 +220,7 @@ with a guard that stops a row whose probes are all zero) in 66 of 66 rows at 37 
   (Section~\ref{sec:cg31}). The tiled sweep of patch 0040 is opt-in too: it runs only when \code{OPENEMS\_TBLOCK}
   is set (Section~\ref{sec:tiled}). Patches 0041 and 0042 add two switches: \code{OPENEMS\_TUNE\_START=p} restores the start of
   the thread search of cg31, and \code{OPENEMS\_ADE\_PACKED=0} turns the packed dispersive hooks off (Section~\ref{sec:cg33});
-  with 43 switches in all in the command line's list.
+  with 43 switches in all after patch 0043; patches 0044 to 0049 added seven more, 50 in all in the command line's list: \code{OPENEMS\_TBLOCK\_BOX} (0044; box hooks in the tiled sweep), \code{OPENEMS\_YBAND} and \code{OPENEMS\_YBAND\_CACHE} (0045; the y-banded fused sweep, \code{auto} by default, and the cache share it assumes), \code{OPENEMS\_ADE\_VEC} and \code{OPENEMS\_ADE\_COEF} (0047; the group kind and the coefficient layout of the dispersive hooks, test switches), \code{OPENEMS\_ADE\_SCRATCH} (0048; \code{0} keeps the stored Debye transients) and \code{OPENEMS\_SETUP\_THREADS} (0049; the setup pool size). Unlike the switches that turn a new path on, the bands are on by default whenever the automatic rule applies (Section~\ref{sec:large}); \code{OPENEMS\_YBAND=0} restores the fused sweep of patch 0043.
 \item \textbf{What ``bit-identical'' rests on.} Three rewrites depend on the compiler fusing a multiply-add the same
   way in the old and the new expression; this was verified by comparison on every model with Apple clang builds, not
   forced in the source (Section~\ref{sec:contract}). In the standalone kernel the rewritten inner loop matches the stock
